@@ -4189,10 +4189,16 @@ function _createAppState() {
 		}
 	}
 
-	async function handleSaveChat(opts?: { asNew?: boolean }) {
+	/** Open the chat's saved-chats list (the drawer row / commands land here). */
+	function openSavedChats() {
+		sessionsExpanded = true;
+		void refreshSavedSessions();
+	}
+
+	async function handleSaveChat(opts?: { asNew?: boolean; title?: string }) {
 		try {
 			const overwrite = opts?.asNew ? null : activeSessionId;
-			const r = await api.saveChatSession(undefined, overwrite);
+			const r = await api.saveChatSession(opts?.title?.trim() || undefined, overwrite);
 			activeSessionId = r.id;
 			await refreshSavedSessions();
 			pushToast(
@@ -4450,6 +4456,7 @@ function _createAppState() {
 
 	async function initialize() {
 		void refreshProviders();
+		void refreshSavedSessions();
 		loadSearchConfig();
 		loadDiscovery();
 		// The engine-owned context set outlives the tab — pull it on boot.
@@ -5511,6 +5518,7 @@ function _createAppState() {
 		handleFetchFromRelay,
 		refreshChat,
 		handleToggleSessions,
+		openSavedChats,
 		handleSaveChat,
 		handleLoadSavedSession,
 		handleDeleteSavedSession,

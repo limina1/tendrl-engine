@@ -1419,6 +1419,13 @@
 			onOpenServices={(view, focus) => (app.agentServicesModal = { view, focus })}
 			onSelectService={(kind) => app.selectService(kind)}
 			onServicesRefresh={() => app.refreshProviders()}
+			savedChats={app.savedSessions.length}
+			activeChatTitle={app.savedSessions.find((s) => s.id === app.activeSessionId)?.title ?? null}
+			onOpenSavedChats={() => {
+				const pos = store.findSlotForClass('chat');
+				if (pos) store.focusSlot(pos);
+				app.openSavedChats();
+			}}
 			searchRows={app.searchHistory.map((e) => ({
 				key: entryKey(e),
 				kind: e.kind,

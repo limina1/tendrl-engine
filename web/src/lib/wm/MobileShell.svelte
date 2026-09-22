@@ -43,7 +43,10 @@
 		services = null,
 		onOpenServices,
 		onSelectService,
-		onServicesRefresh
+		onServicesRefresh,
+		savedChats = 0,
+		activeChatTitle = null,
+		onOpenSavedChats
 	}: {
 		store: BufferStore;
 		onCommands: () => void;
@@ -79,6 +82,12 @@
 		onSelectService?: (kind: ProviderKind) => void;
 		/** Re-read balances — called each time the drawer opens. */
 		onServicesRefresh?: () => void;
+		/** Saved chats (engine sessions) — count for the drawer row. */
+		savedChats?: number;
+		/** Title of the saved chat the live chat is linked to, if any. */
+		activeChatTitle?: string | null;
+		/** Focus the chat slot with its saved-chats list open. */
+		onOpenSavedChats?: () => void;
 	} = $props();
 
 	const svcRows = $derived(serviceRows(services));
@@ -98,12 +107,13 @@
 	let actOpen = $state(false);
 	let histOpen = $state(false);
 
-	// Bottom-bar order + user-facing labels. Only work and search get a slot
-	// for now ('research' reads as "search" on the bar; the class name stays
-	// research everywhere else). Chat has no slot — it stays reachable
-	// through the ☰ drawer's commands entry, and its panel still renders
-	// when something opens it.
+	// Bottom-bar order + user-facing labels ('research' reads as "search" on
+	// the bar; the class name stays research everywhere else). Chat got its
+	// own slot on 2026-09-22: with the assistant running on agent services,
+	// the phone is the chat's primary home, so it is one tap away like work
+	// and search rather than buried behind the commands entry.
 	const bar: { cls: ClassName; label: string }[] = [
+		{ cls: 'chat', label: 'chat' },
 		{ cls: 'work', label: 'work' },
 		{ cls: 'research', label: 'search' }
 	];
@@ -356,6 +366,26 @@
 							<span class="mshell__status-go" aria-hidden="true">›</span>
 						</button>
 					{/if}
+				{/if}
+				{#if onOpenSavedChats}
+					<button
+						class="mshell__status-row"
+						onclick={() => {
+							mobileNav.drawerOpen = false;
+							onOpenSavedChats?.();
+						}}
+						title={activeChatTitle
+							? `This chat is saved as “${activeChatTitle}” — tap for all saved chats`
+							: 'Saved chats — save the current one or load an earlier one'}
+					>
+						<span class="mshell__status-label">saved chats</span>
+						{#if activeChatTitle}
+							<span class="pill pill--local mshell__svc-ellip">{activeChatTitle}</span>
+						{:else if savedChats > 0}
+							<span class="mshell__svc-count">{savedChats}</span>
+						{/if}
+						<span class="mshell__status-go" aria-hidden="true">›</span>
+					</button>
 				{/if}
 				{#if embeddingPill}
 					<button
@@ -724,6 +754,11 @@
 	.mshell__svc-count {
 		color: var(--fg-alt);
 		font-size: var(--t-2xs);
+	}
+	.mshell__svc-ellip {
+		max-width: 45vw;
+		overflow: hidden;
+		text-overflow: ellipsis;
 	}
 	.mshell__svc-row {
 		padding: 0 var(--s-3) 0 var(--s-2);
