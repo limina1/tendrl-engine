@@ -51,8 +51,10 @@ The API never returns =api_key= in full — a redacted form
 
 * Entry point: the drawer
 
-The mobile drawer's *status* hub gets one more row, between =identity=
-and =embeddings=. The pill is the state:
+The mobile drawer's *status* hub gets an *agent services* section below
+the identity row: one row per configured service, the active one marked
+with a filled dot, and a =+= row to add another. Each row's pill is that
+service's state.
 
 #+begin_example
  status
@@ -61,31 +63,59 @@ and =embeddings=. The pill is the state:
  ● network            confirm
  relays                      ›
  identity          npub1…k3f
- agent             not set up ›      ← nothing configured (dim pill)
- agent          ppq · $0.42   ›      ← configured, active provider + balance
- agent    routstr · 1,240 sat ›
- agent        ppq · low  ▲    ›      ← below the per-turn ceiling (warn pill)
- agent       ppq · offline    ›      ← last balance fetch failed
+
+ agent services
+ ● ppq.ai            $0.42   ›      ← active (filled dot) · balance
+   routstr       1,240 sat   ›      ← configured, not active (hollow)
+ + add a service             ›      ← only providers not yet set up
+ ─────────────────────────────
  embeddings                  ›
  wiki links               3/7
  ⇅ activity                  ›
 #+end_example
 
-Tapping the row opens the *agent* buffer (a =work= buffer; on desktop it
-is also reachable through the buffer switcher and a link from
-Settings → AI Tools). The pill is read from =GET /api/v1/providers=,
-refreshed when the drawer opens and after every agent turn.
+Pill states per row:
+
+#+begin_example
+ ● ppq.ai            $0.42   ›      funded
+ ● ppq.ai         low  ▲     ›      below the per-turn ceiling (warn pill)
+ ● ppq.ai         offline    ›      last balance fetch failed; key kept
+   routstr        unfunded   ›      key exists, balance 0
+#+end_example
+
+When nothing is configured the section is just its header and the =+=
+row:
+
+#+begin_example
+ agent services
+ + add a service             ›      ← opens Signup (S1) with both cards
+#+end_example
+
+- Tapping a *service row* opens the Agent screen (S5) scrolled to that
+  service's card. Tapping the *dot* on a row switches the active service
+  in place (one =POST /providers/select=), without leaving the drawer —
+  the pill-as-action rule.
+- Tapping =+= opens Signup (S1) showing only the providers not yet set
+  up; once both exist the =+= row is hidden (until a service is
+  forgotten). If a provider later supports several accounts (Question 6,
+  several routstr nodes), =+= stays and Signup offers "another routstr
+  node".
+- On desktop the same list lives at the top of Settings → AI Tools as
+  "Agent services", with the same rows and =+=.
+
+The section is read from =GET /api/v1/providers=, refreshed when the
+drawer opens and after every agent turn.
 
 * State machine
 
 #+begin_example
                 ┌──────────────┐
-   no accounts  │  UNDEFINED   │  agent row → Signup screen (both cards)
+   no accounts  │  UNDEFINED   │  drawer: "agent services · + add a service" → Signup (both cards)
                 └──────┬───────┘
         ppq created ───┤─── routstr key created
                        ▼
                 ┌──────────────┐
-                │  CONFIGURED  │  agent row → Agent screen (accounts, switch, fund)
+                │  CONFIGURED  │  drawer: one row per service, ● = active, + for the missing one
                 └──────┬───────┘
                        │ per provider:   unfunded → funded → low → offline
                        │ "forget" on the last account → UNDEFINED
@@ -102,10 +132,13 @@ All at phone width. =[ ]= is a button, =( )= a radio, =▾= a picker,
 saves; destructive actions are *armed buttons* (tap once to arm, again
 to fire), never browser dialogs — per =feat-ui-patterns.org=.
 
-** S1 — Signup (UNDEFINED)
+** S1 — Signup (from =+ add a service=)
+
+Shows both cards when nothing is configured; only the missing provider's
+card when one already exists (the header then reads "add a service").
 
 #+begin_example
- ‹ agent
+ ‹ add a service
  ─────────────────────────────────────────
  Give the assistant a model to run on.
  Both options pay per use; no subscription.
@@ -269,7 +302,8 @@ pick another*.
 
 ** S5 — Agent screen (CONFIGURED)
 
-What "agent" opens once at least one account exists.
+What a service row in the drawer opens (scrolled to that service). Both
+cards are on one screen so switching is a glance away.
 
 #+begin_example
  ‹ agent
@@ -301,7 +335,7 @@ What "agent" opens once at least one account exists.
 
  ceiling per turn   $0.25 ▾   (a turn that would exceed it asks first)
 
- [ + Set up the other one ]   ← only when one side is missing
+ [ + add a service ]   ← same target as the drawer's + row; hidden when both exist
 #+end_example
 
 - The radio picks the *active* provider; the model picker under it
@@ -354,7 +388,8 @@ that link, so there is one place that owns the choice.
 
 | Screen | Call |
 |--------+------|
-| drawer pill, S5 | =GET /api/v1/providers= → =ProviderState= (redacted keys, cached balances, active) |
+| drawer section, S5 | =GET /api/v1/providers= → =ProviderState= (one entry per service: redacted key, cached balance, state; =active=) |
+| drawer dot tap | =POST /providers/select {provider}= (model unchanged) |
 | S2 | =POST /api/v1/providers/ppq/setup= → creates account, stores it, returns state |
 | S1 paste | =POST /api/v1/providers/ppq/adopt {api_key, credit_id}= · =POST /providers/routstr/adopt {node_url, api_key}= |
 | S3 | =POST /providers/ppq/fund {amount_sats}= → ={invoice_id, bolt11, expires_at}= · =GET /providers/ppq/fund/:id= → status (server polls provider) · =POST /providers/ppq/nwc {nwc_url, threshold_usd, topup_usd}= |
@@ -370,8 +405,8 @@ that link, so there is one place that owns the choice.
   forget/withdraw are armed buttons.
 - Toasts for copy / saved / paid; inline errors for anything the user
   must fix on that screen.
-- The drawer row is a *pill-as-action* (status you can tap), matching
-  network / identity.
+- Each drawer service row is a *pill-as-action* (status you can tap),
+  matching network / identity; the dot switches, the row opens.
 - Buffer view state (which step of S4 you are on, a half-pasted token)
   lives in =store.bufferState= / =entryDrafts=, never persisted; account
   state lives in the engine.
@@ -397,8 +432,8 @@ that link, so there is one place that owns the choice.
    separate cards?
 7. *Mobile QR.* Render the invoice QR in the WebView (a small pure-JS
    encoder) — fine — or rely on "Open in wallet" alone?
-8. *Drawer placement.* Row between identity and embeddings, or up next
-   to identity as the two "who/what runs this" rows?
+8. *Drawer placement.* Settled: an "agent services" section under
+   identity with one row per service and a =+= row (2026-09-22).
 
 * Implementation slices once confirmed
 
@@ -406,7 +441,7 @@ that link, so there is one place that owns the choice.
 - [ ] engine: =OpenAiCompatProvider= in =llm.rs=; agent loop reads the store per turn
 - [ ] engine: =/api/v1/providers/*= routes; discovery Confirm-gated; funding intent
 - [ ] web: =agent= buffer kind (tours.ts + registry.ts + BufferRenderer) with S1–S5
-- [ ] web: drawer row + pill; Settings → AI Tools link + read-only mirror
+- [ ] web: drawer "agent services" section (rows, active dot, + row); Settings → AI Tools mirror
 - [ ] web: S6 funding intent in the confirm-modal family
 - [ ] verify on device with a funded ppq account and one routstr token; recipe in =docs/commands.org=
 - [ ] zettel: =feat-paid-providers.org=, decision "engine owns provider credentials", update =feat-assistant.org= / =feat-mobile-shell.org=
