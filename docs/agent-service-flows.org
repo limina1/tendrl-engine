@@ -187,7 +187,7 @@ card when one already exists.
 
  ┌ ppq.ai ───────────────────────────────┐
  │ One account, 370+ models, web search  │
- │ built in. Fund with Lightning or NWC. │
+ │ built in. Fund with Lightning.        │
  │ Balance in USD.                       │
  │                                       │
  │ [ Create account ]                    │
@@ -257,8 +257,6 @@ a turn attempted in that state raises the S6 intent.
  │                                       │
  │ ● waiting for payment · expires 14:32 │
  └───────────────────────────────────────┘
-
- or: [ Connect a wallet (NWC) ]  — refills itself below $5
 #+end_example
 
 The engine polls =GET /topup/status/{id}= every 3 s while this screen is
@@ -266,8 +264,9 @@ open, and once more when the app returns to the foreground. On
 =status != "New"= the card flips to *paid · balance $2.05* and a toast
 fires. On expiry: *expired — [ New invoice ]*. Amount chips are in sats
 because the invoice is sats; the USD estimate comes from the ppq
-response (=amount_due= vs =amount=). Minimum 100 sats. (Question 3 on
-NWC.)
+response (=amount_due= vs =amount=). Minimum 100 sats. No NWC auto
+top-up (decided out, 2026-09-22): funding is always an explicit invoice
+the user pays.
 
 ** S4 — routstr: find a node, paste a token
 
@@ -434,7 +433,7 @@ active selection, so there is one place that owns the choice.
 | drawer dot tap | =POST /providers/select {provider}= (model unchanged) |
 | S2 | =POST /api/v1/providers/ppq/setup= → creates account, stores it, returns state |
 | S1 paste | =POST /api/v1/providers/ppq/adopt {api_key, credit_id}= · =POST /providers/routstr/adopt {node_url, api_key}= |
-| S3 | =POST /providers/ppq/fund {amount_sats}= → ={invoice_id, bolt11, expires_at}= · =GET /providers/ppq/fund/:id= → status (server polls provider) · =POST /providers/ppq/nwc {nwc_url, threshold_usd, topup_usd}= |
+| S3 | =POST /providers/ppq/fund {amount_sats}= → ={invoice_id, bolt11, expires_at}= · =GET /providers/ppq/fund/:id= → status (server polls provider) |
 | S4 step 1 | =POST /providers/routstr/discover= → ranked =[NodeRef + health]= (Confirm-gated like any relay fetch) |
 | S4 step 2 | =POST /providers/routstr/create {node_url, cashu_token}= → key + balance |
 | S5 | =POST /providers/select {provider, model}= · =GET /providers/:p/models= · =POST /providers/:p/refresh= · =POST /providers/routstr/topup {cashu_token}= · =POST /providers/routstr/refund= → token (once) · =GET /providers/:p/ledger= · =POST /providers/:p/reveal= → full key (once) · =DELETE /providers/:p= |
@@ -462,9 +461,7 @@ active selection, so there is one place that owns the choice.
    or keyring-first on desktop from day one?
 2. *"Paste an existing key"* on the signup screen — wanted in v1, or
    create-only?
-3. *NWC auto top-up* on the ppq fund screen in v1, or invoice-only first?
-   (NWC needs the user to have an NWC-capable wallet; Alby Hub / Coinos /
-   Primal wallet do.)
+3. *NWC auto top-up.* Settled: out. Invoice-only funding (2026-09-22).
 4. *Active provider semantics.* One active at a time with a radio (as
    drawn), or let the S6 modal offer failover automatically when the
    active one is unfunded?
