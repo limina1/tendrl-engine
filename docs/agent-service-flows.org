@@ -10,6 +10,17 @@ the access tokens live so they survive an app restart, and what tapping
 verified in [[file:paid-providers.org][paid-providers.org]]. Nothing here
 is implemented; the questions at the end are what I need answered.
 
+* The chat runs on agent services only (2026-09-22)
+
+The Anthropic API-key provider was removed from the engine. The in-app
+chat — the mobile/remote surface — runs on the active agent service and
+nothing else; a turn with no service emits =needs_service= (the modal
+opens on signup with "Send it again"), a turn below the ceiling emits
+=needs_funding=. Claude Code stays the *external* harness: it drives
+tendrl over MCP with its own credential, so the compliance line is
+"your harness calls tendrl", never "tendrl calls Claude". =[ai] echo=
+is the only knob left: an echo provider for plumbing tests.
+
 * Storage: where the tokens live
 
 *Decision proposed: the engine owns them, in =<data_dir>/providers.json=.*

@@ -7450,7 +7450,10 @@ use std::sync::Mutex;
 #[derive(Clone)]
 pub struct ChatAppState {
     pub chat: Arc<Mutex<ChatState>>,
-    pub provider: Arc<dyn LLMProvider>,
+    /// Echo provider used only when `[ai] echo = true` and no agent service
+    /// is active (plumbing tests). Production is `None`: no service ⇒ the
+    /// turn asks the user to set one up.
+    pub fallback: Option<Arc<dyn LLMProvider>>,
     /// Engine handle, for tool dispatch in the agent loop.
     pub engine: AppState,
     /// Hard cap on tool round-trips per agent turn (from `[ai] max_tool_turns`).
@@ -7460,10 +7463,25 @@ pub struct ChatAppState {
     pub policy: Arc<std::sync::RwLock<crate::tools::ToolPolicy>>,
     /// Path to the editable Markdown system prompt, re-read each agent turn.
     pub system_prompt_path: std::path::PathBuf,
-    /// Paid model services (ppq.ai / routstr): accounts, balances, the active
-    /// selection. When a service is active the agent loop runs on it instead
-    /// of the boot-time `provider`.
+    /// Agent services (ppq.ai / routstr): accounts, balances, the active
+    /// selection. The agent loop runs on the active service.
     pub providers: Arc<crate::providers::ProviderRegistry>,
+}
+
+/// Which model answers this turn: the active agent service, else the echo
+/// fallback when configured, else nothing (the caller tells the UI to set a
+/// service up).
+fn resolve_provider(
+    state: &ChatAppState,
+) -> Option<(
+    Arc<dyn LLMProvider>,
+    Option<String>,
+    Option<crate::providers::ProviderKind>,
+)> {
+    if let Some((p, m, k)) = state.providers.active_provider() {
+        return Some((p, Some(m), Some(k)));
+    }
+    state.fallback.clone().map(|p| (p, None, None))
 }
 
 /// A single fragment in the API response
@@ -7692,11 +7710,17 @@ pub async fn session_delete(
     Ok(Json(json!({ "deleted": true })))
 }
 
-/// POST /api/v1/chat/message — send message, get LLM response
+/// POST /api/v1/chat/message — send message, get a plain (tool-less) reply
+/// from the active agent service. 409 when no service is set up.
 pub async fn chat_send(
     State(state): State<ChatAppState>,
     Json(req): Json<SendMessageRequest>,
-) -> Json<ChatResponse> {
+) -> std::result::Result<Json<ChatResponse>, EngineError> {
+    let Some((provider, model, _)) = resolve_provider(&state) else {
+        return Err(EngineError::Config(
+            "no agent service is active — set up ppq.ai or a routstr node in agent services".into(),
+        ));
+    };
     let messages = {
         let mut chat = state.chat.lock().unwrap();
         chat.input = req.content;
@@ -7704,16 +7728,33 @@ pub async fn chat_send(
         chat.send_message()
     };
 
-    let response = state
-        .provider
-        .chat(messages)
-        .await
-        .unwrap_or_else(|e| format!("Error: {}", e));
+    let response = match model {
+        // The neutral `chat()` helper cannot carry a model override; run one
+        // tool-less turn directly so the active service's model is used.
+        Some(m) => {
+            let agent: Vec<crate::llm::AgentMessage> = messages
+                .into_iter()
+                .map(|msg| match msg.role {
+                    ChatRole::System => crate::llm::AgentMessage::System(msg.content),
+                    ChatRole::User => crate::llm::AgentMessage::User(msg.content),
+                    ChatRole::Assistant => crate::llm::AgentMessage::Assistant(vec![
+                        crate::llm::ContentBlock::Text { text: msg.content },
+                    ]),
+                })
+                .collect();
+            provider
+                .run_turn(&agent, &[], Some(&m))
+                .await
+                .map(|out| assistant_text(&out.content))
+        }
+        None => provider.chat(messages).await,
+    }
+    .unwrap_or_else(|e| format!("Error: {}", e));
 
     let mut chat = state.chat.lock().unwrap();
     chat.generating = false;
     chat.receive_response(response);
-    Json(build_chat_response(&chat))
+    Ok(Json(build_chat_response(&chat)))
 }
 
 /// Build one SSE event for the agent stream: `{ "type": kind, "data": {...} }`.
@@ -7755,17 +7796,16 @@ pub async fn chat_agent_handler(
     let stream = async_stream::stream! {
         use crate::llm::{AgentMessage, ContentBlock};
 
-        // Which model runs this turn: the active paid service (ppq / routstr)
-        // when one is configured, else the boot-time provider. Checked before
-        // the user turn is recorded so a declined/unfunded turn leaves no
-        // dangling fragment — the web keeps the typed text.
-        let (provider, model_override, service): (
-            Arc<dyn crate::llm::LLMProvider>,
-            Option<String>,
-            Option<crate::providers::ProviderKind>,
-        ) = match state.providers.active_provider() {
-            Some((p, m, k)) => (p, Some(m), Some(k)),
-            None => (state.provider.clone(), None, None),
+        // Which model runs this turn: the active agent service (ppq / routstr).
+        // Checked before the user turn is recorded so a missing/unfunded
+        // service leaves no dangling fragment — the web keeps the typed text
+        // and opens agent services.
+        let Some((provider, model_override, service)) = resolve_provider(&state) else {
+            yield agent_sse("needs_service", json!({
+                "message": "no agent service is active — set up ppq.ai or a routstr node",
+            }));
+            yield agent_sse("done", json!({ "skipped": true }));
+            return;
         };
         if service.is_some() {
             if let Some(need) = state.providers.funding_need().await {
@@ -8004,14 +8044,11 @@ pub async fn ai_prompt_put(
 pub struct AiSettingsRequest {
     #[serde(default)]
     pub enabled_tools: Option<Vec<String>>,
-    #[serde(default)]
-    pub provider: Option<String>,
-    #[serde(default)]
-    pub model: Option<String>,
 }
 
-/// Shape the AI settings response: config-backed provider/model + the tool
-/// catalog annotated with each tool's live enablement.
+/// Shape the AI settings response: the tool-turn cap + the tool catalog
+/// annotated with each tool's live enablement (the model itself is the active
+/// agent service — `GET /api/v1/providers`).
 fn build_ai_settings_response(
     engine: &crate::engine::Engine,
     policy: &crate::tools::ToolPolicy,
@@ -8032,22 +8069,19 @@ fn build_ai_settings_response(
         })
         .collect();
     json!({
-        "provider": cfg.ai.provider,
-        "model": cfg.ai.model,
         "max_tool_turns": cfg.ai.max_tool_turns,
         "tools": tools,
     })
 }
 
-/// GET /api/v1/ai/settings — current provider/model/auth + per-tool enablement.
+/// GET /api/v1/ai/settings — tool-turn cap + per-tool enablement.
 pub async fn ai_settings_get(State(state): State<ChatAppState>) -> Json<Value> {
     let policy = state.policy.read().unwrap().clone();
     Json(build_ai_settings_response(&state.engine, &policy))
 }
 
 /// POST /api/v1/ai/settings — update enabled tools (live, immediate) and
-/// persist provider/model/auth/enabled_tools to config.toml (provider/model/
-/// auth apply on next boot; the tool allowlist also restores the policy on boot).
+/// persist the allowlist to config.toml so the policy is restored on boot.
 pub async fn ai_settings_post(
     State(state): State<ChatAppState>,
     Json(req): Json<AiSettingsRequest>,
@@ -8077,12 +8111,10 @@ fn persist_ai_config(
         .and_then(|v| v.as_table())
         .cloned()
         .unwrap_or_default();
-    if let Some(v) = &req.provider {
-        ai_tbl.insert("provider".into(), toml::Value::String(v.clone()));
-    }
-    if let Some(v) = &req.model {
-        ai_tbl.insert("model".into(), toml::Value::String(v.clone()));
-    }
+    // The provider/model used to live here; since 2026-09-22 the model comes
+    // from the active agent service (providers.json), never from TOML.
+    ai_tbl.remove("provider");
+    ai_tbl.remove("model");
     if let Some(names) = &req.enabled_tools {
         let arr = names
             .iter()
@@ -9350,7 +9382,7 @@ mod chat_api_tests {
         std::mem::forget(dir); // keep the temp dir alive for the test process
         ChatAppState {
             chat: Arc::new(Mutex::new(ChatState::new())),
-            provider: Arc::new(NoopProvider::echo()),
+            fallback: Some(Arc::new(NoopProvider::echo())),
             engine,
             max_tool_turns: 25,
             policy: Arc::new(std::sync::RwLock::new(crate::tools::ToolPolicy::default())),
@@ -9377,7 +9409,7 @@ mod chat_api_tests {
         let req = SendMessageRequest {
             content: "Hello world".into(),
         };
-        let Json(resp) = chat_send(State(state), Json(req)).await;
+        let Json(resp) = chat_send(State(state), Json(req)).await.unwrap();
         assert_eq!(resp.fragment_count, 2);
         assert_eq!(resp.fragments[0].role, "user");
         assert_eq!(resp.fragments[0].content, "Hello world");

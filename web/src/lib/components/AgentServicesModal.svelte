@@ -443,6 +443,9 @@
 						<button class="asm-btn asm-btn--primary" onclick={() => app.resendPendingAgentMessage()}>
 							Send it again
 						</button>
+					{:else if !svc?.configured}
+						Your last message was not sent — the assistant has no service to run on
+						yet. Set one up below, then send again.
 					{:else}
 						Your last message was not sent — the active service is below its per-turn
 						ceiling. Fund it or switch, then send again.

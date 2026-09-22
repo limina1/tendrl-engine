@@ -1442,8 +1442,9 @@
 					</div>
 				{/if}
 				<p class="settings-hint">
-					The active service (●) is what the assistant runs on; the model below is the
-					fallback used only when no service is active.
+					The active service (●) is what the assistant runs on — model, balance and
+					funding live in its card. Claude Code and other external harnesses reach
+					tendrl over MCP with their own credentials; the engine holds no model key.
 				</p>
 			{:else}
 				<div class="settings-row">
@@ -1454,8 +1455,10 @@
 					>
 				</div>
 				<p class="settings-hint">
-					ppq.ai (one account, Lightning-funded, web search built in) or a routstr node
-					(no account, Cashu ecash). Pay per use, no subscription.
+					The in-app assistant runs only on an agent service: ppq.ai (one account,
+					Lightning-funded, web search built in) or a routstr node (no account, Cashu
+					ecash). Pay per use, no subscription. Until one exists, chat turns ask you to
+					set one up.
 				</p>
 			{/if}
 		{/if}
@@ -1463,22 +1466,6 @@
 		{#if !aiSettings}
 			<p class="settings-hint">AI settings unavailable (engine not reachable).</p>
 		{:else}
-			<div class="settings-row">
-				<span class="settings-label">Model</span>
-				<input
-					class="settings-input"
-					type="text"
-					value={aiSettings.model}
-					disabled={aiBusy}
-					onchange={(e) => applyAiUpdate({ model: e.currentTarget.value.trim() })}
-				/>
-			</div>
-
-			<p class="settings-hint">
-				Auth uses <code>ANTHROPIC_API_KEY</code> from the engine's environment. Model changes
-				apply on engine restart.
-			</p>
-
 			<div class="settings-subtitle">System prompt</div>
 			<p class="settings-hint">
 				Prepended to every agent turn, re-read each message. Editable here or on disk

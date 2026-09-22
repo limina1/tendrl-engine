@@ -406,9 +406,15 @@ pub async fn start(opts: ServeOptions) -> anyhow::Result<RunningServer> {
     if let Some(kind) = providers.snapshot().active {
         info!("Agent service: {} active", kind.label());
     }
+    let fallback: Option<Arc<dyn llm::LLMProvider>> = if config.ai.echo {
+        info!("Agent: [ai] echo = true — turns without an active service echo (testing)");
+        Some(Arc::new(llm::NoopProvider::echo()))
+    } else {
+        None
+    };
     let chat_state = api::ChatAppState {
         chat: Arc::new(Mutex::new(initial_chat)),
-        provider: llm::provider_from_config(&config.ai),
+        fallback,
         engine: state.clone(),
         max_tool_turns: config.ai.max_tool_turns,
         policy: Arc::new(std::sync::RwLock::new(ai_policy)),

@@ -10,16 +10,18 @@
 //!
 //! Provider-neutral types ([`ContentBlock`], [`ToolDefinition`], [`AgentMessage`])
 //! are declared once; each provider translates them to/from its wire format.
-//! Auth is abstracted behind [`ClaudeCredential`] (api-key vs subscription
-//! bearer), mirroring `signing.rs`'s pluggable `Signer`.
+//!
+//! Two implementations: [`NoopProvider`] (echo, for plumbing tests) and
+//! [`OpenAiCompatProvider`] (chat-completions wire format — what the paid
+//! agent services in `providers.rs`, ppq.ai and routstr nodes, speak). The
+//! former Anthropic Messages API provider was removed on 2026-09-22: the
+//! in-app chat runs on agent services only; Claude reaches tendrl as an
+//! *external* harness over MCP, never as a key the engine holds.
 
 use crate::chat::{ChatRole, LLMMessage};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::fmt;
-use std::sync::Arc;
-
-const ANTHROPIC_URL: &str = "https://api.anthropic.com/v1/messages";
 
 /// Errors from LLM providers
 #[derive(Debug)]
@@ -219,186 +221,6 @@ impl LLMProvider for NoopProvider {
 }
 
 // ---------------------------------------------------------------------------
-// ClaudeProvider (Anthropic Messages API)
-// ---------------------------------------------------------------------------
-
-/// Provider that calls the Anthropic Messages API (API-key auth only).
-pub struct ClaudeProvider {
-    api_key: String,
-    model: String,
-    client: reqwest::Client,
-}
-
-impl ClaudeProvider {
-    /// Construct from a developer-platform API key (`ANTHROPIC_API_KEY`).
-    pub fn new(api_key: String) -> Self {
-        Self {
-            api_key,
-            model: "claude-haiku-4-5-20251001".to_string(),
-            client: reqwest::Client::new(),
-        }
-    }
-
-    pub fn with_model(mut self, model: String) -> Self {
-        self.model = model;
-        self
-    }
-}
-
-/// Map an assistant-side block to its Anthropic JSON shape. Thinking blocks are
-/// dropped (no signature to echo); tool_result blocks never belong here.
-fn block_to_assistant_json(b: &ContentBlock) -> Option<Value> {
-    match b {
-        ContentBlock::Text { text } => Some(json!({ "type": "text", "text": text })),
-        ContentBlock::ToolUse { id, name, input } => {
-            Some(json!({ "type": "tool_use", "id": id, "name": name, "input": input }))
-        }
-        ContentBlock::Thinking { .. } | ContentBlock::ToolResult { .. } => None,
-    }
-}
-
-/// Map a tool-result block to its Anthropic JSON shape (lives in a user turn).
-fn block_to_tool_result_json(b: &ContentBlock) -> Option<Value> {
-    match b {
-        ContentBlock::ToolResult {
-            tool_use_id,
-            content,
-            is_error,
-        } => Some(json!({
-            "type": "tool_result",
-            "tool_use_id": tool_use_id,
-            "content": content,
-            "is_error": is_error,
-        })),
-        _ => None,
-    }
-}
-
-/// Parse one Anthropic response content block into a [`ContentBlock`].
-fn parse_content_block(block: &Value) -> Option<ContentBlock> {
-    match block["type"].as_str()? {
-        "text" => Some(ContentBlock::Text {
-            text: block["text"].as_str().unwrap_or("").to_string(),
-        }),
-        "thinking" => Some(ContentBlock::Thinking {
-            thinking: block["thinking"].as_str().unwrap_or("").to_string(),
-        }),
-        "tool_use" => Some(ContentBlock::ToolUse {
-            id: block["id"].as_str().unwrap_or("").to_string(),
-            name: block["name"].as_str().unwrap_or("").to_string(),
-            input: block.get("input").cloned().unwrap_or(Value::Null),
-        }),
-        _ => None,
-    }
-}
-
-#[async_trait::async_trait]
-impl LLMProvider for ClaudeProvider {
-    async fn run_turn(
-        &self,
-        messages: &[AgentMessage],
-        tools: &[ToolDefinition],
-        model: Option<&str>,
-    ) -> Result<TurnOutput, LLMError> {
-        let model = model.unwrap_or(&self.model);
-
-        // The Anthropic API takes `system` as a top-level param, not in the
-        // messages array.
-        let mut system_parts: Vec<String> = Vec::new();
-        let mut api_messages: Vec<Value> = Vec::new();
-
-        for msg in messages {
-            match msg {
-                AgentMessage::System(s) => system_parts.push(s.clone()),
-                AgentMessage::User(s) => api_messages.push(json!({ "role": "user", "content": s })),
-                AgentMessage::Assistant(blocks) => {
-                    let content: Vec<Value> =
-                        blocks.iter().filter_map(block_to_assistant_json).collect();
-                    api_messages.push(json!({ "role": "assistant", "content": content }));
-                }
-                AgentMessage::ToolResults(blocks) => {
-                    let content: Vec<Value> = blocks
-                        .iter()
-                        .filter_map(block_to_tool_result_json)
-                        .collect();
-                    api_messages.push(json!({ "role": "user", "content": content }));
-                }
-            }
-        }
-
-        // Anthropic requires at least one message
-        if api_messages.is_empty() {
-            return Err(LLMError::ProviderError(
-                "No user/assistant messages to send".into(),
-            ));
-        }
-
-        // NOTE: we deliberately do NOT send `temperature`/`top_p`/`top_k` —
-        // they are removed on Opus 4.8/4.7 (a 400), and omitting them is valid
-        // on every current model. `thinking` is likewise omitted (valid
-        // everywhere); revisit if adaptive thinking is wanted for the loop.
-        let mut body = json!({
-            "model": model,
-            "max_tokens": 4096,
-            "messages": api_messages,
-        });
-        if !system_parts.is_empty() {
-            body["system"] = Value::String(system_parts.join("\n\n"));
-        }
-        if !tools.is_empty() {
-            body["tools"] =
-                serde_json::to_value(tools).map_err(|e| LLMError::ProviderError(e.to_string()))?;
-        }
-
-        let resp = self
-            .client
-            .post(ANTHROPIC_URL)
-            .header("anthropic-version", "2023-06-01")
-            .header("content-type", "application/json")
-            .header("x-api-key", &self.api_key)
-            .json(&body)
-            .send()
-            .await
-            .map_err(|e| LLMError::RequestFailed(e.to_string()))?;
-
-        let status = resp.status();
-        let resp_body: Value = resp
-            .json()
-            .await
-            .map_err(|e| LLMError::RequestFailed(format!("Failed to read response: {}", e)))?;
-
-        if !status.is_success() {
-            let err_msg = resp_body["error"]["message"]
-                .as_str()
-                .unwrap_or("Unknown error");
-            return Err(LLMError::ProviderError(format!("{}: {}", status, err_msg)));
-        }
-
-        let content = resp_body["content"]
-            .as_array()
-            .ok_or_else(|| LLMError::ProviderError("No content in response".into()))?;
-        let blocks: Vec<ContentBlock> = content.iter().filter_map(parse_content_block).collect();
-
-        let stop_reason = match resp_body["stop_reason"].as_str() {
-            Some("end_turn") => StopReason::EndTurn,
-            Some("tool_use") => StopReason::ToolUse,
-            Some("max_tokens") => StopReason::MaxTokens,
-            Some(other) => StopReason::Other(other.to_string()),
-            None => StopReason::EndTurn,
-        };
-
-        Ok(TurnOutput {
-            content: blocks,
-            stop_reason,
-        })
-    }
-
-    fn name(&self) -> &str {
-        "claude"
-    }
-}
-
-// ---------------------------------------------------------------------------
 // OpenAiCompatProvider — chat-completions wire format (ppq.ai, routstr nodes,
 // anything else OpenAI-shaped)
 // ---------------------------------------------------------------------------
@@ -410,8 +232,7 @@ impl LLMProvider for ClaudeProvider {
 /// arrive as a JSON *string* and are parsed here), and
 /// [`AgentMessage::ToolResults`] go back as one `role: tool` message per
 /// result. `reasoning` / `reasoning_content` on the reply becomes a
-/// display-only [`ContentBlock::Thinking`]. No streaming yet (same as
-/// [`ClaudeProvider`]).
+/// display-only [`ContentBlock::Thinking`]. No streaming yet.
 pub struct OpenAiCompatProvider {
     name: &'static str,
     /// Up to and including `/v1` — `https://api.ppq.ai/v1`, `https://node/v1`.
@@ -629,51 +450,6 @@ impl LLMProvider for OpenAiCompatProvider {
 
     fn name(&self) -> &str {
         self.name
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Construction
-// ---------------------------------------------------------------------------
-
-/// Build a provider from the `[ai]` config block. The API key comes from
-/// `ANTHROPIC_API_KEY` in the environment, never the config file. Falls back to
-/// the echo provider when the key is missing, so it degrades gracefully.
-pub fn provider_from_config(ai: &crate::config::AiConfig) -> Arc<dyn LLMProvider> {
-    match ai.provider.as_str() {
-        "noop" => {
-            tracing::info!("LLM provider: noop (echo)");
-            Arc::new(NoopProvider::echo())
-        }
-        _ => match std::env::var("ANTHROPIC_API_KEY") {
-            Ok(key) => {
-                tracing::info!("LLM provider: claude (model: {})", ai.model);
-                Arc::new(ClaudeProvider::new(key).with_model(ai.model.clone()))
-            }
-            Err(_) => {
-                tracing::warn!("LLM provider: echo (no ANTHROPIC_API_KEY set)");
-                Arc::new(NoopProvider::echo())
-            }
-        },
-    }
-}
-
-/// Build a provider from environment configuration (legacy entry point).
-///
-/// If `ANTHROPIC_API_KEY` is set, returns a ClaudeProvider.
-/// The model can be overridden with `ANTHROPIC_MODEL`.
-/// Otherwise falls back to the echo NoopProvider.
-pub fn provider_from_env() -> Arc<dyn LLMProvider> {
-    if let Ok(api_key) = std::env::var("ANTHROPIC_API_KEY") {
-        let mut provider = ClaudeProvider::new(api_key);
-        if let Ok(model) = std::env::var("ANTHROPIC_MODEL") {
-            provider = provider.with_model(model);
-        }
-        tracing::info!("LLM provider: claude (model: {})", provider.model);
-        Arc::new(provider)
-    } else {
-        tracing::info!("LLM provider: echo (no ANTHROPIC_API_KEY set)");
-        Arc::new(NoopProvider::echo())
     }
 }
 

@@ -1,5 +1,13 @@
 # AI Assistant — Status & Handoff
 
+> **Update 2026-09-22 — the Anthropic API provider is gone.** The in-app
+> assistant now runs only on an *agent service* (ppq.ai or a routstr node)
+> set up and funded in the app; the engine holds no model API key and
+> `[ai] provider` / `model` no longer exist. `ClaudeProvider`,
+> `ANTHROPIC_API_KEY` and the "API key only" auth discussion below are
+> historical. Claude reaches tendrl as an external harness over MCP. See
+> `docs/paid-providers.org` and `docs/agent-service-flows.org`.
+
 Status/handoff companion to **`docs/ai-tools-architecture.md`** (the original
 design + rationale). That doc explains *why*; this one records *what exists now*
 and *where to go next*, so a fresh agent can pick up without re-deriving the

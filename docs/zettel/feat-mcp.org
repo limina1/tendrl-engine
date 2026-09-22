@@ -8,9 +8,10 @@ Codex, anything speaking MCP. The harness brings its own credential and
 runs on the user's machine; tendrl holds no LLM key on this path. This
 is the only sanctioned way a user's claude.ai subscription reaches
 tendrl: Anthropic's Agent SDK terms disallow third-party apps offering
-claude.ai login or rate limits, so the in-app loop stays API-key
-([[file:feat-assistant.org][AI assistant]]) and the subscription path is
-"your harness calls tendrl", never "tendrl calls the model".
+claude.ai login or rate limits, so the in-app loop runs on *agent
+services* (ppq.ai / routstr — [[file:feat-assistant.org][AI assistant]];
+the engine holds no Anthropic key at all since 2026-09-22) and the Claude
+path is always "your harness calls tendrl", never "tendrl calls Claude".
 
 * What exists
 

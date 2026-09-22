@@ -1786,12 +1786,16 @@ function _createAppState() {
 
 		let streamOk = true;
 		let fundingNeed: api.FundingNeed | null = null;
+		let needsService = false;
 		try {
 			await api.streamAgentTurn(content, (ev) => {
 				const d = ev.data ?? {};
 				switch (ev.type) {
 					case 'needs_funding':
 						fundingNeed = d as unknown as api.FundingNeed;
+						break;
+					case 'needs_service':
+						needsService = true;
 						break;
 					case 'text':
 						text += (d.text as string) ?? '';
@@ -1824,11 +1828,11 @@ function _createAppState() {
 			render();
 		}
 
-		// The engine refused the turn (active paid service below its ceiling):
-		// nothing was recorded server-side, so drop the optimistic fragments,
-		// park the text, and open the Agent services modal on funding.
-		if (fundingNeed) {
-			const need: api.FundingNeed = fundingNeed;
+		// The engine refused the turn — no agent service is active, or the
+		// active one is below its ceiling. Nothing was recorded server-side, so
+		// drop the optimistic fragments, park the text, and open Agent services
+		// (signup or funding); the modal offers "Send it again" once ready.
+		if (fundingNeed || needsService) {
 			if (chat) {
 				const frags = chat.fragments.filter(
 					(f) => f.id !== liveId && !(f.role === 'user' && f.content === content)
@@ -1837,11 +1841,17 @@ function _createAppState() {
 			}
 			pendingAgentMessage = content;
 			void refreshProviders();
-			agentServicesModal = { view: 'fund', focus: need.provider, pending: true };
-			pushToast(
-				`${need.provider === 'ppq' ? 'ppq.ai' : 'routstr'} balance is below the per-turn ceiling — fund it or switch`,
-				'info'
-			);
+			if (fundingNeed) {
+				const need: api.FundingNeed = fundingNeed;
+				agentServicesModal = { view: 'fund', focus: need.provider, pending: true };
+				pushToast(
+					`${need.provider === 'ppq' ? 'ppq.ai' : 'routstr'} balance is below the per-turn ceiling — fund it or switch`,
+					'info'
+				);
+			} else {
+				agentServicesModal = { view: 'signup', pending: true };
+				pushToast('the assistant needs an agent service — set up ppq.ai or a routstr node', 'info');
+			}
 			return;
 		}
 		if (providersState?.configured) void refreshProviders();

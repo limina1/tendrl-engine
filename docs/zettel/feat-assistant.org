@@ -4,9 +4,12 @@
 #+DATE: 2026-07-05
 
 A writing assistant with server-side tool-calling over the Nostr corpus: the
-engine runs an agentic loop (Anthropic Messages API, API-key only) in which
-the model searches, reads, curates shared context, composes, fetches from
-relays, and (opt-in) publishes. Shipped per =docs/ai-assistant-status.md=.
+engine runs an agentic loop in which the model searches, reads, curates
+shared context, composes, fetches from relays, and (opt-in) publishes.
+Shipped per =docs/ai-assistant-status.md=. *Since 2026-09-22 the model is an
+agent service* — ppq.ai or a routstr node, set up and funded in the app
+(=docs/agent-service-flows.org=) — the Anthropic API-key provider was
+removed; Claude reaches tendrl only as an external harness over MCP.
 Next epoch planned on =design/insertions-context= —
 [[file:../insertions-plan.org][the plan]]: engine-owned context set, named
 signing source, insertions, the engine speaking MCP, the zettel bubble.
@@ -29,8 +32,10 @@ signing source, insertions, the engine speaking MCP, the zettel bubble.
   membership change is an engine call followed by =refreshContext()=, which
   re-mirrors =in_context= onto the pool. Decision:
   [[file:decision-context-set-engine-owned.org][context set is engine-owned]].
-- =LLMProvider= trait (=src/llm.rs=): =ClaudeProvider= + =NoopProvider=;
-  provider-neutral =ContentBlock= / =AgentMessage= / =run_turn()= types.
+- =LLMProvider= trait (=src/llm.rs=): =OpenAiCompatProvider= (ppq.ai /
+  routstr nodes) + =NoopProvider=; provider-neutral =ContentBlock= /
+  =AgentMessage= / =run_turn()= types. Accounts, balances, discovery and
+  the per-turn funding gate: =src/providers.rs= + =/api/v1/providers=.
 - Agentic loop: =chat_agent_handler= (=src/api.rs=, =POST /api/v1/chat/agent=,
   SSE); tool catalog + dispatch in =src/tools.rs= (18 tools: search, read,
   NKBIP-01 views, =fetch_from_relays=, =add_to_context= / =get_context= /

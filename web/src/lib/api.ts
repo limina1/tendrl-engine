@@ -84,10 +84,9 @@ export interface AiToolInfo {
 	enabled: boolean;
 }
 
-/** Current AI assistant settings (provider/model + tool catalog). */
+/** Current AI assistant settings (tool-turn cap + tool catalog). The model
+ *  itself is the active agent service — see `getProviders()`. */
 export interface AiSettings {
-	provider: string;
-	model: string;
 	max_tool_turns: number;
 	tools: AiToolInfo[];
 }
@@ -95,8 +94,6 @@ export interface AiSettings {
 /** Partial AI settings update; all fields optional. */
 export interface AiSettingsUpdate {
 	enabled_tools?: string[];
-	provider?: string;
-	model?: string;
 }
 
 export function getAiSettings(): Promise<AiSettings> {
@@ -155,7 +152,15 @@ export function saveAiPrompt(content: string): Promise<{ saved: boolean; path: s
 
 /** One event from the agent SSE stream: `{ type, data }`. */
 export interface AgentEvent {
-	type: 'text' | 'thinking' | 'tool_call' | 'tool_result' | 'done' | 'error' | 'needs_funding';
+	type:
+		| 'text'
+		| 'thinking'
+		| 'tool_call'
+		| 'tool_result'
+		| 'done'
+		| 'error'
+		| 'needs_funding'
+		| 'needs_service';
 	data: Record<string, unknown>;
 }
 

@@ -439,20 +439,19 @@ impl Default for EmbeddingConfig {
     }
 }
 
-/// AI / LLM provider configuration (the `[ai]` block).
+/// AI assistant configuration (the `[ai]` block).
 ///
-/// Carries the provider selection and the agent/chat model. The API key is
-/// **never** stored here — it comes from `ANTHROPIC_API_KEY` in the environment.
+/// The model provider is **not** configured here: the assistant runs on the
+/// active *agent service* (ppq.ai or a routstr node — `providers.rs`, set up
+/// in the UI, persisted in `<data_dir>/providers.json`). No API key ever lives
+/// in TOML or the environment.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AiConfig {
-    /// Active provider: `"claude"` (default) or `"noop"` (echo, testing).
-    #[serde(default = "default_ai_provider")]
-    pub provider: String,
-    /// Chat/agent model id. Defaults to a strong model — agentic tool
-    /// selection is where the capability gap shows, so this is intentionally
-    /// not the cheap chat model.
-    #[serde(default = "default_ai_model")]
-    pub model: String,
+    /// Testing knob: answer agent turns with an echo provider when no agent
+    /// service is active (plumbing tests without a model). Default off — a
+    /// turn with no active service asks the user to set one up.
+    #[serde(default)]
+    pub echo: bool,
     /// Hard cap on tool round-trips within a single agent turn (runaway guard).
     #[serde(default = "default_max_tool_turns")]
     pub max_tool_turns: usize,
@@ -467,12 +466,6 @@ pub struct AiConfig {
     pub system_prompt_path: Option<String>,
 }
 
-fn default_ai_provider() -> String {
-    "claude".to_string()
-}
-fn default_ai_model() -> String {
-    "claude-sonnet-4-6".to_string()
-}
 fn default_max_tool_turns() -> usize {
     25
 }
@@ -480,8 +473,7 @@ fn default_max_tool_turns() -> usize {
 impl Default for AiConfig {
     fn default() -> Self {
         Self {
-            provider: default_ai_provider(),
-            model: default_ai_model(),
+            echo: false,
             max_tool_turns: default_max_tool_turns(),
             enabled_tools: None,
             system_prompt_path: None,
