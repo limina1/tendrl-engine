@@ -2074,3 +2074,32 @@ Amber on the phone: Settings → Assistant identity → "Use Amber for the
 assistant" registers a NIP-55 signer for the assistant slot
 (=/assistant-identity/signer-register= · =signer-channel= · =sign-response=).
 Device check pending — see the plan's follow-up.
+
+* Paid providers — signup probe (branch =feat/paid-providers=)
+
+Exercises the live account / balance / funding surface of ppq.ai and the
+routstr network before any engine code touches them. Nothing is paid; the
+ppq account it creates has a zero balance and is cached so re-runs reuse it.
+Design + observed shapes: =docs/paid-providers.org=.
+
+#+begin_src sh
+# full run — report to a scratch dir (the key stays in <state>/ppq-account.json, mode 600)
+scripts/probe-paid-providers.py --state-dir ~/.cache/tendrl-probe --json /tmp/probe.json
+jq '.ppq | {account, balance, topup_invoice, topup_status}' /tmp/probe.json
+jq '.routstr | {healthy_count, chosen_node, nodes: [.nodes[] | select(.model_count>0) | {url,name,model_count,mints,latency_s}]}' /tmp/probe.json
+
+# one side only
+scripts/probe-paid-providers.py --skip routstr
+scripts/probe-paid-providers.py --skip ppq
+
+# routstr discovery by hand (nak blocks on an open stdin — always redirect)
+nak req -k 38421 --limit 200 wss://relay.routstr.com wss://nos.lol < /dev/null \
+  | jq -r '[.tags[] | select(.[0]=="u") | .[1]][0]' | sort -u
+curl -s https://routstr.eduvietkieu.com/v1/info | jq .
+curl -s https://routstr.eduvietkieu.com/v1/models | jq '.data[0].sats_pricing'
+#+end_src
+
+Expected (2026-09-22): ppq create → 201 with =credit_id= + =api_key=; balance
+0; a 100-sat invoice with =status: "New"=. routstr: ~16 https nodes announced,
+~5 healthy; =api.routstr.com= itself 404; =/v2/lightning/invoice= 404 on every
+node (Cashu is the only on-ramp).

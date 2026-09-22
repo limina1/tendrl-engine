@@ -1,0 +1,225 @@
+#+TITLE: Paid LLM providers — ppq.ai and the routstr network
+#+DATE: 2026-09-22
+#+BRANCH: feat/paid-providers
+
+Support both ppq.ai and routstr as model providers for the in-engine agent
+loop, with account creation, funding, and balance tracking owned by the
+engine, so the research-and-publish loop runs on mobile without a
+subscription or a desktop harness. This document records what the live
+services actually do (probed 2026-09-22 with
+=scripts/probe-paid-providers.py=) and the design built on those shapes.
+Read [[file:ai-tools-architecture.md][the AI tools architecture]] first:
+the agent loop, the tool catalog and the approval gates already exist;
+this adds a second provider family, a funding flow, and web research.
+
+* Why both
+
+| | ppq.ai | routstr |
+|-+--------+---------|
+| What it is | one operator, one endpoint | a protocol; ~16 https nodes announced, 5 healthy when probed |
+| Identity | =credit_id= + =sk-= keys, created with one unauthenticated call | a Cashu token; hashed server-side it *is* the key |
+| Funding | Lightning invoice, NWC auto top-up, on-chain, Stripe | Cashu token only (see below) |
+| Balance | provider-side credit, USD | bearer ecash, msats, refundable to a token any time |
+| Catalog | 371 models, USD per-1M pricing | per node: 3–366 models, sats per token + per-model =max_cost= |
+| Web search | built in (=plugins: [{id: "web"}]= or a =web_search= tool) | none; the =sats_pricing= schema has a =web_search= slot but no node offers it |
+| Spend caps | per key, =usage_limit_usd= with daily/weekly/monthly reset | none server-side; the balance is the cap |
+| Fits | "it just works" preset, first-time mobile user | "sovereign" preset, no account, node choice, own mint |
+
+Same adapter for both (OpenAI chat-completions wire format). What differs
+is the account record, the funding flow, and where web search comes from.
+
+* Verified surface (2026-09-22)
+
+All shapes below were observed live. Nothing was paid; the ppq account
+the probe created has a zero balance and its key lives only in the probe
+state dir (=~/.cache/tendrl-probe/ppq-account.json= by default).
+
+** ppq.ai — base =https://api.ppq.ai=
+
+| Call | Auth | Observed |
+|------+------+----------|
+| =POST /accounts/create= body ={}= | none | *201* ={success, credit_id (uuid), api_key (sk-…, 25 chars), balance: 0}= |
+| =POST /credits/balance= body ={credit_id}= | bearer | 200 ={balance: 0}= |
+| =GET /keys= | =x-credit-id= header (no bearer) | 200 ={status: "success", data: [{_id, name: "Default", usage_limit_usd, current_period_usage_usd, total_usage_all_time_usd, reset_period, reset_at, expire_at, created_at, …}]}= — a "Default" key exists from creation |
+| =POST /topup/create/btc-lightning= body ={amount: 100, currency: "SATS"}= | bearer | *201* ={invoice_id, lightning_invoice (bolt11), checkout_url, amount, currency, created_at, expires_at}= — expires 15 min after creation |
+| =GET /topup/status/{invoice_id}= | bearer | 200 ={invoice_id, status: "New", amount, currency, amount_paid, amount_due, payment_method, lightning_invoice, created_at, expires_at}= |
+| =GET /queries/history?page_count=N= | bearer | 200 ={status, data: [{timestamp, model, input_count, output_count, price_in_usd, …}], pagination: {page, page_count, total, total_pages}}= |
+| =GET /v1/models= | none | 200 ={data: [{id, pricing: {type: "per_token", currency: "USD", input_per_1M_tokens, output_per_1M_tokens}}]}= — 371 models incl. =claude-fable-5.1= |
+
+Notes: create returns 201, not 200. List endpoints wrap in
+={status, data}=. Minimum Lightning top-up is 100 sats. Documented but
+not exercised: =POST /keys= (per-key USD caps), =POST /nwc-auto-topup/connect=,
+L402 (=402= + =Authorization: L402 <token>:<preimage>=), the
+=plugins=/=web_search= research option, tool calling on
+=/v1/chat/completions= and =/v1/responses=.
+
+** routstr — discovered nodes
+
+*=api.routstr.com= is dead* (404 on =/=, =/v1/models=, =/v1/balance/info=)
+even though it still appears in a kind-38421 announcement. Discovery is
+therefore mandatory, not optional.
+
+- Discovery: =nak req -k 38421 wss://relay.routstr.com wss://nos.lol= →
+  the =u= tag is the base URL. 16 https nodes announced; 10 probed; 5
+  healthy (info + models both 200): Hana Gateway, GitHappens2Routstr,
+  Omochi Node, PlebChat Paygate, Blazelight Node 1. The rest: Cloudflare
+  5xx, dead tunnels, or connection refused. Onion and LAN URLs are also
+  announced and skipped.
+- =GET {node}/v1/info= → ={name, description, version ("0.4.7+g…"), npub,
+  mints: [url…], http_url, onion_url, child_key_cost_msats?}=. The mints
+  list is the trust boundary: a token from a mint not in that list is
+  refused. Live nodes accept =mint.minibits.cash/Bitcoin= and
+  =mint.cubabitcoin.org= almost universally.
+- =GET {node}/v1/models= → ={data: [{id, pricing (USD), sats_pricing:
+  {prompt, completion, request, image, web_search, internal_reasoning,
+  input_cache_read, input_cache_write, max_prompt_cost,
+  max_completion_cost, max_cost}}]}=. =sats_pricing.prompt= is *sats per
+  token*; =max_cost= is the reservation ceiling a request may hold.
+- =GET {node}/v1/balance/info= with a bad key → 401 ={error: {message:
+  "Invalid API key format. Expected an 'sk-...' API key or a 'cashu...'
+  token.", type: "invalid_request_error", code: "invalid_api_key"},
+  request_id}=. With a real key (from the source, =routstr/balance.py=):
+  ={api_key, balance, reserved, total_requests, total_spent,
+  validity_date}=, msats.
+- =GET {node}/v1/balance/create?initial_balance_token=cashu…= → ={api_key}=;
+  without the token → 422 pydantic "Field required".
+- =POST {node}/v1/balance/topup= body ={cashu_token}=;
+  =POST {node}/v1/balance/refund= → ={token}= in the body and an =X-Cashu=
+  response header; =GET {node}/v1/balance/history= → ={transactions: [{id,
+  type, source, amount, unit, mint_url, created_at, collected, swept}]}=
+  (from source; need a funded key to exercise).
+- *=POST /v2/lightning/invoice= does not exist on the network.* It is in
+  docs.routstr.com for the dead central endpoint; all four 0.4.x nodes
+  tested return 404 (one returns a "Model 'unknown' not found" 400). On
+  routstr today, *Cashu is the only way in.*
+- Per-request payment without a key: =Authorization: Bearer cashu…= or
+  =X-Cashu: cashu…= on a completion; change comes back in an =X-Cashu=
+  response header. Not exercised (needs a token).
+
+** What the probe could not verify
+
+- Tool-call (=tools= / =tool_calls=) passthrough on routstr nodes. The
+  proxy is transparent so it should work, but confirm with a funded
+  token before relying on it for the agent loop.
+- ppq =plugins: [{id: "web"}]= behaviour with tool calling in the same
+  request, and how the search results surface in the response
+  (annotations? plain text?).
+- routstr refund/topup/history response bodies (source-read only).
+
+* Design
+
+** One adapter, two account kinds
+
+- =src/llm.rs= gains =OpenAiCompatProvider { base_url, credential, model }=
+  translating the existing =ContentBlock= / =AgentMessage= /
+  =ToolDefinition= types to the chat-completions wire format
+  (=tools= → =tool_calls=, =ToolResults= → =role: tool= messages).
+  =ClaudeProvider= stays. =provider_from_config= picks by =ai.provider=:
+  ="claude" | "ppq" | "routstr" | "noop"=.
+- =src/providers.rs= (new): the account layer.
+  #+begin_src rust
+  pub enum ProviderAccount {
+      Ppq     { credit_id: String, api_key: Secret, default_key_id: Option<String> },
+      Routstr { node: NodeRef, api_key: Secret /* sk- from balance/create */,
+                mint_urls: Vec<String> },
+  }
+  pub struct BalanceSnapshot { unit: Usd | Msat, amount: f64, reserved: Option<u64>,
+                               total_spent: Option<f64>, fetched_at: u64 }
+  pub struct NodeRef { url: String, name: Option<String>, npub: Option<String>,
+                       version: Option<String>, mints: Vec<String> }
+  #+end_src
+  Persisted at =<data_dir>/providers.json= (non-secret part); the key goes
+  through the same keyring-with-session-fallback the assistant identity
+  uses. Never a Nostr event.
+- =ProviderEngine= (on =Engine=): =setup_ppq()= (one call → account),
+  =discover_routstr(relays)= (38421 → probe =/v1/info= + =/v1/models=
+  concurrently → ranked =NodeRef= list: healthy, latency, model count,
+  has the configured model), =adopt_routstr_token(node, cashu)= (→
+  =balance/create= → sk key), =balance()= (ppq =credits/balance= or
+  routstr =balance/info=, cached with =fetched_at=), =fund()= (ppq →
+  invoice; routstr → =balance/topup= with a pasted token),
+  =refund_routstr()= (→ token, shown once, copied to the user's wallet),
+  =ledger()= (ppq =queries/history=; routstr =balance/history=).
+
+** Funding as an intent
+
+A turn that would run with a balance below the per-turn ceiling emits a
+=FundingIntent= on the same SSE stream as fetch and publish intents. The
+UI approves it and gets, per provider:
+
+- ppq: a bolt11 + QR + =lightning:= link, polled via =topup/status= until
+  =status != "New"= or =expires_at=; or "connect NWC" once, after which
+  the provider refills itself.
+- routstr: a paste-a-token field (Minibits / Nutstash / cashu.me), with
+  the node's accepted mints shown so the user picks a token the node
+  will take. A "withdraw" action calls refund and shows the returned
+  token once.
+
+Spend is shown in the activity log next to relay fetches: ppq in USD
+from =queries/history= (diff since the turn started), routstr in sats
+from =balance/info= (=total_spent= diff). The ceiling per turn is
+=ai.max_turn_cost= in the config, unit-aware.
+
+** Presets in the UI
+
+Settings → AI Tools → *Provider* offers three cards:
+
+1. *Claude (API key)* — today's path, unchanged.
+2. *ppq.ai* — one button "Create account" (calls =setup_ppq=; shows the
+   credit id so the user can save it), then a balance pill and a "Fund"
+   button. Model picker from =/v1/models= filtered to chat models.
+   "Web search: built in" badge.
+3. *routstr* — "Find nodes" (discovery table: name, latency, models,
+   mints, version; pick one), then "Paste a Cashu token" to create the
+   key. Balance pill in sats. "Web search: none — configure a search
+   backend" note pointing at the Web tools section.
+
+The mobile shell shows the same cards; the ppq card is the recommended
+default there.
+
+** Web research tools
+
+New =ToolCategory::Web= with =web_search= and =fetch_url=, approval-gated
+like =Network=. Backend order: the ppq server-side plugin when the active
+provider is ppq (zero code, no extra key); else a configured SearXNG URL
+or Brave key; NIP-90 kind-5302 search DVMs cover Nostr search only and
+are a separate tool. =fetch_url= is engine-side =reqwest= + the existing
+=html2text= path from =document.rs=.
+
+** Config
+
+#+begin_src toml
+[ai]
+provider = "ppq"            # claude | ppq | routstr | noop
+model = "claude-sonnet-5"   # provider's id space
+max_turn_cost = 0.25        # USD on ppq; sats on routstr when unit = "sat"
+max_turn_cost_unit = "usd"
+
+[ai.routstr]
+relays = ["wss://relay.routstr.com", "wss://nos.lol"]
+node = ""                   # chosen base URL; empty = discover on first use
+trusted_mints = ["https://mint.minibits.cash/Bitcoin", "https://mint.cubabitcoin.org"]
+
+[ai.web]
+search_backend = "provider" # provider | searxng | brave | none
+searxng_url = ""
+#+end_src
+
+Keys never live in TOML.
+
+* Plan
+
+- [X] Probe both providers live; record shapes (=scripts/probe-paid-providers.py=, this doc)
+- [ ] =OpenAiCompatProvider= in =src/llm.rs= + unit tests on the wire translation (tool_calls both ways, streaming off first)
+- [ ] =src/providers.rs=: account types, store, =ProviderEngine= (ppq setup / balance / invoice / status / history; routstr discover / adopt token / balance / topup / refund)
+- [ ] API: =/api/v1/providers= (GET state), =/providers/ppq/setup=, =/providers/routstr/discover=, =/providers/routstr/adopt=, =/providers/balance=, =/providers/fund=, =/providers/refund=, =/providers/ledger=
+- [ ] Funding intent on the fetch-events SSE stream + confirm endpoint
+- [ ] Settings → AI Tools provider cards (desktop + mobile shell)
+- [ ] Per-turn spend accounting in the activity log; =max_turn_cost= guard
+- [ ] =ToolCategory::Web=: =web_search= / =fetch_url=, provider plugin path first
+- [ ] Verify with a funded token: routstr tool-call passthrough; ppq web plugin + tools in one request
+- [ ] Zettel: =feat-paid-providers.org=, decision note "Cashu is the only routstr on-ramp", update =feat-assistant.org= tool-parity list
+
+* Verify
+
+See =docs/commands.org= → "Paid providers — signup probe".
