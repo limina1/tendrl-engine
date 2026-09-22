@@ -101,12 +101,13 @@ impl ToolPolicy {
 }
 
 impl Default for ToolPolicy {
-    /// "Everything but publish": all Read/Search/Network/ComposeWrite tools
-    /// enabled; Publish tools opt-in.
+    /// Every tool enabled — including Publish (2026-09-22: the assistant has
+    /// its own identity and publishes under it, never the user's; broadcasts
+    /// still pass the Confirm-mode publish confirmation, and the AI Tools
+    /// settings tab can switch any tool off).
     fn default() -> Self {
         let enabled = catalog()
             .iter()
-            .filter(|t| t.category != ToolCategory::Publish)
             .map(|t| t.name.to_string())
             .collect();
         let require_approval = [ToolCategory::Network, ToolCategory::Publish]
@@ -219,10 +220,22 @@ pub fn catalog() -> Vec<ToolDef> {
             input_schema: schema_save_draft,
         },
         ToolDef {
+            name: "get_identities",
+            description: "Who you are and who the user is. Returns the assistant's own Nostr identity (pubkey, npub, signer source such as an engine key or a NIP-46 bunker, kind-0 name when known) and the user's (pubkey, npub, whether they can sign right now). Call this before searching with `by:assistant` (your own publications) or `by:me` (the user's), or whenever you are asked what you are, whose key signs your publications, or whether you can publish.",
+            category: ToolCategory::Read,
+            input_schema: schema_empty,
+        },
+        ToolDef {
             name: "publish",
-            description: "Broadcast an event that ALREADY EXISTS locally (by its 64-hex id) to relays. This does NOT sign or create content — signing is a deliberate user action; this only performs the separate broadcast step for something already signed (e.g. a snapshot the user made). In Confirm mode it pops a publish confirmation the user must approve. Disabled by default; only call it when the user has explicitly asked to broadcast a specific local event.",
+            description: "Broadcast events that ALREADY EXIST locally (64-hex ids — pass `ids` for a whole publication: the index plus its sections) to relays. This does NOT sign or create content; it is the separate broadcast step for something already signed (a snapshot the user made, or your own `sign_draft` / `publish_publication` with broadcast: false). In Confirm mode it pops one publish confirmation the user must approve. Only call it when the user has asked to broadcast.",
             category: ToolCategory::Publish,
             input_schema: schema_publish,
+        },
+        ToolDef {
+            name: "publish_publication",
+            description: "Publish content under YOUR OWN identity (the assistant's key — engine key or bunker — never the user's): sign a title + ordered sections as an NKBIP-01 publication (30040 index + 30041 sections), store it locally, and broadcast it to the publish relays. Set `kind` (30023 long-form, 30818 wiki, or another addressable kind) with `content` to publish one atomic event instead. Call this when the user explicitly asks you to publish something as yourself; use `propose_section` when they want it in THEIR composer. In Confirm network mode the broadcast pops a confirmation the user approves; `broadcast: false` signs and stores only (a local snapshot you can `publish` later by id).",
+            category: ToolCategory::Publish,
+            input_schema: schema_publish_publication,
         },
         ToolDef {
             name: "sign_draft",
@@ -267,7 +280,9 @@ pub async fn dispatch(cx: &ToolCx, name: &str, input: Value) -> Result<Value> {
         "propose_section" => propose_section(input).await,
         "edit_section" => edit_section(engine, input).await,
         "save_draft" => save_draft(engine, input).await,
+        "get_identities" => get_identities(engine).await,
         "publish" => publish(engine, input).await,
+        "publish_publication" => publish_publication(cx, input).await,
         "sign_draft" => sign_draft(cx, input).await,
         other => Err(EngineError::BadRequest(format!("unknown tool: {other}"))),
     }
@@ -390,14 +405,64 @@ fn schema_publish() -> Value {
     json!({
         "type": "object",
         "properties": {
-            "id": { "type": "string", "description": "64-hex id of a local, already-signed event to broadcast." },
+            "id": { "type": "string", "description": "64-hex id of one local, already-signed event to broadcast." },
+            "ids": {
+                "type": "array",
+                "items": { "type": "string" },
+                "description": "Several 64-hex ids to broadcast together in one confirmation — e.g. a publication's index id followed by its section ids."
+            },
             "relays": {
                 "type": "array",
                 "items": { "type": "string" },
                 "description": "Optional relay URLs to broadcast to (defaults to the configured publish relays)."
             }
+        }
+    })
+}
+
+fn schema_empty() -> Value {
+    json!({ "type": "object", "properties": {}, "additionalProperties": false })
+}
+
+fn schema_publish_publication() -> Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "title": { "type": "string", "description": "Publication (or atomic event) title." },
+            "sections": {
+                "type": "array",
+                "description": "Ordered sections for the 30040/30041 path (ignored when `kind` is set).",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "title": { "type": "string" },
+                        "content": { "type": "string" },
+                        "level": { "type": "integer", "description": "Heading depth: 2 = top-level section, 3+ = nested." },
+                        "tags": {
+                            "type": "array",
+                            "items": { "type": "array", "items": { "type": "string" }, "minItems": 2, "maxItems": 2 },
+                            "description": "Optional [name, value] tag pairs for this section."
+                        }
+                    },
+                    "required": ["content"]
+                }
+            },
+            "tags": {
+                "type": "array",
+                "items": { "type": "array", "items": { "type": "string" }, "minItems": 2, "maxItems": 2 },
+                "description": "Optional [name, value] tag pairs on the index (or the atomic event), e.g. [[\"t\", \"nostr\"]]."
+            },
+            "kind": { "type": "integer", "description": "Publish ONE atomic event of this addressable kind (30023 long-form, 30818 wiki, …) with `content` as its body, instead of a section graph." },
+            "content": { "type": "string", "description": "Body of the atomic event (only with `kind`)." },
+            "d_tag": { "type": "string", "description": "Reuse this d tag to replace an earlier version instead of creating a new publication." },
+            "broadcast": { "type": "boolean", "description": "Send to the publish relays after signing (default true). false = sign + store locally only." },
+            "relays": {
+                "type": "array",
+                "items": { "type": "string" },
+                "description": "Optional relay URLs (defaults to the configured publish relays)."
+            }
         },
-        "required": ["id"]
+        "required": ["title"]
     })
 }
 
@@ -919,53 +984,48 @@ async fn sign_draft(cx: &ToolCx, input: Value) -> Result<Value> {
         "publication_id": v["publication_id"],
         "section_ids": v["section_ids"],
         "ingested": v["ingested"],
-        "note": "Signed and stored locally. Use `publish` with the publication_id to broadcast.",
+        "note": "Signed and stored locally. Use `publish` with ids: [publication_id, ...section_ids] to broadcast the whole publication in one confirmation.",
     }))
 }
 
-/// Broadcast an already-signed local event to relays — the deliberate
-/// "broadcast" step, decoupled from signing (which stays a user action). Gated
-/// through `begin_publish_operation` (PublishConfirmModal in Confirm mode). On
-/// success, records relay provenance so the feed pill flips local → published.
-async fn publish(engine: &Arc<Engine>, input: Value) -> Result<Value> {
-    let id = require_str(&input, "id")?;
-    let event = engine
-        .get_by_id(id, FetchPolicy::LocalOnly)
-        .await?
-        .ok_or_else(|| EngineError::NotFound(format!("no local event with id {id}")))?;
-    let event_json =
-        serde_json::to_string(&event).map_err(|e| EngineError::Other(format!("serialize: {e}")))?;
-
-    let relays = input
-        .get("relays")
-        .and_then(Value::as_array)
-        .map(|a| {
-            a.iter()
-                .filter_map(|v| v.as_str().map(String::from))
-                .collect::<Vec<_>>()
-        })
+/// Broadcast already-signed local events to relays — the deliberate
+/// "broadcast" step, decoupled from signing. One `begin_publish_operation`
+/// covers the whole batch (PublishConfirmModal in Confirm mode; Auto
+/// proceeds). On success, records relay provenance so the feed pill flips
+/// local → published.
+async fn broadcast_ids(
+    engine: &Arc<Engine>,
+    ids: &[String],
+    relays: Option<Vec<String>>,
+    label: String,
+) -> Result<Value> {
+    if ids.is_empty() {
+        return Err(EngineError::BadRequest("no event ids to broadcast".into()));
+    }
+    let mut event_jsons: Vec<String> = Vec::with_capacity(ids.len());
+    for id in ids {
+        let event = engine
+            .get_by_id(id, FetchPolicy::LocalOnly)
+            .await?
+            .ok_or_else(|| EngineError::NotFound(format!("no local event with id {id}")))?;
+        event_jsons.push(
+            serde_json::to_string(&event)
+                .map_err(|e| EngineError::Other(format!("serialize: {e}")))?,
+        );
+    }
+    let relays = relays
         .filter(|v| !v.is_empty())
         .unwrap_or_else(|| engine.publish_relays());
 
     let op = match engine
-        .begin_publish_operation(
-            format!(
-                "AI broadcast {} to {} relay(s)",
-                truncate(id, 12),
-                relays.len()
-            ),
-            relays.clone(),
-            vec![id.to_string()],
-            None,
-            None,
-        )
+        .begin_publish_operation(label, relays.clone(), ids.to_vec(), None, None)
         .await
     {
         Ok(o) => o,
         Err(_) => {
             return Ok(json!({
                 "published": false,
-                "note": "The user declined to broadcast this event.",
+                "note": "The user declined to broadcast.",
             }));
         }
     };
@@ -974,18 +1034,17 @@ async fn publish(engine: &Arc<Engine>, input: Value) -> Result<Value> {
     for url in &chosen {
         op.relay_status(url.clone(), crate::network::RelayStatusValue::Connecting);
     }
-    let (accepted, rejected, results) = crate::relay::publish_events_to_relays(
-        &chosen,
-        &[event_json.clone()],
-        &engine.relay_auth(),
-    )
-    .await;
+    let (accepted, rejected, results) =
+        crate::relay::publish_events_to_relays(&chosen, &event_jsons, &engine.relay_auth())
+            .await;
     for r in &results {
         let status = crate::api::publish_result_status(r);
         op.relay_status(r.relay_url.clone(), status);
         if r.success {
             // Best-effort provenance — failure only delays the feed pill flip.
-            let _ = engine.record_event_relay(&event_json, &r.relay_url);
+            for ej in &event_jsons {
+                let _ = engine.record_event_relay(ej, &r.relay_url);
+            }
         }
     }
     op.complete(accepted);
@@ -996,9 +1055,261 @@ async fn publish(engine: &Arc<Engine>, input: Value) -> Result<Value> {
         .collect();
     Ok(json!({
         "published": accepted > 0,
+        "event_count": ids.len(),
         "accepted": accepted,
         "rejected": rejected,
         "results": out,
+    }))
+}
+
+fn ids_from_input(input: &Value) -> Vec<String> {
+    let mut ids: Vec<String> = input
+        .get("ids")
+        .and_then(Value::as_array)
+        .map(|a| a.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+        .unwrap_or_default();
+    if let Some(id) = input.get("id").and_then(Value::as_str) {
+        if !ids.iter().any(|x| x == id) {
+            ids.insert(0, id.to_string());
+        }
+    }
+    ids
+}
+
+fn relays_from_input(input: &Value) -> Option<Vec<String>> {
+    input.get("relays").and_then(Value::as_array).map(|a| {
+        a.iter()
+            .filter_map(|v| v.as_str().map(String::from))
+            .collect::<Vec<_>>()
+    })
+}
+
+fn tag_pairs(v: Option<&Value>) -> Vec<crate::publication::compose::TagEntry> {
+    v.and_then(Value::as_array)
+        .map(|a| {
+            a.iter()
+                .filter_map(|t| {
+                    let t = t.as_array()?;
+                    Some(crate::publication::compose::TagEntry {
+                        name: t.first()?.as_str()?.to_string(),
+                        value: t.get(1)?.as_str()?.to_string(),
+                    })
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// `publish`: broadcast one id or a batch of ids.
+async fn publish(engine: &Arc<Engine>, input: Value) -> Result<Value> {
+    let ids = ids_from_input(&input);
+    if ids.is_empty() {
+        return Err(EngineError::BadRequest(
+            "pass `id` (one event) or `ids` (several) to broadcast".into(),
+        ));
+    }
+    let relays = relays_from_input(&input);
+    let label = if ids.len() == 1 {
+        format!("AI broadcast {}", truncate(&ids[0], 12))
+    } else {
+        format!("AI broadcast {} events ({}…)", ids.len(), truncate(&ids[0], 12))
+    };
+    broadcast_ids(engine, &ids, relays, label).await
+}
+
+/// `publish_publication`: sign as the assistant (its own key / bunker — never
+/// the user's), ingest, and broadcast in one call. The signing half mirrors
+/// `POST /api/v1/publish` with `sign_as: assistant`; the broadcast half is
+/// the same Confirm-gated batch as `publish`.
+#[allow(clippy::field_reassign_with_default)] // mirrors api::publish_handler's SectionCompose build
+async fn publish_publication(cx: &ToolCx, input: Value) -> Result<Value> {
+    use crate::publication::compose::{ComposeState, SectionCompose};
+    let engine = &cx.engine;
+    let title = require_str(&input, "title")?.to_string();
+    let broadcast = input
+        .get("broadcast")
+        .and_then(Value::as_bool)
+        .unwrap_or(true);
+    let relays = relays_from_input(&input);
+    let d_tag = input.get("d_tag").and_then(Value::as_str).map(String::from);
+
+    let signer = engine.assistant_signing().ok_or_else(|| {
+        EngineError::Auth(
+            "no assistant identity — the user sets one (engine key or bunker) in Settings → assistant identity"
+                .into(),
+        )
+    })?;
+    let pubkey = signer.active_pubkey().await.ok_or_else(|| {
+        EngineError::Auth("assistant identity is not unlocked / connected".into())
+    })?;
+
+    let kind = input
+        .get("kind")
+        .and_then(Value::as_u64)
+        .filter(|k| *k != crate::publication::KIND_PUBLICATION_INDEX);
+    let (pub_event, section_events) = if let Some(kind) = kind {
+        let content = input
+            .get("content")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string();
+        let tags = tag_pairs(input.get("tags"));
+        let ev = crate::publication::build_signed_atomic_event_via_signer(
+            kind as u32,
+            &title,
+            &content,
+            &tags,
+            d_tag.as_deref(),
+            &pubkey,
+            signer,
+        )
+        .await
+        .map_err(|e| EngineError::Other(format!("sign: {e}")))?;
+        (ev, vec![])
+    } else {
+        let sections = input
+            .get("sections")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default();
+        if sections.is_empty() {
+            return Err(EngineError::BadRequest(
+                "a publication needs at least one section (or set `kind` + `content` for one atomic event)"
+                    .into(),
+            ));
+        }
+        let mut compose = ComposeState::new();
+        compose.title = title.clone();
+        compose.tags = tag_pairs(input.get("tags"));
+        compose.d_tag = d_tag.clone();
+        compose.sections = sections
+            .iter()
+            .map(|sec| {
+                let mut sc = SectionCompose::default();
+                sc.title = sec
+                    .get("title")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .to_string();
+                sc.content = sec
+                    .get("content")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .to_string();
+                sc.level = sec.get("level").and_then(Value::as_u64).unwrap_or(2) as u8;
+                sc.tags = tag_pairs(sec.get("tags"));
+                sc
+            })
+            .collect();
+        crate::publication::build_signed_publication_events_via_signer(&mut compose, &pubkey, signer)
+            .await
+            .map_err(|e| EngineError::Other(format!("sign: {e}")))?
+    };
+
+    let resp = crate::api::finalize_publish(engine, Some(pub_event), section_events, false, None, true)
+        .await?;
+    let v = serde_json::to_value(resp.0)?;
+    let publication_id = v["publication_id"].as_str().unwrap_or_default().to_string();
+    let mut ids = vec![publication_id.clone()];
+    ids.extend(
+        v["section_ids"]
+            .as_array()
+            .map(|a| a.iter().filter_map(|x| x.as_str().map(String::from)).collect::<Vec<_>>())
+            .unwrap_or_default(),
+    );
+
+    let broadcast_result = if broadcast {
+        Some(
+            broadcast_ids(
+                engine,
+                &ids,
+                relays,
+                format!("AI publish \"{}\" ({} events)", truncate(&title, 40), ids.len()),
+            )
+            .await?,
+        )
+    } else {
+        None
+    };
+    let published = broadcast_result
+        .as_ref()
+        .and_then(|b| b["published"].as_bool())
+        .unwrap_or(false);
+    Ok(json!({
+        "signed_as": "assistant",
+        "pubkey": pubkey,
+        "publication_id": publication_id,
+        "section_ids": v["section_ids"],
+        "event_ids": ids,
+        "stored_locally": v["ingested"],
+        "published": published,
+        "broadcast": broadcast_result,
+        "note": if broadcast {
+            if published { "Signed with your own key and broadcast." } else { "Signed and stored locally; the broadcast did not reach a relay (declined or rejected) — it can be retried with `publish`." }
+        } else {
+            "Signed and stored locally only (local snapshot). Use `publish` with event_ids to broadcast."
+        },
+    }))
+}
+
+/// `get_identities`: the assistant's own identity and the user's, so the
+/// model knows what it is, whose key signs its publications, and how to
+/// search for either (`by:assistant` / `by:me`).
+async fn get_identities(engine: &Arc<Engine>) -> Result<Value> {
+    fn npub(hex: &str) -> Option<String> {
+        crate::identity::encode_npub(hex).ok()
+    }
+    async fn kind0_name(engine: &Arc<Engine>, pubkey: &str) -> Option<String> {
+        let filter = json!({ "kinds": [0], "authors": [pubkey], "limit": 1 });
+        let resp = engine
+            .get_events_with_options(vec![filter], FetchPolicy::LocalOnly, None, false)
+            .await
+            .ok()?;
+        let ev = resp.events.first()?;
+        let content = ev.get("content").and_then(Value::as_str)?;
+        let meta = crate::user_data::Metadata::from_event_content(content, 0)?;
+        meta.display_name.or(meta.name)
+    }
+
+    let assistant_pubkey = engine.assistant_pubkey();
+    let assistant_source = engine.assistant_signing().map(|c| match c.current_source() {
+        crate::identity::IdentitySource::Engine => "engine key (stored in tendrl)".to_string(),
+        crate::identity::IdentitySource::Nip46 { .. } => "NIP-46 bunker (remote signer)".to_string(),
+        crate::identity::IdentitySource::Nip55 { .. } => "NIP-55 signer app (Amber)".to_string(),
+        crate::identity::IdentitySource::Nip07 { .. } => "NIP-07 browser extension".to_string(),
+    });
+    let assistant_name = match &assistant_pubkey {
+        Some(pk) => kind0_name(engine, pk).await,
+        None => None,
+    };
+    let user_pubkey = engine.my_pubkey();
+    let user_name = match &user_pubkey {
+        Some(pk) => kind0_name(engine, pk).await,
+        None => None,
+    };
+    let can_publish = assistant_pubkey.is_some();
+    Ok(json!({
+        "assistant": {
+            "pubkey": assistant_pubkey,
+            "npub": assistant_pubkey.as_deref().and_then(npub),
+            "name": assistant_name,
+            "signer": assistant_source,
+            "can_publish": can_publish,
+            "search": "by:assistant",
+            "note": if can_publish {
+                "This is YOU. Events you publish (publish_publication / sign_draft) are signed with this key and appear under by:assistant. The user's key is never used for your publications."
+            } else {
+                "You have no signing identity yet, so you cannot publish. The user can give you one (an engine key or a bunker) in Settings → assistant identity."
+            },
+        },
+        "user": {
+            "pubkey": user_pubkey,
+            "npub": user_pubkey.as_deref().and_then(npub),
+            "name": user_name,
+            "logged_in": user_pubkey.is_some(),
+            "search": "by:me",
+            "note": "The person you are helping. Their publications are under by:me. You never sign as them — drafts for their composer go through propose_section.",
+        },
     }))
 }
 
@@ -1142,18 +1453,15 @@ mod tests {
     }
 
     #[test]
-    fn default_policy_is_everything_but_publish() {
+    fn default_policy_enables_every_tool_and_gates_publish() {
         let policy = ToolPolicy::default();
-        // No Publish tools exist yet, but the filter must hold for the catalog.
         for t in catalog() {
-            let enabled = policy.enabled.contains(t.name);
-            assert_eq!(
-                enabled,
-                t.category != ToolCategory::Publish,
-                "tool {} enablement",
-                t.name
-            );
+            assert!(policy.enabled.contains(t.name), "tool {} enablement", t.name);
         }
+        assert!(policy.require_approval.contains(&ToolCategory::Publish));
+        assert!(policy.require_approval.contains(&ToolCategory::Network));
+        assert!(catalog().iter().any(|t| t.name == "publish_publication"));
+        assert!(catalog().iter().any(|t| t.name == "get_identities"));
         // definitions() only emits enabled tools.
         let defs = definitions(&policy);
         assert_eq!(defs.len(), policy.enabled.len());

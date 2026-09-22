@@ -9419,6 +9419,39 @@ mod chat_api_tests {
     }
 
     #[tokio::test]
+    async fn test_identity_and_publish_tools_on_a_bare_engine() {
+        use crate::tools::{dispatch, ToolCx};
+        let state = make_state();
+        let cx = ToolCx {
+            engine: state.engine.clone(),
+            chat: state.chat.clone(),
+        };
+        // No identities configured: the tool still answers, and says so.
+        let v = dispatch(&cx, "get_identities", json!({})).await.unwrap();
+        assert_eq!(v["assistant"]["can_publish"], false);
+        assert_eq!(v["assistant"]["search"], "by:assistant");
+        assert_eq!(v["user"]["logged_in"], false);
+        assert_eq!(v["user"]["search"], "by:me");
+        // publish needs at least one id.
+        let err = dispatch(&cx, "publish", json!({})).await.unwrap_err();
+        assert!(matches!(err, EngineError::BadRequest(_)), "{err}");
+        // publish_publication without an assistant identity is an auth error,
+        // never a fall-through to the user's key.
+        let err = dispatch(
+            &cx,
+            "publish_publication",
+            json!({ "title": "t", "sections": [{ "content": "hello" }] }),
+        )
+        .await
+        .unwrap_err();
+        assert!(matches!(err, EngineError::Auth(_)), "{err}");
+        // Every tool is enabled by default, Publish included.
+        let policy = crate::tools::ToolPolicy::default();
+        assert!(policy.enabled.contains("publish_publication"));
+        assert!(policy.enabled.contains("get_identities"));
+    }
+
+    #[tokio::test]
     async fn test_chat_api_get_empty() {
         let state = make_state();
         let Json(resp) = chat_get(State(state)).await;

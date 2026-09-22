@@ -41,9 +41,18 @@ signing source, insertions, the engine speaking MCP, the zettel bubble.
   NKBIP-01 views, =fetch_from_relays=, =add_to_context= / =get_context= /
   =remove_from_context= — these write the engine-owned set directly through
   a =ToolCx= (engine + chat handle), no web fold-in — compose-write,
-  =sign_draft= (signs a saved draft AS THE ASSISTANT, local-until-broadcast;
-  Publish category, opt-in), =publish= (broadcast by id)). =ToolPolicy= filters the catalog before the provider call —
-  default is everything but publish; surfaced in the AI Tools settings tab.
+  =get_identities= (the assistant's own pubkey/npub/signer source + the
+  user's, with the =by:assistant= / =by:me= hints — 2026-09-22),
+  =publish_publication= (sign as the assistant — engine key or bunker —
+  store, and broadcast in one call; =kind= + =content= for an atomic
+  30023/30818; 2026-09-22), =sign_draft= (signs a saved draft AS THE
+  ASSISTANT, local-until-broadcast), =publish= (broadcast one =id= or a
+  batch of =ids= under one confirmation)). =ToolPolicy= filters the catalog
+  before the provider call — default is *every* tool since 2026-09-22
+  (Publish included: the assistant publishes under its own identity, and
+  Confirm mode still gates each broadcast); the AI Tools settings tab can
+  switch any off. =prompt.md= carries a "Who you are" section so the model
+  knows it has its own identity and how to publish.
 - Gating reuses the Confirm-mode modals; saved sessions (=src/sessions.rs=);
   editable =prompt.md= system prompt.
 
