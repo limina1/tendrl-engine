@@ -256,29 +256,46 @@
 			app.pushToast('clipboard not available — paste into the box', 'info');
 		}
 	}
-	/** Client-side peek at a cashu token: amount + mint, before it is sent. */
-	const tokenPeek = $derived.by(() => {
+	/** Engine-side peek at a pasted token (v3 JSON or v4 CBOR): mint, amount,
+	 *  and whether the target node accepts that mint — before anything is
+	 *  sent to the node. Debounced on the textarea. */
+	type TokenInspect = Awaited<ReturnType<typeof api.routstrInspectToken>>;
+	let tokenInfo = $state<TokenInspect | null>(null);
+	let tokenError = $state<string | null>(null);
+	let inspectTimer: ReturnType<typeof setTimeout> | null = null;
+	const inspectNodeUrl = $derived(
+		step === 'routstr-topup' ? (svc?.routstr?.node.url ?? null) : (chosenNode?.url ?? null)
+	);
+	$effect(() => {
 		const t = token.trim();
-		if (!t.startsWith('cashu')) return null;
-		try {
-			if (t.startsWith('cashuA')) {
-				const json = JSON.parse(atob(t.slice(6).replace(/-/g, '+').replace(/_/g, '/')));
-				const mint = json.token?.[0]?.mint as string | undefined;
-				const sats = (json.token ?? []).flatMap((x: { proofs?: { amount: number }[] }) =>
-					(x.proofs ?? []).map((p) => p.amount)
-				);
-				return { mint, sats: sats.reduce((a: number, b: number) => a + b, 0) as number, v: 'A' };
-			}
-			return { mint: undefined, sats: undefined, v: 'B' };
-		} catch {
-			return null;
+		const nodeUrl = inspectNodeUrl;
+		if (inspectTimer) clearTimeout(inspectTimer);
+		if (!t.startsWith('cashu')) {
+			tokenInfo = null;
+			tokenError = t ? 'that does not look like a Cashu token' : null;
+			return;
 		}
+		inspectTimer = setTimeout(async () => {
+			try {
+				tokenInfo = await api.routstrInspectToken(t, nodeUrl ?? undefined);
+				tokenError = null;
+			} catch (e) {
+				tokenInfo = null;
+				tokenError = e instanceof Error ? e.message : String(e);
+			}
+		}, 250);
 	});
-	const tokenMintOk = $derived.by(() => {
-		const mint = tokenPeek?.mint;
-		if (!mint || !chosenNode) return null;
-		return chosenNode.mints.some((m) => m.replace(/\/$/, '') === mint.replace(/\/$/, ''));
+	const tokenMintOk = $derived(tokenInfo?.accepted ?? null);
+	/** Nodes from the last discovery that accept the pasted token's mint. */
+	const nodesForMint = $derived.by(() => {
+		const mint = tokenInfo?.token.mint;
+		if (!mint) return [];
+		const key = mintKey(mint);
+		return nodes.filter((n) => n.reachable && n.mints.some((m) => mintKey(m) === key));
 	});
+	function mintKey(u: string): string {
+		return u.trim().replace(/\/$/, '').toLowerCase();
+	}
 	async function routstrCreate() {
 		if (!chosenNode) return;
 		const r = await run('routstr-create', () => api.routstrCreate(chosenNode!.url, token));
@@ -413,6 +430,49 @@
 </script>
 
 <svelte:window onkeydown={onKey} />
+
+{#snippet tokenVerdict()}
+	{#if tokenError}
+		<div class="asm-status asm-warn">{tokenError}</div>
+	{:else if tokenInfo}
+		{@const t = tokenInfo.token}
+		<div class="asm-status">
+			{#if t.amount != null}{fmtSats(t.amount)}{#if t.unit && t.unit !== 'sat'} ({t.unit}){/if} in {t.proofs} proof{t.proofs === 1 ? '' : 's'}{/if}
+			{#if t.mint}· from <span class="asm-mono">{mintName(t.mint)}</span>{/if}
+			{#if tokenMintOk === true}· <span class="asm-ok">✓ this node takes it</span>{/if}
+			{#if tokenMintOk === false}· <span class="asm-warn">✗ this node does not take that mint</span>{/if}
+		</div>
+		{#if tokenMintOk === false && t.mint}
+			<div class="asm-notice">
+				{tokenInfo.node_name ?? 'This node'} only accepts ecash from
+				{tokenInfo.node_mints.map(mintName).join(', ')}. Two ways out: swap the token to one of
+				those mints in your wallet (Minibits / Nutstash / cashu.me can swap between mints), or
+				use a node that accepts <span class="asm-mono">{mintName(t.mint)}</span>:
+				{#if nodesForMint.length}
+					<div class="asm-actions" style="margin-top:8px">
+						{#each nodesForMint.slice(0, 4) as n (n.url)}
+							<button
+								class="asm-btn asm-btn--ghost"
+								onclick={() => {
+									pickNode(n);
+									step = 'routstr-token';
+								}}
+								disabled={!!busy}
+								title={n.url}>{n.name ?? n.url.replace(/^https:\/\//, '')} · {n.model_count} models</button
+							>
+						{/each}
+					</div>
+				{:else}
+					<div class="asm-actions" style="margin-top:8px">
+						<button class="asm-btn asm-btn--ghost" onclick={discover} disabled={!!busy}>
+							{busy === 'discover' ? 'finding nodes…' : nodes.length ? 'none found in the last discovery — search again' : 'Find nodes that accept it'}
+						</button>
+					</div>
+				{/if}
+			</div>
+		{/if}
+	{/if}
+{/snippet}
 
 <div
 	class="asm-backdrop"
@@ -940,16 +1000,7 @@
 					<div class="asm-actions">
 						<button class="asm-btn asm-btn--ghost" onclick={pasteToken}>Paste from clipboard</button>
 					</div>
-					{#if tokenPeek}
-						<div class="asm-status">
-							{#if tokenPeek.sats != null}amount in token {fmtSats(tokenPeek.sats)}{/if}
-							{#if tokenMintOk === true}· <span class="asm-ok">mint ok</span>{/if}
-							{#if tokenMintOk === false}· <span class="asm-warn">mint not accepted by this node</span>{/if}
-							{#if tokenPeek.v === 'B'}<span class="asm-dim">(v4 token — the node will check the mint)</span>{/if}
-						</div>
-					{:else if token.trim()}
-						<div class="asm-status asm-warn">that does not look like a Cashu token</div>
-					{/if}
+					{@render tokenVerdict()}
 					<div class="asm-actions">
 						<button
 							class="asm-btn asm-btn--primary"
@@ -992,9 +1043,14 @@
 						{#each svc.routstr.node.mints as m (m)}<li class="asm-mono">{m}</li>{/each}
 					</ul>
 					<textarea class="asm-input asm-token" rows="4" placeholder="cashuB…" bind:value={token} spellcheck="false"></textarea>
+					{@render tokenVerdict()}
 					<div class="asm-actions">
 						<button class="asm-btn asm-btn--ghost" onclick={pasteToken}>Paste from clipboard</button>
-						<button class="asm-btn asm-btn--primary" onclick={routstrTopup} disabled={!!busy || !token.trim().startsWith('cashu')}>
+						<button
+							class="asm-btn asm-btn--primary"
+							onclick={routstrTopup}
+							disabled={!!busy || !token.trim().startsWith('cashu') || tokenMintOk === false}
+						>
 							{busy === 'routstr-topup' ? 'topping up…' : 'Top up'}
 						</button>
 					</div>

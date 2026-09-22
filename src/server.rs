@@ -487,6 +487,10 @@ pub async fn start(opts: ServeOptions) -> anyhow::Result<RunningServer> {
             post(crate::providers::handlers::routstr_probe),
         )
         .route(
+            "/api/v1/providers/routstr/inspect",
+            post(crate::providers::handlers::routstr_inspect),
+        )
+        .route(
             "/api/v1/providers/routstr/create",
             post(crate::providers::handlers::routstr_create),
         )

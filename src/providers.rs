@@ -219,6 +219,299 @@ pub struct FundingNeed {
 }
 
 // ---------------------------------------------------------------------------
+// Cashu token inspection — enough of NUT-00 to know the mint and amount
+// before a token leaves the device
+// ---------------------------------------------------------------------------
+
+/// What a pasted token says about itself. `mint` is what a node checks
+/// against its accepted list; the amount is the sum of the proofs.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct CashuTokenInfo {
+    /// `v3` (`cashuA…`, base64 JSON) or `v4` (`cashuB…`, base64url CBOR).
+    pub version: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mint: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub unit: Option<String>,
+    /// Sum of proof amounts, in `unit` (sats for `sat`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub amount: Option<u64>,
+    pub proofs: usize,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub memo: Option<String>,
+}
+
+fn b64_decode_any(s: &str) -> Option<Vec<u8>> {
+    use base64::engine::general_purpose::{STANDARD, STANDARD_NO_PAD, URL_SAFE, URL_SAFE_NO_PAD};
+    use base64::Engine as _;
+    let s = s.trim().trim_end_matches('=');
+    URL_SAFE_NO_PAD
+        .decode(s)
+        .or_else(|_| STANDARD_NO_PAD.decode(s))
+        .or_else(|_| URL_SAFE.decode(s))
+        .or_else(|_| STANDARD.decode(s))
+        .ok()
+}
+
+/// Parse a `cashuA…` / `cashuB…` token without contacting anyone.
+pub fn inspect_cashu_token(token: &str) -> Result<CashuTokenInfo> {
+    let t = token.trim();
+    let rest = t
+        .strip_prefix("cashu")
+        .ok_or_else(|| EngineError::BadRequest("not a Cashu token (expected it to start with `cashu`)".into()))?;
+    let (version, payload) = rest.split_at(1);
+    let bytes = b64_decode_any(payload)
+        .ok_or_else(|| EngineError::BadRequest("Cashu token: payload is not valid base64".into()))?;
+    match version {
+        "A" => {
+            let v: Value = serde_json::from_slice(&bytes)
+                .map_err(|e| EngineError::BadRequest(format!("Cashu v3 token: not JSON ({e})")))?;
+            let entries = v["token"].as_array().cloned().unwrap_or_default();
+            let mint = entries.first().and_then(|e| e["mint"].as_str()).map(str::to_string);
+            let mut amount = 0u64;
+            let mut proofs = 0usize;
+            for e in &entries {
+                for pr in e["proofs"].as_array().cloned().unwrap_or_default() {
+                    proofs += 1;
+                    amount += pr["amount"].as_u64().unwrap_or(0);
+                }
+            }
+            Ok(CashuTokenInfo {
+                version: "v3".into(),
+                mint,
+                unit: v["unit"].as_str().map(str::to_string).or(Some("sat".into())),
+                amount: Some(amount),
+                proofs,
+                memo: v["memo"].as_str().map(str::to_string),
+            })
+        }
+        "B" => {
+            let v = cbor::decode(&bytes)
+                .map_err(|e| EngineError::BadRequest(format!("Cashu v4 token: bad CBOR ({e})")))?;
+            let mut amount = 0u64;
+            let mut proofs = 0usize;
+            for ks in v["t"].as_array().cloned().unwrap_or_default() {
+                for pr in ks["p"].as_array().cloned().unwrap_or_default() {
+                    proofs += 1;
+                    amount += pr["a"].as_u64().unwrap_or(0);
+                }
+            }
+            Ok(CashuTokenInfo {
+                version: "v4".into(),
+                mint: v["m"].as_str().map(str::to_string),
+                unit: v["u"].as_str().map(str::to_string),
+                amount: Some(amount),
+                proofs,
+                memo: v["d"].as_str().map(str::to_string),
+            })
+        }
+        other => Err(EngineError::BadRequest(format!(
+            "Cashu token version `{other}` is not supported (expected A or B)"
+        ))),
+    }
+}
+
+/// Mint URLs compare loosely: scheme + host case-insensitive, trailing
+/// slash ignored (`https://mint.minibits.cash/Bitcoin/` == `…/Bitcoin`).
+pub fn mint_key(url: &str) -> String {
+    let u = url.trim().trim_end_matches('/');
+    match u.split_once("://") {
+        Some((scheme, rest)) => {
+            let (host, path) = rest.split_once('/').map(|(h, p)| (h, format!("/{p}"))).unwrap_or((rest, String::new()));
+            format!("{}://{}{}", scheme.to_ascii_lowercase(), host.to_ascii_lowercase(), path)
+        }
+        None => u.to_string(),
+    }
+}
+
+pub fn mint_accepted(accepted: &[String], mint: &str) -> bool {
+    let k = mint_key(mint);
+    accepted.iter().any(|m| mint_key(m) == k)
+}
+
+/// A minimal CBOR reader (RFC 8949) — just what a NUT-00 v4 token needs:
+/// unsigned/negative ints, byte strings (→ hex), text, arrays, maps, tags
+/// (transparent), simple values and floats, definite or indefinite length.
+mod cbor {
+    use serde_json::{json, Map, Value};
+
+    pub fn decode(bytes: &[u8]) -> std::result::Result<Value, String> {
+        let mut r = Reader { b: bytes, i: 0 };
+        let v = r.item()?;
+        Ok(v)
+    }
+
+    struct Reader<'a> {
+        b: &'a [u8],
+        i: usize,
+    }
+
+    impl<'a> Reader<'a> {
+        fn byte(&mut self) -> std::result::Result<u8, String> {
+            let v = *self.b.get(self.i).ok_or("truncated")?;
+            self.i += 1;
+            Ok(v)
+        }
+        fn take(&mut self, n: usize) -> std::result::Result<&'a [u8], String> {
+            let end = self.i.checked_add(n).ok_or("length overflow")?;
+            let s = self.b.get(self.i..end).ok_or("truncated")?;
+            self.i = end;
+            Ok(s)
+        }
+        /// Additional-info argument; `None` = indefinite length (0x1f).
+        fn arg(&mut self, ai: u8) -> std::result::Result<Option<u64>, String> {
+            Ok(Some(match ai {
+                0..=23 => ai as u64,
+                24 => self.byte()? as u64,
+                25 => u16::from_be_bytes(self.take(2)?.try_into().unwrap()) as u64,
+                26 => u32::from_be_bytes(self.take(4)?.try_into().unwrap()) as u64,
+                27 => u64::from_be_bytes(self.take(8)?.try_into().unwrap()),
+                31 => return Ok(None),
+                _ => return Err(format!("reserved additional info {ai}")),
+            }))
+        }
+        fn item(&mut self) -> std::result::Result<Value, String> {
+            let ib = self.byte()?;
+            let (major, ai) = (ib >> 5, ib & 0x1f);
+            match major {
+                0 => Ok(json!(self.arg(ai)?.ok_or("indefinite uint")?)),
+                1 => {
+                    let n = self.arg(ai)?.ok_or("indefinite negint")?;
+                    Ok(json!(-1i128 - n as i128))
+                }
+                2 => {
+                    let bytes = self.chunks(ai, 2)?;
+                    Ok(Value::String(hex::encode(bytes)))
+                }
+                3 => {
+                    let bytes = self.chunks(ai, 3)?;
+                    Ok(Value::String(String::from_utf8_lossy(&bytes).into_owned()))
+                }
+                4 => {
+                    let mut out = Vec::new();
+                    match self.arg(ai)? {
+                        Some(n) => {
+                            for _ in 0..n {
+                                out.push(self.item()?);
+                            }
+                        }
+                        None => loop {
+                            if self.peek_break()? {
+                                break;
+                            }
+                            out.push(self.item()?);
+                        },
+                    }
+                    Ok(Value::Array(out))
+                }
+                5 => {
+                    let mut out = Map::new();
+                    let mut insert = |r: &mut Self| -> std::result::Result<(), String> {
+                        let k = r.item()?;
+                        let v = r.item()?;
+                        let key = match k {
+                            Value::String(s) => s,
+                            other => other.to_string(),
+                        };
+                        out.insert(key, v);
+                        Ok(())
+                    };
+                    match self.arg(ai)? {
+                        Some(n) => {
+                            for _ in 0..n {
+                                insert(self)?;
+                            }
+                        }
+                        None => loop {
+                            if self.peek_break()? {
+                                break;
+                            }
+                            insert(self)?;
+                        },
+                    }
+                    Ok(Value::Object(out))
+                }
+                6 => {
+                    let _tag = self.arg(ai)?;
+                    self.item()
+                }
+                7 => match ai {
+                    20 => Ok(Value::Bool(false)),
+                    21 => Ok(Value::Bool(true)),
+                    22 | 23 => Ok(Value::Null),
+                    24 => {
+                        let _ = self.byte()?;
+                        Ok(Value::Null)
+                    }
+                    25 => {
+                        let h = u16::from_be_bytes(self.take(2)?.try_into().unwrap());
+                        Ok(json!(half_to_f64(h)))
+                    }
+                    26 => {
+                        let f = f32::from_be_bytes(self.take(4)?.try_into().unwrap());
+                        Ok(json!(f as f64))
+                    }
+                    27 => {
+                        let f = f64::from_be_bytes(self.take(8)?.try_into().unwrap());
+                        Ok(json!(f))
+                    }
+                    31 => Err("unexpected break".into()),
+                    _ => Ok(json!(ai)),
+                },
+                _ => unreachable!(),
+            }
+        }
+        fn peek_break(&mut self) -> std::result::Result<bool, String> {
+            if self.b.get(self.i) == Some(&0xff) {
+                self.i += 1;
+                Ok(true)
+            } else {
+                Ok(false)
+            }
+        }
+        /// Definite or indefinite byte/text string (major 2/3).
+        fn chunks(&mut self, ai: u8, major: u8) -> std::result::Result<Vec<u8>, String> {
+            match self.arg(ai)? {
+                Some(n) => Ok(self.take(n as usize)?.to_vec()),
+                None => {
+                    let mut out = Vec::new();
+                    loop {
+                        if self.peek_break()? {
+                            break;
+                        }
+                        let ib = self.byte()?;
+                        if ib >> 5 != major {
+                            return Err("bad chunk in indefinite string".into());
+                        }
+                        let n = self.arg(ib & 0x1f)?.ok_or("nested indefinite string")?;
+                        out.extend_from_slice(self.take(n as usize)?);
+                    }
+                    Ok(out)
+                }
+            }
+        }
+    }
+
+    fn half_to_f64(h: u16) -> f64 {
+        let exp = ((h >> 10) & 0x1f) as i32;
+        let mant = (h & 0x3ff) as f64;
+        let sign = if h & 0x8000 != 0 { -1.0 } else { 1.0 };
+        let v = match exp {
+            0 => mant * 2f64.powi(-24),
+            31 => {
+                if mant == 0.0 {
+                    f64::INFINITY
+                } else {
+                    f64::NAN
+                }
+            }
+            _ => (1.0 + mant / 1024.0) * 2f64.powi(exp - 25),
+        };
+        sign * v
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Store
 // ---------------------------------------------------------------------------
 
@@ -1065,15 +1358,56 @@ impl ProviderRegistry {
         }
     }
 
+    /// Refuse, before any network call, a token from a mint the node does
+    /// not list. The node would reject it anyway; this gives the user the
+    /// two lists side by side so they can swap the token or pick a node.
+    fn check_mint(node: &NodeRef, info: &CashuTokenInfo) -> Result<()> {
+        if let Some(mint) = &info.mint {
+            if !node.mints.is_empty() && !mint_accepted(&node.mints, mint) {
+                return Err(EngineError::BadRequest(format!(
+                    "this token was issued by {mint}, which {} does not accept — it takes ecash from: {}. \
+                     Swap the token at one of those mints (your wallet can do a mint-to-mint swap) or pick a node that lists {mint}.",
+                    node.name.as_deref().unwrap_or(&node.url),
+                    node.mints.join(", "),
+                )));
+            }
+        }
+        Ok(())
+    }
+
+    /// Inspect a pasted token and, given a node, whether that node takes it.
+    pub async fn routstr_inspect(&self, cashu_token: &str, node_url: Option<&str>) -> Result<Value> {
+        let info = inspect_cashu_token(cashu_token)?;
+        let (accepted, node_mints, node_name) = match node_url {
+            Some(url) => {
+                let health = self
+                    .routstr_probe(NodeRef {
+                        url: normalize_base(url),
+                        ..Default::default()
+                    })
+                    .await;
+                let accepted = info
+                    .mint
+                    .as_deref()
+                    .filter(|_| !health.node.mints.is_empty())
+                    .map(|m| mint_accepted(&health.node.mints, m));
+                (accepted, health.node.mints.clone(), health.node.name.clone())
+            }
+            None => (None, vec![], None),
+        };
+        Ok(json!({
+            "token": info,
+            "accepted": accepted,
+            "node_mints": node_mints,
+            "node_name": node_name,
+        }))
+    }
+
     /// Turn a Cashu token into a key on `node_url`
     /// (`GET /v1/balance/create?initial_balance_token=…`).
     pub async fn routstr_create(&self, node_url: String, cashu_token: String) -> Result<Value> {
         let token = cashu_token.trim().to_string();
-        if !token.starts_with("cashu") {
-            return Err(EngineError::BadRequest(
-                "that is not a Cashu token (expected it to start with `cashuA` / `cashuB`)".into(),
-            ));
-        }
+        let info = inspect_cashu_token(&token)?;
         let health = self
             .routstr_probe(NodeRef {
                 url: normalize_base(&node_url),
@@ -1086,6 +1420,7 @@ impl ProviderRegistry {
                 health.error.unwrap_or_default()
             )));
         }
+        Self::check_mint(&health.node, &info)?;
         let base = normalize_base(&node_url);
         let (status, body) = self
             .call(
@@ -1096,7 +1431,15 @@ impl ProviderRegistry {
             )
             .await?;
         if !(200..300).contains(&status) {
-            return Err(Self::fail("routstr create key", status, &body));
+            let err = Self::fail("routstr create key", status, &body);
+            let msg = err.to_string();
+            if msg.contains("mint") && !health.node.mints.is_empty() {
+                return Err(EngineError::BadRequest(format!(
+                    "{msg} — this node accepts: {}",
+                    health.node.mints.join(", ")
+                )));
+            }
+            return Err(err);
         }
         let api_key = body["api_key"].as_str().unwrap_or("").to_string();
         if api_key.is_empty() {
@@ -1262,9 +1605,8 @@ impl ProviderRegistry {
     pub async fn routstr_topup(&self, cashu_token: String) -> Result<Value> {
         let a = self.routstr()?;
         let token = cashu_token.trim().to_string();
-        if !token.starts_with("cashu") {
-            return Err(EngineError::BadRequest("that is not a Cashu token".into()));
-        }
+        let info = inspect_cashu_token(&token)?;
+        Self::check_mint(&a.node, &info)?;
         let base = normalize_base(&a.node.url);
         let (status, body) = self
             .call(
@@ -1596,6 +1938,19 @@ pub mod handlers {
         Ok(Json(serde_json::to_value(h)?))
     }
     #[derive(Deserialize)]
+    pub struct InspectReq {
+        pub cashu_token: String,
+        #[serde(default)]
+        pub node_url: Option<String>,
+    }
+    pub async fn routstr_inspect(State(st): State<ChatAppState>, Json(req): Json<InspectReq>) -> R {
+        Ok(Json(
+            st.providers
+                .routstr_inspect(&req.cashu_token, req.node_url.as_deref())
+                .await?,
+        ))
+    }
+    #[derive(Deserialize)]
     pub struct RoutstrCreateReq {
         pub node_url: String,
         pub cashu_token: String,
@@ -1711,6 +2066,84 @@ mod tests {
         assert_eq!(status_of(Some(&b(1.0)), 0.25), "funded");
         let off = Balance { error: Some("x".into()), ..b(1.0) };
         assert_eq!(status_of(Some(&off), 0.25), "offline");
+    }
+
+    /// Tiny CBOR encoder for the test — mirrors what a wallet emits for a
+    /// NUT-00 v4 token: map{m,u,t:[{i:bytes,p:[{a,s,c:bytes}]}]}.
+    mod enc {
+        pub fn head(major: u8, n: u64, out: &mut Vec<u8>) {
+            if n < 24 {
+                out.push((major << 5) | n as u8);
+            } else if n < 256 {
+                out.push((major << 5) | 24);
+                out.push(n as u8);
+            } else {
+                out.push((major << 5) | 25);
+                out.extend_from_slice(&(n as u16).to_be_bytes());
+            }
+        }
+        pub fn text(s: &str, out: &mut Vec<u8>) {
+            head(3, s.len() as u64, out);
+            out.extend_from_slice(s.as_bytes());
+        }
+        pub fn bytes(b: &[u8], out: &mut Vec<u8>) {
+            head(2, b.len() as u64, out);
+            out.extend_from_slice(b);
+        }
+    }
+
+    #[test]
+    fn inspects_v4_and_v3_tokens_and_matches_mints() {
+        use base64::engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD};
+        use base64::Engine as _;
+        // v4: {"m": mint, "u": "sat", "t": [{"i": h'00ad268c', "p": [{"a": 2, "s": "x", "c": h'02'}, {"a": 8, "s": "y", "c": h'03'}]}]}
+        let mut b = Vec::new();
+        enc::head(5, 3, &mut b);
+        enc::text("m", &mut b);
+        enc::text("https://mint.minibits.cash/Bitcoin", &mut b);
+        enc::text("u", &mut b);
+        enc::text("sat", &mut b);
+        enc::text("t", &mut b);
+        enc::head(4, 1, &mut b);
+        enc::head(5, 2, &mut b);
+        enc::text("i", &mut b);
+        enc::bytes(&[0x00, 0xad, 0x26, 0x8c], &mut b);
+        enc::text("p", &mut b);
+        enc::head(4, 2, &mut b);
+        for (a, s, c) in [(2u64, "x", 0x02u8), (8, "y", 0x03)] {
+            enc::head(5, 3, &mut b);
+            enc::text("a", &mut b);
+            enc::head(0, a, &mut b);
+            enc::text("s", &mut b);
+            enc::text(s, &mut b);
+            enc::text("c", &mut b);
+            enc::bytes(&[c], &mut b);
+        }
+        let token = format!("cashuB{}", URL_SAFE_NO_PAD.encode(&b));
+        let info = inspect_cashu_token(&token).unwrap();
+        assert_eq!(info.version, "v4");
+        assert_eq!(info.mint.as_deref(), Some("https://mint.minibits.cash/Bitcoin"));
+        assert_eq!(info.unit.as_deref(), Some("sat"));
+        assert_eq!(info.amount, Some(10));
+        assert_eq!(info.proofs, 2);
+
+        // v3
+        let v3 = json!({ "token": [{ "mint": "https://mint.cubabitcoin.org/", "proofs": [{ "amount": 4 }, { "amount": 1 }] }], "unit": "sat" });
+        let token = format!("cashuA{}", STANDARD.encode(v3.to_string()));
+        let info = inspect_cashu_token(&token).unwrap();
+        assert_eq!(info.version, "v3");
+        assert_eq!(info.amount, Some(5));
+        assert_eq!(info.mint.as_deref(), Some("https://mint.cubabitcoin.org/"));
+
+        // mint matching ignores trailing slash + case
+        let accepted = vec!["https://mint.minibits.cash/Bitcoin".to_string(), "https://mint.cubabitcoin.org".to_string()];
+        assert!(mint_accepted(&accepted, "https://mint.cubabitcoin.org/"));
+        assert!(mint_accepted(&accepted, "HTTPS://MINT.minibits.cash/Bitcoin"));
+        assert!(!mint_accepted(&accepted, "https://mint.plebchat.me"));
+
+        // garbage
+        assert!(inspect_cashu_token("nope").is_err());
+        assert!(inspect_cashu_token("cashuC00").is_err());
     }
 
     #[test]

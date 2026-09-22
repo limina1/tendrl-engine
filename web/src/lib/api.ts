@@ -2862,6 +2862,24 @@ export function routstrProbe(node_url: string): Promise<RoutstrNodeHealth> {
 		body: JSON.stringify({ node_url })
 	});
 }
+export interface CashuTokenInfo {
+	version: 'v3' | 'v4';
+	mint?: string;
+	unit?: string;
+	amount?: number;
+	proofs: number;
+	memo?: string;
+}
+export function routstrInspectToken(
+	cashu_token: string,
+	node_url?: string
+): Promise<{ token: CashuTokenInfo; accepted: boolean | null; node_mints: string[]; node_name?: string | null }> {
+	return fetchJson(`${PROVIDERS}/routstr/inspect`, {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify({ cashu_token, node_url })
+	});
+}
 export function routstrCreate(node_url: string, cashu_token: string): Promise<ProvidersState> {
 	return fetchJson<ProvidersState>(`${PROVIDERS}/routstr/create`, {
 		method: 'POST',
