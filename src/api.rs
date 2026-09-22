@@ -9451,6 +9451,106 @@ mod chat_api_tests {
         assert!(policy.enabled.contains("get_identities"));
     }
 
+    /// In Confirm mode an AI relay search (scope: "relays", or from_relays on
+    /// a lookup) must raise the SAME fetch intent the user's own searches do,
+    /// and a decline must come back as approved:false — never a silent local
+    /// downgrade, never an ungated relay hit. Local scope raises nothing.
+    #[tokio::test]
+    async fn test_ai_relay_search_raises_a_confirm_intent() {
+        use crate::network::{ConfirmDecision, FetchEvent};
+        use crate::tools::{dispatch, ToolCx};
+        let state = make_state();
+        assert!(!state.engine.is_auto(), "fresh engine should be in Confirm mode");
+        let cx = ToolCx {
+            engine: state.engine.clone(),
+            chat: state.chat.clone(),
+        };
+
+        // Local scope: no intent, no network.
+        let mut rx = state.engine.subscribe_fetch_events();
+        let v = dispatch(&cx, "search_events", json!({ "query": "k:30040 d:test-slug" }))
+            .await
+            .unwrap();
+        assert_eq!(v["scope"], "local");
+        assert!(rx.try_recv().is_err(), "local search must not emit an intent");
+
+        // Relay scope with a tag filter: an Intent appears; declining it
+        // returns approved:false with the note the model is told to act on.
+        let cx2 = ToolCx {
+            engine: state.engine.clone(),
+            chat: state.chat.clone(),
+        };
+        let task = tokio::spawn(async move {
+            dispatch(
+                &cx2,
+                "search_events",
+                json!({ "query": "k:30041 T:what's-up", "scope": "relays" }),
+            )
+            .await
+        });
+        let intent = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            loop {
+                if let Ok(FetchEvent::Intent { operation_id, label, .. }) = rx.recv().await {
+                    break (operation_id, label);
+                }
+            }
+        })
+        .await
+        .expect("an Intent within 5s");
+        assert!(intent.1.contains("AI relay search"), "{}", intent.1);
+        assert!(
+            state
+                .engine
+                .network()
+                .resolve_confirm(ConfirmDecision {
+                    operation_id: intent.0,
+                    approved: false,
+                    relays: None,
+                })
+                .await
+        );
+        let v = task.await.unwrap().unwrap();
+        assert_eq!(v["scope"], "relays");
+        assert_eq!(v["approved"], false);
+        assert_eq!(v["count"], 0);
+
+        // from_relays on a lookup goes through the same gate.
+        let cx3 = ToolCx {
+            engine: state.engine.clone(),
+            chat: state.chat.clone(),
+        };
+        let mut rx2 = state.engine.subscribe_fetch_events();
+        let task = tokio::spawn(async move {
+            dispatch(
+                &cx3,
+                "get_event",
+                json!({ "id": "f".repeat(64), "from_relays": true }),
+            )
+            .await
+        });
+        let op_id = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            loop {
+                if let Ok(FetchEvent::Intent { operation_id, .. }) = rx2.recv().await {
+                    break operation_id;
+                }
+            }
+        })
+        .await
+        .expect("an Intent for get_event");
+        state
+            .engine
+            .network()
+            .resolve_confirm(ConfirmDecision {
+                operation_id: op_id,
+                approved: false,
+                relays: None,
+            })
+            .await;
+        let v = task.await.unwrap().unwrap();
+        assert_eq!(v["approved"], false);
+        assert_eq!(v["found"], false);
+    }
+
     #[tokio::test]
     async fn test_chat_api_get_empty() {
         let state = make_state();

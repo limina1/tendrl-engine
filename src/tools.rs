@@ -125,7 +125,7 @@ pub fn catalog() -> Vec<ToolDef> {
     vec![
         ToolDef {
             name: "search_events",
-            description: "Search the local Nostr index with the structured query DSL. Call this whenever the user asks to find notes, sections, or events by kind, author, tag, time, or text. Returns compact handles (id/kind/addr/title/snippet); expand with view_publication or get_event.",
+            description: "Search Nostr events with the structured query DSL — kind (k:30040), author (by:me / by:assistant / by:npub… / by:name:…), any tag (d:slug, T:title-slug, t:topic, a:coord), time (since:/until:), exact text (\"phrase\"), or a note1/nevent1/naddr1 entity. `scope` picks where: \"local\" (default) searches the index already on this machine and never touches the network; \"relays\" queries the user's relays and pulls what it finds into the index — in Confirm network mode this pops a confirmation the user approves first (declined ⇒ approved:false, use local results). Search locally first; go to relays when local comes up empty or the user asks for fresh/complete/remote results. Returns compact handles; expand with view_publication or get_event.",
             category: ToolCategory::Search,
             input_schema: schema_search_events,
         },
@@ -143,13 +143,13 @@ pub fn catalog() -> Vec<ToolDef> {
         },
         ToolDef {
             name: "get_event",
-            description: "Fetch one event by its 64-hex id from the local index. Call this to read the full JSON of an event you found via search_events.",
+            description: "Fetch one event by its 64-hex id. Reads the local index; with from_relays: true it asks the user's relays for it (Confirm mode pops a confirmation first) and stores the result. Call this to read the full JSON of an event you found via search_events, or to pull a specific id the user gave you that is not local.",
             category: ToolCategory::Read,
             input_schema: schema_get_event,
         },
         ToolDef {
             name: "get_addressable",
-            description: "Fetch one replaceable/addressable event by its coordinate (kind, pubkey, d-tag) from the local index.",
+            description: "Fetch one replaceable/addressable event by its coordinate (kind, pubkey, d-tag). Reads the local index; with from_relays: true it asks the user's relays (Confirm mode pops a confirmation first) and stores the newest version found.",
             category: ToolCategory::Read,
             input_schema: schema_get_addressable,
         },
@@ -300,7 +300,12 @@ fn schema_search_events() -> Value {
                 "type": "string",
                 "description": "Search DSL. Examples: 'k:30040' (kind), 'by:name:alice', '\"exact phrase\"', '~:concept' (semantic), 'has:title', 'since:1700000000', or an naddr1…/nevent1…/note1… entity. Combine with spaces."
             },
-            "limit": { "type": "integer", "description": "Max results to return." }
+            "limit": { "type": "integer", "description": "Max results to return." },
+            "scope": {
+                "type": "string",
+                "enum": ["local", "relays"],
+                "description": "\"local\" (default): the on-device index only. \"relays\": query the user's relays too (Confirm mode asks the user first)."
+            }
         },
         "required": ["query"]
     })
@@ -331,7 +336,8 @@ fn schema_get_event() -> Value {
     json!({
         "type": "object",
         "properties": {
-            "id": { "type": "string", "description": "64-hex event id." }
+            "id": { "type": "string", "description": "64-hex event id." },
+            "from_relays": { "type": "boolean", "description": "Also ask the user's relays when it is not local (Confirm mode asks the user first). Default false." }
         },
         "required": ["id"]
     })
@@ -343,7 +349,8 @@ fn schema_get_addressable() -> Value {
         "properties": {
             "kind": { "type": "integer", "description": "Event kind (e.g. 30040)." },
             "pubkey": { "type": "string", "description": "Author pubkey (64-hex)." },
-            "d_tag": { "type": "string", "description": "The d-tag identifier (may be empty)." }
+            "d_tag": { "type": "string", "description": "The d-tag identifier (may be empty)." },
+            "from_relays": { "type": "boolean", "description": "Also ask the user's relays (Confirm mode asks the user first). Default false." }
         },
         "required": ["kind", "pubkey"]
     })
@@ -563,9 +570,18 @@ async fn search_events(engine: &Arc<Engine>, input: Value) -> Result<Value> {
     if let Some(limit) = input.get("limit").and_then(Value::as_u64) {
         query.limit = Some(limit as usize);
     }
-    let resp = engine.search(&query, FetchPolicy::LocalOnly, None).await?;
-    let results: Vec<Value> = resp.results.iter().map(compact_result).collect();
-    Ok(json!({ "count": resp.count, "results": results }))
+    let scope = input.get("scope").and_then(Value::as_str).unwrap_or("local");
+    match scope {
+        "relays" => relay_search(engine, q, &query).await,
+        "local" => {
+            let resp = engine.search(&query, FetchPolicy::LocalOnly, None).await?;
+            let results: Vec<Value> = resp.results.iter().map(compact_result).collect();
+            Ok(json!({ "scope": "local", "count": resp.count, "results": results }))
+        }
+        other => Err(EngineError::BadRequest(format!(
+            "search_events: scope must be \"local\" or \"relays\" (got {other:?})"
+        ))),
+    }
 }
 
 async fn semantic_search(engine: &Arc<Engine>, input: Value) -> Result<Value> {
@@ -597,10 +613,57 @@ async fn tool_search_profiles(engine: &Arc<Engine>, input: Value) -> Result<Valu
     Ok(json!({ "count": profiles.len(), "profiles": profiles }))
 }
 
+fn wants_relays(input: &Value) -> bool {
+    input
+        .get("from_relays")
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+}
+
+/// The relay set for a targeted fetch: the configured relays plus any relay
+/// hints local events attach to this id / coordinate.
+fn relays_for_target(engine: &Arc<Engine>, target: &str) -> Vec<String> {
+    let mut relays = engine.relay_config().all_urls();
+    for hint in engine.relay_hints_for_target(target) {
+        if !relays.contains(&hint) {
+            relays.push(hint);
+        }
+    }
+    relays
+}
+
 async fn get_event(engine: &Arc<Engine>, input: Value) -> Result<Value> {
     let id = require_str(&input, "id")?;
-    let event = engine.get_by_id(id, FetchPolicy::LocalOnly).await?;
-    Ok(json!({ "found": event.is_some(), "event": event }))
+    let local = engine.get_by_id(id, FetchPolicy::LocalOnly).await?;
+    if local.is_some() || !wants_relays(&input) {
+        return Ok(json!({ "found": local.is_some(), "source": "local", "event": local }));
+    }
+    // Not local and the model asked for relays: open a gated fetch operation
+    // (the Confirm-mode intent modal), then fetch with the approved relays.
+    let op = match engine
+        .begin_fetch_operation(
+            crate::network::FetchPattern::Event,
+            format!("AI fetch event {}", truncate(id, 12)),
+            vec![format!("Fetch event {id} by id")],
+            relays_for_target(engine, id),
+        )
+        .await
+    {
+        Ok(o) => o,
+        Err(_) => {
+            return Ok(json!({
+                "found": false,
+                "approved": false,
+                "note": "The user declined the relay fetch; the event is not in the local index.",
+            }));
+        }
+    };
+    let chosen = op.relays().to_vec();
+    let event = engine
+        .get_by_id_with_options(id, FetchPolicy::FetchAlways, Some(&chosen), true)
+        .await?;
+    op.complete(usize::from(event.is_some()));
+    Ok(json!({ "found": event.is_some(), "source": "relays", "approved": true, "event": event }))
 }
 
 async fn get_addressable(engine: &Arc<Engine>, input: Value) -> Result<Value> {
@@ -610,10 +673,43 @@ async fn get_addressable(engine: &Arc<Engine>, input: Value) -> Result<Value> {
         .ok_or_else(|| EngineError::BadRequest("get_addressable: missing 'kind'".into()))?;
     let pubkey = require_str(&input, "pubkey")?;
     let d_tag = input.get("d_tag").and_then(Value::as_str).unwrap_or("");
-    let event = engine
+    let local = engine
         .get_addressable(kind, pubkey, d_tag, FetchPolicy::LocalOnly)
         .await?;
-    Ok(json!({ "found": event.is_some(), "event": event }))
+    if !wants_relays(&input) {
+        return Ok(json!({ "found": local.is_some(), "source": "local", "event": local }));
+    }
+    // Addressable events can have a newer version on relays even when a
+    // local copy exists, so from_relays always asks (gated) and keeps the
+    // newest. Same intent flow as any user-initiated fetch.
+    let coord = format!("{kind}:{pubkey}:{d_tag}");
+    let op = match engine
+        .begin_fetch_operation(
+            crate::network::FetchPattern::Publication,
+            format!("AI fetch {} ({})", kind, truncate(d_tag, 24)),
+            vec![format!("Fetch coordinate {coord}")],
+            relays_for_target(engine, &coord),
+        )
+        .await
+    {
+        Ok(o) => o,
+        Err(_) => {
+            return Ok(json!({
+                "found": local.is_some(),
+                "source": "local",
+                "approved": false,
+                "note": "The user declined the relay fetch; showing the local copy if any.",
+                "event": local,
+            }));
+        }
+    };
+    let chosen = op.relays().to_vec();
+    let event = engine
+        .get_addressable_with_options(kind, pubkey, d_tag, FetchPolicy::FetchAlways, Some(&chosen), true)
+        .await?;
+    op.complete(usize::from(event.is_some()));
+    let event = event.or(local);
+    Ok(json!({ "found": event.is_some(), "source": "relays", "approved": true, "event": event }))
 }
 
 async fn list_publications(engine: &Arc<Engine>, input: Value) -> Result<Value> {
@@ -662,18 +758,12 @@ async fn list_section_versions(engine: &Arc<Engine>, input: Value) -> Result<Val
     Ok(json!({ "count": out.len(), "versions": out }))
 }
 
-/// Run a plain Nostr query against relays. Gated through the SAME flow as a
-/// user-initiated relay search: `begin_fetch_operation` emits an Intent that,
-/// in Confirm mode, blocks on the FetchConfirmModal until the user approves (or
-/// declines → `FetchCancelled`). Auto mode proceeds immediately.
-async fn fetch_from_relays(engine: &Arc<Engine>, input: Value) -> Result<Value> {
-    let q = require_str(&input, "query")?;
-    let mut query = SearchQuery::parse(q)
-        .map_err(|e| EngineError::BadRequest(format!("invalid query: {e}")))?;
-    if let Some(limit) = input.get("limit").and_then(Value::as_u64) {
-        query.limit = Some(limit as usize);
-    }
-
+/// Run a query against relays — the SAME flow as a user-initiated relay
+/// search: `begin_fetch_operation` emits an Intent that, in Confirm mode,
+/// blocks on the FetchConfirmModal until the user approves (or declines →
+/// `approved: false`). Auto mode proceeds immediately. Tag filters (`d:`,
+/// `T:`, `t:`, `a:`…) travel in the DSL like any other clause.
+async fn relay_search(engine: &Arc<Engine>, q: &str, query: &SearchQuery) -> Result<Value> {
     let relays = engine.relay_config().all_urls();
     let op = match engine
         .begin_fetch_operation(
@@ -687,7 +777,10 @@ async fn fetch_from_relays(engine: &Arc<Engine>, input: Value) -> Result<Value> 
         Ok(o) => o,
         Err(_) => {
             return Ok(json!({
+                "scope": "relays",
                 "approved": false,
+                "count": 0,
+                "results": [],
                 "note": "The user declined the relay fetch; use local results instead.",
             }));
         }
@@ -695,18 +788,32 @@ async fn fetch_from_relays(engine: &Arc<Engine>, input: Value) -> Result<Value> 
 
     let chosen = op.relays().to_vec();
     let resp = engine
-        .search_with_options(&query, FetchPolicy::FetchAlways, Some(&chosen), true)
+        .search_with_options(query, FetchPolicy::FetchAlways, Some(&chosen), true)
         .await?;
     op.complete(resp.count);
 
     let results: Vec<Value> = resp.results.iter().map(compact_result).collect();
     Ok(json!({
+        "scope": "relays",
         "approved": true,
+        "relays": chosen,
         "count": resp.count,
         "local_count": resp.local_count,
         "relay_count": resp.relay_count,
         "results": results,
     }))
+}
+
+/// `fetch_from_relays`: kept as an explicit alias of `search_events` with
+/// scope "relays" (older prompts and transcripts name it).
+async fn fetch_from_relays(engine: &Arc<Engine>, input: Value) -> Result<Value> {
+    let q = require_str(&input, "query")?;
+    let mut query = SearchQuery::parse(q)
+        .map_err(|e| EngineError::BadRequest(format!("invalid query: {e}")))?;
+    if let Some(limit) = input.get("limit").and_then(Value::as_u64) {
+        query.limit = Some(limit as usize);
+    }
+    relay_search(engine, q, &query).await
 }
 
 /// Capture a reference into the shared chat context. Resolves an event (by id

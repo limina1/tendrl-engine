@@ -2112,7 +2112,8 @@ created (=~/.cache/tendrl-probe/ppq-account.json= or the session scratch dir).
 
 #+begin_src sh
 S=/tmp/tendrl-smoke; mkdir -p $S
-printf 'initial_relays=["wss://nos.lol"]\ntimeout_ms=8000\n[network]\nmode="auto"\n[embedding]\nenabled=false\n[ai]\nprovider="noop"\n' > $S/config.toml
+# test relay ONLY: theforest — never the user's or public relays for test traffic
+printf 'initial_relays=["wss://theforest.nostr1.com"]\ntimeout_ms=8000\n[network]\nmode="auto"\n[embedding]\nenabled=false\n[ai]\necho=true\n' > $S/config.toml
 cargo build && ./target/debug/tendrl-engine -c $S/config.toml --port 3057 --data-dir $S/data --no-open &
 B=http://127.0.0.1:3057/api/v1
 curl -s $B/providers | jq .                                  # configured:false, ceilings 0.25 / 250
@@ -2125,6 +2126,8 @@ curl -s -X POST $B/providers/routstr/discover | jq '{announced,reachable}'      
 curl -s -X POST $B/providers/routstr/probe -H 'content-type: application/json' -d '{"node_url":"https://routstr.eduvietkieu.com"}' | jq .
 curl -s -X POST $B/providers/self-test -H 'content-type: application/json' -d '{"provider":"ppq","model":"claude-sonnet-5"}' | jq .  # ok:false, 402 hint while unfunded
 curl -s -N -X POST $B/chat/agent -H 'content-type: application/json' -d '{"content":"hi"}'   # needs_funding + done; /chat stays empty
+# Confirm-mode gating of the AI's relay tools (search_events scope:"relays", get_event/get_addressable from_relays)
+# is covered by `cargo test --lib test_ai_relay_search_raises_a_confirm_intent` (intent raised, decline → approved:false)
 curl -s -X DELETE $B/providers/ppq | jq .configured           # false
 #+end_src
 
