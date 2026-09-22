@@ -51,10 +51,13 @@ The API never returns =api_key= in full — a redacted form
 
 * Entry point: the drawer
 
-The mobile drawer's *status* hub gets an *agent services* section below
-the identity row: one row per configured service, the active one marked
-with a filled dot, and a =+= row to add another. Each row's pill is that
-service's state.
+The mobile drawer's *status* hub gets a *collapsible* =agent services=
+section below the identity row. Open, it lists one row per configured
+service (the active one with a filled dot) and a =+= row. Collapsed, the
+header alone carries the summary. Everything it opens is a *modal* (the
+Agent services modal, below), not a work buffer — the drawer closes, the
+modal appears over whatever buffer was active, and dismissing it lands
+you back where you were.
 
 #+begin_example
  status
@@ -64,58 +67,96 @@ service's state.
  relays                      ›
  identity          npub1…k3f
 
- agent services
- ● ppq.ai            $0.42   ›      ← active (filled dot) · balance
-   routstr       1,240 sat   ›      ← configured, not active (hollow)
- + add a service             ›      ← only providers not yet set up
+ ▾ agent services          2          ← header: tap to fold; count
+   ● ppq.ai            $0.42   ›      ← active (filled dot) · balance
+     routstr       1,240 sat   ›      ← configured, not active
+   + add a service             ›      ← only providers not yet set up
  ─────────────────────────────
  embeddings                  ›
  wiki links               3/7
  ⇅ activity                  ›
 #+end_example
 
+Folded, the header keeps the active service's state so the drawer still
+reads at a glance:
+
+#+begin_example
+ ▸ agent services   ● ppq.ai · $0.42
+#+end_example
+
+*No services yet:* there is nothing to fold, so the section is a single
+row that prompts the add — no header/child split, no empty list:
+
+#+begin_example
+ agent services       add one  ›      ← opens the modal on Signup (S1)
+#+end_example
+
 Pill states per row:
 
 #+begin_example
- ● ppq.ai            $0.42   ›      funded
- ● ppq.ai         low  ▲     ›      below the per-turn ceiling (warn pill)
- ● ppq.ai         offline    ›      last balance fetch failed; key kept
-   routstr        unfunded   ›      key exists, balance 0
+   ● ppq.ai            $0.42   ›      funded
+   ● ppq.ai         low  ▲     ›      below the per-turn ceiling (warn pill)
+   ● ppq.ai         offline    ›      last balance fetch failed; key kept
+     routstr        unfunded   ›      key exists, balance 0
 #+end_example
 
-When nothing is configured the section is just its header and the =+=
-row:
+- The fold state is per-device view state (=localStorage= like
+  =menuEdge=), default open.
+- Tapping a *service row* closes the drawer and opens the modal on the
+  Agent screen (S5) scrolled to that service. Tapping the *dot* switches
+  the active service in place (one =POST /providers/select=) without
+  leaving the drawer.
+- Tapping =+= (or the =add one= row) opens the modal on Signup (S1),
+  showing only the providers not yet set up; =+= hides once both exist
+  and returns if one is forgotten.
+- On desktop the same collapsible list sits at the top of
+  Settings → AI Tools and opens the same modal.
 
-#+begin_example
- agent services
- + add a service             ›      ← opens Signup (S1) with both cards
-#+end_example
+The section reads =GET /api/v1/providers=, refreshed when the drawer
+opens and after every agent turn.
 
-- Tapping a *service row* opens the Agent screen (S5) scrolled to that
-  service's card. Tapping the *dot* on a row switches the active service
-  in place (one =POST /providers/select=), without leaving the drawer —
-  the pill-as-action rule.
-- Tapping =+= opens Signup (S1) showing only the providers not yet set
-  up; once both exist the =+= row is hidden (until a service is
-  forgotten). If a provider later supports several accounts (Question 6,
-  several routstr nodes), =+= stays and Signup offers "another routstr
-  node".
-- On desktop the same list lives at the top of Settings → AI Tools as
-  "Agent services", with the same rows and =+=.
+* The Agent services modal
 
-The section is read from =GET /api/v1/providers=, refreshed when the
-drawer opens and after every agent turn.
+One modal hosts every screen below (S1–S5); S6 is the existing intent
+modal family. It follows the repo's overlay pattern
+(=feat-ui-patterns.org=): copy =FetchConfirmModal='s structure, mount
+once in =+layout=, drive it from a nullable =app= field —
+
+#+begin_src ts
+app.agentServicesModal = null
+  | { view: 'signup' }                                   // S1 (→ S2/S3 or S4 inside)
+  | { view: 'manage'; focus?: 'ppq' | 'routstr' }        // S5 (→ S3 fund / S4 node pick inside)
+#+end_src
+
+— rendered declaratively (no manual =mount()=; that breaks the embedded
+build). Inside the modal a small step state (=signup → ppq-created →
+ppq-fund=, =signup → routstr-nodes → routstr-token=) is component
+=$state=; a half-typed token goes to =entryDrafts= so a rotation or an
+accidental close does not lose it.
+
+*Modal-yield rule applies twice:* routstr discovery is a relay fetch
+(Confirm-gated) and a low balance raises the S6 funding intent. While
+either intent is pending the modal hides itself (=visibility: hidden=,
+state alive) and returns when the intent resolves; while its own request
+is in flight it ignores Escape and backdrop taps. Escape / backdrop /
+=‹= close it otherwise; a close mid-signup keeps whatever the engine
+already stored (an account created but unfunded shows as *unfunded* in
+the drawer).
+
+Phone: full-height sheet, header with =‹= and the title (=add a
+service= / =agent services=), body scrolls. Desktop: centred card, same
+content.
 
 * State machine
 
 #+begin_example
                 ┌──────────────┐
-   no accounts  │  UNDEFINED   │  drawer: "agent services · + add a service" → Signup (both cards)
+   no accounts  │  UNDEFINED   │  drawer: "agent services · add one ›" → modal on Signup (both cards)
                 └──────┬───────┘
         ppq created ───┤─── routstr key created
                        ▼
                 ┌──────────────┐
-                │  CONFIGURED  │  drawer: one row per service, ● = active, + for the missing one
+                │  CONFIGURED  │  drawer: collapsible list, ● = active, + for the missing one → modal
                 └──────┬───────┘
                        │ per provider:   unfunded → funded → low → offline
                        │ "forget" on the last account → UNDEFINED
@@ -132,10 +173,10 @@ All at phone width. =[ ]= is a button, =( )= a radio, =▾= a picker,
 saves; destructive actions are *armed buttons* (tap once to arm, again
 to fire), never browser dialogs — per =feat-ui-patterns.org=.
 
-** S1 — Signup (from =+ add a service=)
+** S1 — Signup (modal, from =add one= / =+=)
 
 Shows both cards when nothing is configured; only the missing provider's
-card when one already exists (the header then reads "add a service").
+card when one already exists.
 
 #+begin_example
  ‹ add a service
@@ -300,10 +341,11 @@ Failure modes shown inline, not as toasts: *token already spent*, *mint
 not accepted by this node* (with the list again), *node unreachable —
 pick another*.
 
-** S5 — Agent screen (CONFIGURED)
+** S5 — Agent screen (modal, from a service row)
 
-What a service row in the drawer opens (scrolled to that service). Both
-cards are on one screen so switching is a glance away.
+What a service row in the drawer opens — the same modal on its =manage=
+view, scrolled to that service. Both cards are on one screen so switching
+is a glance away.
 
 #+begin_example
  ‹ agent
@@ -379,10 +421,10 @@ Confirm-mode fetch.
 
 ** S7 — Desktop
 
-Same buffer, opened from the buffer switcher or a "Provider accounts ›"
-link at the top of Settings → AI Tools. The existing AI Tools =provider=
-/ =model= fields become read-only mirrors of the active selection with
-that link, so there is one place that owns the choice.
+Same modal, opened from the collapsible "agent services" list at the
+top of Settings → AI Tools (and from the command palette). The existing
+AI Tools =provider= / =model= fields become read-only mirrors of the
+active selection, so there is one place that owns the choice.
 
 * API surface behind the screens
 
@@ -407,9 +449,10 @@ that link, so there is one place that owns the choice.
   must fix on that screen.
 - Each drawer service row is a *pill-as-action* (status you can tap),
   matching network / identity; the dot switches, the row opens.
-- Buffer view state (which step of S4 you are on, a half-pasted token)
-  lives in =store.bufferState= / =entryDrafts=, never persisted; account
-  state lives in the engine.
+- Modal step state is component =$state=; a half-pasted token lives in
+  =entryDrafts=; the drawer fold is a =localStorage= view pref. Account
+  state lives in the engine. Modal follows =FetchConfirmModal= +
+  the modal-yield rule (discovery and funding both raise intents).
 - Async affordances always show what a tap does now (creating…, waiting
   for payment · 14:32, refreshing).
 
@@ -440,8 +483,8 @@ that link, so there is one place that owns the choice.
 - [ ] engine: =src/providers.rs= store + ppq/routstr clients + =ProviderState= view
 - [ ] engine: =OpenAiCompatProvider= in =llm.rs=; agent loop reads the store per turn
 - [ ] engine: =/api/v1/providers/*= routes; discovery Confirm-gated; funding intent
-- [ ] web: =agent= buffer kind (tours.ts + registry.ts + BufferRenderer) with S1–S5
-- [ ] web: drawer "agent services" section (rows, active dot, + row); Settings → AI Tools mirror
+- [ ] web: =AgentServicesModal= (mounted in =+layout=, =app.agentServicesModal= driven, yields to intents) with S1–S5
+- [ ] web: drawer collapsible "agent services" section (rows, active dot, + row, "add one" empty row); Settings → AI Tools mirror
 - [ ] web: S6 funding intent in the confirm-modal family
 - [ ] verify on device with a funded ppq account and one routstr token; recipe in =docs/commands.org=
 - [ ] zettel: =feat-paid-providers.org=, decision "engine owns provider credentials", update =feat-assistant.org= / =feat-mobile-shell.org=
