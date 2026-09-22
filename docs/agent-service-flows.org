@@ -1,7 +1,7 @@
 #+TITLE: Agent service — signup, storage, and the Agent screen (mockup)
 #+DATE: 2026-09-22
 #+BRANCH: feat/paid-providers
-#+STATUS: proposal — confirm before implementing
+#+STATUS: implemented 2026-09-22 (branch feat/paid-providers) — deviations noted inline
 
 Mobile-first mockup of the "agent service" flow: how a user gets a paid
 model provider (ppq.ai or a routstr node) from nothing to working, where
@@ -434,9 +434,18 @@ is a glance away.
 
 ** S6 — Mid-chat: not enough balance
 
-When a turn starts and the active balance is below =max_turn_cost=, the
-engine emits a *funding intent* on the existing fetch-events stream, and
-the same modal family that handles fetch/publish confirmation shows:
+/As built:/ the engine checks the active service's balance against its
+ceiling *before* recording the user turn and answers the agent stream
+with a =needs_funding= event + =done= (no Confirm intent — there is no
+engine-side operation to approve). The web drops the optimistic
+fragments, parks the text as =pendingAgentMessage=, and opens the Agent
+services modal on funding with a "Send it again" banner that appears
+once the active service is funded (or another is made active). The
+ceiling is per provider — =ceiling_usd= for ppq, =ceiling_sats= for
+routstr — because the engine has no offline BTC rate to convert one
+global value.
+
+Original sketch:
 
 #+begin_example
  ┌ the assistant needs funds ─────────────┐
@@ -511,12 +520,13 @@ active selection, so there is one place that owns the choice.
 
 * Implementation slices once confirmed
 
-- [ ] engine: =src/providers.rs= store + ppq/routstr clients + =ProviderState= view
-- [ ] engine: =OpenAiCompatProvider= in =llm.rs= (arguments parsed from the JSON string; parallel calls; =role: tool= results); agent loop reads the store per turn
-- [ ] engine: tool-call self-test per node+model (routstr) + =supported_parameters= filter (ppq); results in =providers.json=
-- [ ] engine: =/api/v1/providers/*= routes; discovery Confirm-gated; funding intent
-- [ ] web: =AgentServicesModal= (mounted in =+layout=, =app.agentServicesModal= driven, yields to intents) with S1–S5
-- [ ] web: drawer collapsible "agent services" section (rows, active dot, + row, "add one" empty row); Settings → AI Tools mirror
-- [ ] web: S6 funding intent in the confirm-modal family
-- [ ] verify on device with a funded ppq account and one routstr token; recipe in =docs/commands.org=
+- [X] engine: =src/providers.rs= store + ppq/routstr clients + =ProviderState= view (2026-09-22)
+- [X] engine: =OpenAiCompatProvider= in =llm.rs= (arguments parsed from the JSON string; parallel calls; =role: tool= results); agent loop reads the store per turn
+- [X] engine: tool-call self-test per node+model (routstr) + =supported_parameters= filter (ppq); results in =providers.json=
+- [X] engine: =/api/v1/providers/*= routes; discovery Confirm-gated; =needs_funding= event (see S6 "as built")
+- [X] web: =AgentServicesModal= (mounted in =+layout=, =app.agentServicesModal= driven, yields to intents) with S1–S5
+- [X] web: drawer collapsible "agent services" section (rows, active dot, + row, "add one" empty row); Settings → AI assistant mirror
+- [X] web: S6 as a =needs_funding= event → modal on funding + "Send it again"
+- [X] verify: engine smoke test on a scratch port (recipe in =docs/commands.org=) — adopt, balance, models, invoice, discovery, error mapping, 402 path, funding gate, forget
+- [ ] verify on device: a funded ppq account (QR → paid → balance) and one routstr token → key → self-test → an agent turn
 - [ ] zettel: =feat-paid-providers.org=, decision "engine owns provider credentials", update =feat-assistant.org= / =feat-mobile-shell.org=

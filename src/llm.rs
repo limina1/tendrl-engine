@@ -399,6 +399,240 @@ impl LLMProvider for ClaudeProvider {
 }
 
 // ---------------------------------------------------------------------------
+// OpenAiCompatProvider — chat-completions wire format (ppq.ai, routstr nodes,
+// anything else OpenAI-shaped)
+// ---------------------------------------------------------------------------
+
+/// A provider speaking `POST {base}/chat/completions` with bearer auth.
+///
+/// The neutral types never change: tools become `function` entries, a
+/// returned `tool_calls` list becomes [`ContentBlock::ToolUse`]s (arguments
+/// arrive as a JSON *string* and are parsed here), and
+/// [`AgentMessage::ToolResults`] go back as one `role: tool` message per
+/// result. `reasoning` / `reasoning_content` on the reply becomes a
+/// display-only [`ContentBlock::Thinking`]. No streaming yet (same as
+/// [`ClaudeProvider`]).
+pub struct OpenAiCompatProvider {
+    name: &'static str,
+    /// Up to and including `/v1` — `https://api.ppq.ai/v1`, `https://node/v1`.
+    base_url: String,
+    api_key: String,
+    model: String,
+    client: reqwest::Client,
+}
+
+impl OpenAiCompatProvider {
+    pub fn new(name: &'static str, base_url: String, api_key: String, model: String) -> Self {
+        Self {
+            name,
+            base_url: base_url.trim_end_matches('/').to_string(),
+            api_key,
+            model,
+            client: reqwest::Client::builder()
+                .timeout(std::time::Duration::from_secs(300))
+                .build()
+                .unwrap_or_else(|_| reqwest::Client::new()),
+        }
+    }
+
+    /// Render the neutral history as chat-completions messages.
+    pub fn to_wire_messages(messages: &[AgentMessage]) -> Vec<Value> {
+        let mut out: Vec<Value> = Vec::new();
+        for msg in messages {
+            match msg {
+                AgentMessage::System(s) => out.push(json!({ "role": "system", "content": s })),
+                AgentMessage::User(s) => out.push(json!({ "role": "user", "content": s })),
+                AgentMessage::Assistant(blocks) => {
+                    let text: String = blocks
+                        .iter()
+                        .filter_map(|b| match b {
+                            ContentBlock::Text { text } => Some(text.as_str()),
+                            _ => None,
+                        })
+                        .collect::<Vec<_>>()
+                        .join("");
+                    let calls: Vec<Value> = blocks
+                        .iter()
+                        .filter_map(|b| match b {
+                            ContentBlock::ToolUse { id, name, input } => Some(json!({
+                                "id": id,
+                                "type": "function",
+                                "function": { "name": name, "arguments": input.to_string() }
+                            })),
+                            _ => None,
+                        })
+                        .collect();
+                    let mut m = json!({ "role": "assistant" });
+                    m["content"] = if text.is_empty() { Value::Null } else { Value::String(text) };
+                    if !calls.is_empty() {
+                        m["tool_calls"] = Value::Array(calls);
+                    }
+                    out.push(m);
+                }
+                AgentMessage::ToolResults(blocks) => {
+                    for b in blocks {
+                        if let ContentBlock::ToolResult { tool_use_id, content, is_error } = b {
+                            let content = if *is_error {
+                                format!("ERROR: {content}")
+                            } else {
+                                content.clone()
+                            };
+                            out.push(json!({
+                                "role": "tool",
+                                "tool_call_id": tool_use_id,
+                                "content": content,
+                            }));
+                        }
+                    }
+                }
+            }
+        }
+        out
+    }
+
+    pub fn to_wire_tools(tools: &[ToolDefinition]) -> Vec<Value> {
+        tools
+            .iter()
+            .map(|t| {
+                json!({
+                    "type": "function",
+                    "function": {
+                        "name": t.name,
+                        "description": t.description,
+                        "parameters": t.input_schema,
+                    }
+                })
+            })
+            .collect()
+    }
+
+    /// Parse `choices[0]` into blocks + a stop reason.
+    pub fn parse_choice(choice: &Value) -> TurnOutput {
+        let message = &choice["message"];
+        let mut blocks: Vec<ContentBlock> = Vec::new();
+        let reasoning = message["reasoning"]
+            .as_str()
+            .or_else(|| message["reasoning_content"].as_str())
+            .unwrap_or("");
+        if !reasoning.is_empty() {
+            blocks.push(ContentBlock::Thinking {
+                thinking: reasoning.to_string(),
+            });
+        }
+        match &message["content"] {
+            Value::String(s) if !s.is_empty() => blocks.push(ContentBlock::Text { text: s.clone() }),
+            Value::Array(parts) => {
+                let text: String = parts
+                    .iter()
+                    .filter_map(|p| p["text"].as_str())
+                    .collect::<Vec<_>>()
+                    .join("");
+                if !text.is_empty() {
+                    blocks.push(ContentBlock::Text { text });
+                }
+            }
+            _ => {}
+        }
+        let mut saw_tool_call = false;
+        if let Some(calls) = message["tool_calls"].as_array() {
+            for (i, c) in calls.iter().enumerate() {
+                let id = c["id"]
+                    .as_str()
+                    .map(str::to_string)
+                    .unwrap_or_else(|| format!("call_{i}"));
+                let name = c["function"]["name"].as_str().unwrap_or("").to_string();
+                let input = match &c["function"]["arguments"] {
+                    Value::String(s) if s.trim().is_empty() => json!({}),
+                    Value::String(s) => serde_json::from_str::<Value>(s)
+                        .unwrap_or_else(|_| json!({ "_unparsed_arguments": s })),
+                    Value::Null => json!({}),
+                    other => other.clone(),
+                };
+                saw_tool_call = true;
+                blocks.push(ContentBlock::ToolUse { id, name, input });
+            }
+        }
+        let stop_reason = match choice["finish_reason"].as_str() {
+            _ if saw_tool_call => StopReason::ToolUse,
+            Some("stop") | None => StopReason::EndTurn,
+            Some("tool_calls") | Some("function_call") => StopReason::ToolUse,
+            Some("length") => StopReason::MaxTokens,
+            Some(other) => StopReason::Other(other.to_string()),
+        };
+        TurnOutput {
+            content: blocks,
+            stop_reason,
+        }
+    }
+}
+
+#[async_trait::async_trait]
+impl LLMProvider for OpenAiCompatProvider {
+    async fn run_turn(
+        &self,
+        messages: &[AgentMessage],
+        tools: &[ToolDefinition],
+        model: Option<&str>,
+    ) -> Result<TurnOutput, LLMError> {
+        let model = model.unwrap_or(&self.model);
+        let wire = Self::to_wire_messages(messages);
+        if !wire.iter().any(|m| m["role"] != "system") {
+            return Err(LLMError::ProviderError(
+                "No user/assistant messages to send".into(),
+            ));
+        }
+        let mut body = json!({
+            "model": model,
+            "messages": wire,
+            "max_tokens": 4096,
+        });
+        if !tools.is_empty() {
+            body["tools"] = Value::Array(Self::to_wire_tools(tools));
+            body["tool_choice"] = json!("auto");
+        }
+        let url = format!("{}/chat/completions", self.base_url);
+        let resp = self
+            .client
+            .post(&url)
+            .header("content-type", "application/json")
+            .header("authorization", format!("Bearer {}", self.api_key))
+            .json(&body)
+            .send()
+            .await
+            .map_err(|e| LLMError::RequestFailed(e.to_string()))?;
+        let status = resp.status();
+        let text = resp
+            .text()
+            .await
+            .map_err(|e| LLMError::RequestFailed(format!("Failed to read response: {e}")))?;
+        let resp_body: Value = serde_json::from_str(&text)
+            .unwrap_or_else(|_| json!({ "error": { "message": text.chars().take(300).collect::<String>() } }));
+        if !status.is_success() {
+            let err_msg = resp_body["error"]["message"]
+                .as_str()
+                .or_else(|| resp_body["detail"]["error"]["message"].as_str())
+                .or_else(|| resp_body["detail"].as_str())
+                .unwrap_or("Unknown error");
+            let hint = if status.as_u16() == 402 {
+                " (payment required — the account balance is too low for this request)"
+            } else {
+                ""
+            };
+            return Err(LLMError::ProviderError(format!("{}: {}{}", status, err_msg, hint)));
+        }
+        let choice = resp_body["choices"]
+            .as_array()
+            .and_then(|c| c.first())
+            .ok_or_else(|| LLMError::ProviderError("No choices in response".into()))?;
+        Ok(Self::parse_choice(choice))
+    }
+
+    fn name(&self) -> &str {
+        self.name
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Construction
 // ---------------------------------------------------------------------------
 

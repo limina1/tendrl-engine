@@ -20,6 +20,7 @@
 	import TextPromptModal from '$lib/components/TextPromptModal.svelte';
 	import FetchActivityModal from '$lib/components/FetchActivityModal.svelte';
 	import HighlightComposerModal from '$lib/components/HighlightComposerModal.svelte';
+	import AgentServicesModal from '$lib/components/AgentServicesModal.svelte';
 	// fetch-events self-starts the SSE subscription at module scope; we
 	// only need confirmState here to render the modal.
 	import { confirmState } from '$lib/network/fetch-events.svelte';
@@ -216,6 +217,10 @@
 
 {#if app.highlightComposer}
 	<HighlightComposerModal />
+{/if}
+
+{#if app.agentServicesModal}
+	<AgentServicesModal />
 {/if}
 
 <ComparePublishModal />

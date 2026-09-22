@@ -1391,6 +1391,10 @@
 					}
 				: null}
 			onResolveWiki={resolveAllVisible}
+			services={app.providersState}
+			onOpenServices={(view, focus) => (app.agentServicesModal = { view, focus })}
+			onSelectService={(kind) => app.selectService(kind)}
+			onServicesRefresh={() => app.refreshProviders()}
 			searchRows={app.searchHistory.map((e) => ({
 				key: entryKey(e),
 				kind: e.kind,

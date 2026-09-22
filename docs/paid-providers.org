@@ -210,16 +210,17 @@ Keys never live in TOML.
 * Plan
 
 - [X] Probe both providers live; record shapes (=scripts/probe-paid-providers.py=, this doc)
-- [ ] =OpenAiCompatProvider= in =src/llm.rs= + unit tests on the wire translation (tool_calls both ways, streaming off first)
-- [ ] =src/providers.rs=: account types, store, =ProviderEngine= (ppq setup / balance / invoice / status / history; routstr discover / adopt token / balance / topup / refund)
-- [ ] API: =/api/v1/providers= (GET state), =/providers/ppq/setup=, =/providers/routstr/discover=, =/providers/routstr/adopt=, =/providers/balance=, =/providers/fund=, =/providers/refund=, =/providers/ledger=
-- [ ] Funding intent on the fetch-events SSE stream + confirm endpoint
-- [ ] Settings → AI Tools provider cards (desktop + mobile shell)
-- [ ] Per-turn spend accounting in the activity log; =max_turn_cost= guard
+- [X] =OpenAiCompatProvider= in =src/llm.rs= (2026-09-22; tool_calls both ways, arguments parsed from the JSON string, =role: tool= results, 402 surfaced with a hint; no streaming yet)
+- [X] =src/providers.rs=: =ProviderRegistry= (store =providers.json= 0600 + view with redacted keys), ppq setup / adopt / balance / models / invoice / status / history, routstr discover (Confirm-gated REQ + concurrent probes) / probe / create / adopt / balance / models / topup / refund / history, tool self-test per node+model
+- [X] API under =/api/v1/providers= (see =docs/agent-service-flows.org= → API surface); mounted on the chat router state
+- [X] Funding gate: the agent loop checks the active service's balance against its ceiling *before* recording the turn and emits a =needs_funding= SSE event (not a Confirm intent — no engine state to approve, the UI opens the modal and resends once funded)
+- [X] Agent services UI: collapsible drawer section + =AgentServicesModal= (signup, ppq create/fund with QR, routstr node pick + token paste, manage, models, ledger, withdraw) + Settings → AI assistant mirror
+- [X] Per-turn spend: =record_turn= diffs the balance after each turn → "last turn" line; ceilings are per provider (=ceiling_usd= / =ceiling_sats=) because no offline BTC rate exists to convert one global value
 - [ ] =ToolCategory::Web=: =web_search= / =fetch_url=, provider plugin path first
-- [ ] Verify with a funded token: routstr tool-call passthrough; ppq web plugin + tools in one request
+- [ ] Verify with a funded token: routstr tool-call passthrough; ppq web plugin + tools in one request; the QR + invoice-paid flow on a phone
 - [ ] Zettel: =feat-paid-providers.org=, decision note "Cashu is the only routstr on-ramp", update =feat-assistant.org= tool-parity list
 
 * Verify
 
-See =docs/commands.org= → "Paid providers — signup probe".
+See =docs/commands.org= → "Paid providers — signup probe" (live shapes) and
+"Agent services — engine smoke test" (the wired endpoints on a scratch engine).

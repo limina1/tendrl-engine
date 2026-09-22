@@ -155,7 +155,7 @@ export function saveAiPrompt(content: string): Promise<{ saved: boolean; path: s
 
 /** One event from the agent SSE stream: `{ type, data }`. */
 export interface AgentEvent {
-	type: 'text' | 'thinking' | 'tool_call' | 'tool_result' | 'done' | 'error';
+	type: 'text' | 'thinking' | 'tool_call' | 'tool_result' | 'done' | 'error' | 'needs_funding';
 	data: Record<string, unknown>;
 }
 
@@ -2637,4 +2637,247 @@ export function deleteDiscussion(req: { event_id: string; reason?: string; relay
 		method: 'POST',
 		body: JSON.stringify(req)
 	});
+}
+
+// ===================== Paid model services (ppq.ai / routstr) =====================
+// Engine-owned accounts: keys live in <data_dir>/providers.json and never
+// reach the browser un-redacted (except the one-shot `reveal`).
+
+export type ProviderKind = 'ppq' | 'routstr';
+export type ServiceStatus = 'unfunded' | 'low' | 'funded' | 'offline';
+
+export interface ServiceBalance {
+	/** `usd` (ppq) or `msat` (routstr). */
+	unit: string;
+	amount: number;
+	reserved?: number;
+	total_spent?: number;
+	fetched_at: number;
+	error?: string;
+}
+
+export interface RoutstrNode {
+	url: string;
+	name?: string;
+	description?: string;
+	npub?: string;
+	pubkey?: string;
+	version?: string;
+	mints: string[];
+}
+
+export interface RoutstrNodeHealth extends RoutstrNode {
+	reachable: boolean;
+	model_count: number;
+	latency_ms: number;
+	likely_tools: boolean;
+	error?: string;
+}
+
+export interface PpqService {
+	credit_id: string;
+	/** Redacted (`sk-abc…(25)`). */
+	api_key: string;
+	created_at: number;
+	model: string | null;
+	balance: ServiceBalance | null;
+	status: ServiceStatus;
+	web_search: true;
+}
+
+export interface RoutstrService {
+	node: RoutstrNode;
+	api_key: string;
+	created_at: number;
+	model: string | null;
+	balance: ServiceBalance | null;
+	status: ServiceStatus;
+	tool_tests: Record<string, 'ok' | 'failed'>;
+	web_search: false;
+}
+
+export interface TurnCost {
+	provider: ProviderKind;
+	model: string;
+	cost?: number;
+	unit: string;
+	tool_calls: number;
+	seconds: number;
+	at: number;
+}
+
+export interface ProvidersState {
+	active: ProviderKind | null;
+	ppq: PpqService | null;
+	routstr: RoutstrService | null;
+	ceiling_usd: number;
+	ceiling_sats: number;
+	last_turn: TurnCost | null;
+	configured: boolean;
+	path: string;
+}
+
+export interface ProviderModel {
+	id: string;
+	name?: string;
+	context_length?: number;
+	// ppq
+	input_per_1m?: number;
+	output_per_1m?: number;
+	tools?: boolean;
+	popular?: boolean;
+	// routstr
+	sat_prompt_per_1k?: number | null;
+	sat_completion_per_1k?: number | null;
+	max_cost_sat?: number | null;
+	tool_test?: 'ok' | 'failed' | null;
+	likely_tools: boolean;
+	selected: boolean;
+}
+
+export interface ProviderModels {
+	provider: ProviderKind;
+	node?: RoutstrNode;
+	models: ProviderModel[];
+	note?: string;
+}
+
+export interface FundingNeed {
+	provider: ProviderKind;
+	balance: number;
+	unit: string;
+	ceiling: number;
+	alternative?: ProviderKind;
+}
+
+export interface PpqInvoice {
+	invoice_id: string;
+	bolt11: string;
+	amount_sats: number;
+	expires_at: number;
+	created_at: number;
+	checkout_url?: string;
+}
+
+export interface PpqInvoiceStatus {
+	invoice_id: string;
+	status: string;
+	paid: boolean;
+	expired: boolean;
+	amount_paid?: number;
+	expires_at: number;
+	balance: ServiceBalance | null;
+}
+
+const PROVIDERS = '/api/v1/providers';
+
+export function getProviders(): Promise<ProvidersState> {
+	return fetchJson<ProvidersState>(PROVIDERS);
+}
+export function selectProvider(provider: ProviderKind, model?: string): Promise<ProvidersState> {
+	return fetchJson<ProvidersState>(`${PROVIDERS}/select`, {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify({ provider, model })
+	});
+}
+export function setProviderCeiling(update: {
+	ceiling_usd?: number;
+	ceiling_sats?: number;
+}): Promise<ProvidersState> {
+	return fetchJson<ProvidersState>(`${PROVIDERS}/ceiling`, {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify(update)
+	});
+}
+export function forgetProvider(provider: ProviderKind): Promise<ProvidersState> {
+	return fetchJson<ProvidersState>(`${PROVIDERS}/${provider}`, { method: 'DELETE' });
+}
+export function revealProviderKey(
+	provider: ProviderKind
+): Promise<{ api_key: string; credit_id?: string; node_url?: string }> {
+	return fetchJson(`${PROVIDERS}/${provider}/reveal`, { method: 'POST' });
+}
+export function refreshProviderBalance(provider: ProviderKind): Promise<ProvidersState> {
+	return fetchJson<ProvidersState>(`${PROVIDERS}/${provider}/refresh`, { method: 'POST' });
+}
+export function getProviderModels(provider: ProviderKind): Promise<ProviderModels> {
+	return fetchJson<ProviderModels>(`${PROVIDERS}/${provider}/models`);
+}
+export function getProviderLedger(
+	provider: ProviderKind
+): Promise<{ provider: ProviderKind; rows: Record<string, unknown>[] }> {
+	return fetchJson(`${PROVIDERS}/${provider}/ledger`);
+}
+export function providerSelfTest(
+	provider: ProviderKind,
+	model: string
+): Promise<{ ok: boolean; detail: string; seconds: number }> {
+	return fetchJson(`${PROVIDERS}/self-test`, {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify({ provider, model })
+	});
+}
+// ppq
+export function ppqSetup(): Promise<ProvidersState> {
+	return fetchJson<ProvidersState>(`${PROVIDERS}/ppq/setup`, { method: 'POST' });
+}
+export function ppqAdopt(api_key: string, credit_id: string): Promise<ProvidersState> {
+	return fetchJson<ProvidersState>(`${PROVIDERS}/ppq/adopt`, {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify({ api_key, credit_id })
+	});
+}
+export function ppqFund(amount_sats: number): Promise<PpqInvoice> {
+	return fetchJson<PpqInvoice>(`${PROVIDERS}/ppq/fund`, {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify({ amount_sats })
+	});
+}
+export function ppqFundStatus(invoice_id: string): Promise<PpqInvoiceStatus> {
+	return fetchJson<PpqInvoiceStatus>(`${PROVIDERS}/ppq/fund/${encodeURIComponent(invoice_id)}`);
+}
+// routstr
+export function routstrDiscover(): Promise<{
+	announced: number;
+	reachable: number;
+	current: string | null;
+	nodes: RoutstrNodeHealth[];
+}> {
+	return fetchJson(`${PROVIDERS}/routstr/discover`, { method: 'POST' });
+}
+export function routstrProbe(node_url: string): Promise<RoutstrNodeHealth> {
+	return fetchJson(`${PROVIDERS}/routstr/probe`, {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify({ node_url })
+	});
+}
+export function routstrCreate(node_url: string, cashu_token: string): Promise<ProvidersState> {
+	return fetchJson<ProvidersState>(`${PROVIDERS}/routstr/create`, {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify({ node_url, cashu_token })
+	});
+}
+export function routstrAdopt(node_url: string, api_key: string): Promise<ProvidersState> {
+	return fetchJson<ProvidersState>(`${PROVIDERS}/routstr/adopt`, {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify({ node_url, api_key })
+	});
+}
+export function routstrTopup(cashu_token: string): Promise<{ ok: boolean; balance: ServiceBalance | null }> {
+	return fetchJson(`${PROVIDERS}/routstr/topup`, {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify({ cashu_token })
+	});
+}
+export function routstrRefund(): Promise<{ token: string | null; sats?: number }> {
+	return fetchJson(`${PROVIDERS}/routstr/refund`, { method: 'POST' });
 }

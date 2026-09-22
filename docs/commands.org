@@ -2103,3 +2103,31 @@ Expected (2026-09-22): ppq create → 201 with =credit_id= + =api_key=; balance
 0; a 100-sat invoice with =status: "New"=. routstr: ~16 https nodes announced,
 ~5 healthy; =api.routstr.com= itself 404; =/v2/lightning/invoice= 404 on every
 node (Cashu is the only on-ramp).
+
+* Agent services — engine smoke test (branch =feat/paid-providers=)
+
+Drives the wired =/api/v1/providers= endpoints on a scratch engine (own port +
+data dir — never the live :3030). Uses the zero-balance ppq account the probe
+created (=~/.cache/tendrl-probe/ppq-account.json= or the session scratch dir).
+
+#+begin_src sh
+S=/tmp/tendrl-smoke; mkdir -p $S
+printf 'initial_relays=["wss://nos.lol"]\ntimeout_ms=8000\n[network]\nmode="auto"\n[embedding]\nenabled=false\n[ai]\nprovider="noop"\n' > $S/config.toml
+cargo build && ./target/debug/tendrl-engine -c $S/config.toml --port 3057 --data-dir $S/data --no-open &
+B=http://127.0.0.1:3057/api/v1
+curl -s $B/providers | jq .                                  # configured:false, ceilings 0.25 / 250
+KEY=$(jq -r .api_key ~/.cache/tendrl-probe/ppq-account.json); CID=$(jq -r .credit_id ~/.cache/tendrl-probe/ppq-account.json)
+curl -s -X POST $B/providers/ppq/adopt -H 'content-type: application/json' -d "{\"api_key\":\"$KEY\",\"credit_id\":\"$CID\"}" | jq '.ppq'
+ls -l $S/data/providers.json                                 # -rw------- ; key only in this file
+curl -s $B/providers/ppq/models | jq '.models|length'        # tool-capable chat models only
+curl -s -X POST $B/providers/ppq/fund -H 'content-type: application/json' -d '{"amount_sats":100}' | jq .   # bolt11 (not paid)
+curl -s -X POST $B/providers/routstr/discover | jq '{announced,reachable}'                                  # Confirm-gated in confirm mode
+curl -s -X POST $B/providers/routstr/probe -H 'content-type: application/json' -d '{"node_url":"https://routstr.eduvietkieu.com"}' | jq .
+curl -s -X POST $B/providers/self-test -H 'content-type: application/json' -d '{"provider":"ppq","model":"claude-sonnet-5"}' | jq .  # ok:false, 402 hint while unfunded
+curl -s -N -X POST $B/chat/agent -H 'content-type: application/json' -d '{"content":"hi"}'   # needs_funding + done; /chat stays empty
+curl -s -X DELETE $B/providers/ppq | jq .configured           # false
+#+end_src
+
+Web: =pnpm -C web build= then open =http://127.0.0.1:3057/?shell=mobile= — the
+drawer's *agent services* row reads "add one" until a service exists; the
+modal is =AgentServicesModal.svelte= (mounted in =+layout=).

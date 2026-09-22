@@ -7460,6 +7460,10 @@ pub struct ChatAppState {
     pub policy: Arc<std::sync::RwLock<crate::tools::ToolPolicy>>,
     /// Path to the editable Markdown system prompt, re-read each agent turn.
     pub system_prompt_path: std::path::PathBuf,
+    /// Paid model services (ppq.ai / routstr): accounts, balances, the active
+    /// selection. When a service is active the agent loop runs on it instead
+    /// of the boot-time `provider`.
+    pub providers: Arc<crate::providers::ProviderRegistry>,
 }
 
 /// A single fragment in the API response
@@ -7751,6 +7755,26 @@ pub async fn chat_agent_handler(
     let stream = async_stream::stream! {
         use crate::llm::{AgentMessage, ContentBlock};
 
+        // Which model runs this turn: the active paid service (ppq / routstr)
+        // when one is configured, else the boot-time provider. Checked before
+        // the user turn is recorded so a declined/unfunded turn leaves no
+        // dangling fragment — the web keeps the typed text.
+        let (provider, model_override, service): (
+            Arc<dyn crate::llm::LLMProvider>,
+            Option<String>,
+            Option<crate::providers::ProviderKind>,
+        ) = match state.providers.active_provider() {
+            Some((p, m, k)) => (p, Some(m), Some(k)),
+            None => (state.provider.clone(), None, None),
+        };
+        if service.is_some() {
+            if let Some(need) = state.providers.funding_need().await {
+                yield agent_sse("needs_funding", serde_json::to_value(&need).unwrap_or_default());
+                yield agent_sse("done", json!({ "skipped": true }));
+                return;
+            }
+        }
+
         // Seed the loop from history + the new user turn. Guard is dropped
         // before any await/yield (std Mutex must never cross those). The system
         // prompt is refreshed from prompt.md each turn (live on-disk edits).
@@ -7778,6 +7802,7 @@ pub async fn chat_agent_handler(
         let started = tokio::time::Instant::now();
         let budget = std::time::Duration::from_secs(600);
         let mut turn: usize = 0;
+        let mut tool_calls_made: usize = 0;
 
         loop {
             turn += 1;
@@ -7790,7 +7815,7 @@ pub async fn chat_agent_handler(
                 break;
             }
 
-            let out = match state.provider.run_turn(&messages, &tools, None).await {
+            let out = match provider.run_turn(&messages, &tools, model_override.as_deref()).await {
                 Ok(o) => o,
                 Err(e) => {
                     yield agent_sse("error", json!({ "message": e.to_string() }));
@@ -7861,6 +7886,7 @@ pub async fn chat_agent_handler(
             }
 
             // Persist tool results as a user-role fragment carrying the blocks.
+            tool_calls_made += results.len();
             {
                 let mut chat = state.chat.lock().unwrap();
                 chat.push_agent_fragment(crate::chat::ChatRole::User, String::new(), results.clone());
@@ -7871,6 +7897,15 @@ pub async fn chat_agent_handler(
         {
             let mut chat = state.chat.lock().unwrap();
             chat.generating = false;
+        }
+        // Settle the paid service's balance off the SSE path: the delta is
+        // the turn's cost (shown on the Agent screen's "last turn" line).
+        if let (Some(kind), Some(model)) = (service, model_override.clone()) {
+            let providers = state.providers.clone();
+            let secs = started.elapsed().as_secs_f64();
+            tokio::spawn(async move {
+                providers.record_turn(kind, model, tool_calls_made, secs).await;
+            });
         }
         yield agent_sse("done", json!({}));
     };
@@ -9311,6 +9346,7 @@ mod chat_api_tests {
         let dir = tempfile::tempdir().unwrap();
         let prompt_path = dir.path().join("prompt.md");
         let engine = Arc::new(crate::engine::Engine::new(dir.path()).unwrap());
+        let data_dir = dir.path().to_path_buf();
         std::mem::forget(dir); // keep the temp dir alive for the test process
         ChatAppState {
             chat: Arc::new(Mutex::new(ChatState::new())),
@@ -9319,6 +9355,7 @@ mod chat_api_tests {
             max_tool_turns: 25,
             policy: Arc::new(std::sync::RwLock::new(crate::tools::ToolPolicy::default())),
             system_prompt_path: prompt_path,
+            providers: Arc::new(crate::providers::ProviderRegistry::new(&data_dir).unwrap()),
         }
     }
 
