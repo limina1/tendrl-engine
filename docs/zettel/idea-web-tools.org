@@ -1,0 +1,69 @@
+#+TITLE: Idea: web tools — the assistant researches the live web
+#+TYPE: idea
+#+STATUS: next — designed, not built
+#+DATE: 2026-09-22
+
+* What it means
+
+Tool calling works on the agent services
+([[file:feat-agent-services.org][agent services]]), but every tool in the
+catalog reaches Nostr, the local index, relays, context, drafts or
+publishing. Nothing reaches the internet. "Research and publish" on the
+phone needs two more tools:
+
+- =fetch_url= — read a page (or a PDF/DOCX behind a URL) into text. No
+  external dependency: =reqwest= + the HTML-to-text path =document.rs=
+  already uses for import. Input: =url=, optional =max_chars=; output:
+  title, text, final URL, content type. The model calls it on anything
+  the user pastes or a search result points at.
+- =web_search= — a query → ranked results (title, URL, snippet). Needs a
+  backend (below). Output is compact handles the model then =fetch_url=s.
+
+Both live in a new =ToolCategory::Web=, gated like =Network=: in Confirm
+mode each call raises an intent (the same modal family; the label names
+the URL or the query), a decline returns =approved: false= and the model
+is told to say so. Results come back as ordinary tool results in the
+transcript, so the user sees exactly what was read — unlike provider-side
+search, which happens on the provider's servers, lands inside the model's
+answer, bypasses the gate and is billed per search.
+
+* The backend decision (=web_search=)
+
+| Backend | Key | Open | Notes |
+|---------+-----+------+-------|
+| SearXNG (public instance or self-hosted) | none | yes | JSON API (=?format=json=); instance quality varies; self-host is the sovereign option. *Proposed default.* |
+| Brave Search API | yes (free tier) | no | reliable, structured; key stored like a provider key (engine-side, never TOML) |
+| ppq web plugin | account | no | only when ppq is the active service; provider-side, so it does *not* give the tool-result transparency above — at most a fallback |
+| NIP-90 kind-5302 search DVMs | sats | yes | Nostr search, not web search — a separate =nostr_search_dvm= tool if wanted |
+
+Setting: =[ai.web] search_backend = "searxng" | "brave" | "none"=,
+=searxng_url=, Brave key via the providers store. UI: a "Web tools" block
+under Settings → AI assistant (backend picker, URL/key, a test button)
+and the same rows in the Agent services modal's manage view.
+
+* Interaction sketch
+
+- Model: =web_search {"query": "…"}= → Confirm intent "AI web search: …"
+  → results (≤10) → =fetch_url= on the ones it wants → answer with
+  sources (URLs) → optionally =publish_publication= with a Sources
+  section. The prompt tells it to cite what it fetched and never to
+  present unfetched snippets as read pages.
+- Cost: web results are text; the token cost lands on the active
+  service like any tool result. A per-turn cap on fetched characters
+  (=max_chars= default 20k, cap 60k) keeps a page from eating the
+  ceiling.
+- Privacy: the query leaves the machine; the Confirm modal is the
+  disclosure. Auto mode proceeds silently, as with relays.
+
+* Open questions
+
+- Self-host guidance for SearXNG in =docs/commands.org= vs. pointing at a
+  public instance by default (rate limits, uptime).
+- Should =fetch_url= go through the engine's document import so a fetched
+  PDF becomes local events the user can keep? (Probably yes as an opt-in
+  =keep: true=.)
+- Robots/ToS posture for =fetch_url=: honour =robots.txt= or not; a plain
+  browser-like fetch with a clear UA is the current lean.
+
+* Related
+- [[file:feat-agent-services.org][Agent services]] · [[file:feat-assistant.org][LLM assistant]] · [[file:feat-network.org][Network modes]] · [[file:feat-import.org][Document import]]

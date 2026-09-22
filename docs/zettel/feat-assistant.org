@@ -82,6 +82,9 @@ signing source, insertions, the engine speaking MCP, the zettel bubble.
 - Live-reference and compact-handle context modes unbuilt.
 
 * Related
+- [[file:feat-agent-services.org][Agent services]] — the model the loop runs on (ppq.ai / routstr), funding, the drawer/mode-line surfaces, saved chats on both shells
+- [[file:idea-web-tools.org][Web tools]] — the missing =web_search= / =fetch_url=
+- [[file:decision-chat-runs-on-agent-services.org][Decision: the chat runs on agent services]]
 - [[file:index.org][Index]]
 - [[file:feat-search.org][Search]]
 - [[file:feat-compose.org][Compose]]

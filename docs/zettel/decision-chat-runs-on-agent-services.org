@@ -1,0 +1,46 @@
+#+TITLE: Decision: The chat runs on agent services; Claude is the external harness
+#+TYPE: decision
+#+STATUS: current
+#+DATE: 2026-09-22
+
+* The decision
+
+The in-app assistant runs *only* on an agent service the user set up in
+tendrl — ppq.ai or a routstr node
+([[file:feat-agent-services.org][agent services]]). The Anthropic API
+provider (=ClaudeProvider=, =ANTHROPIC_API_KEY=, =[ai] provider/model=) was
+removed from the engine on 2026-09-22. A turn with no active service is
+refused with =needs_service= and the UI opens signup; the engine holds no
+model API key at all. Claude reaches tendrl in exactly one way: Claude
+Code (or any MCP harness) calls tendrl's tools with its own credential
+([[file:feat-mcp.org][MCP surface]]). "Your harness calls tendrl", never
+"tendrl calls Claude". (User's call, 2026-09-22.)
+
+* Why
+
+- *Compliance and sense.* Anthropic's terms keep claude.ai subscriptions
+  out of third-party apps, and an API key in the engine was a second,
+  parallel Claude path that the MCP route already covers better — with
+  the user's own tooling, billing and permissions. One path is honest.
+- *The phone is the point.* The in-app chat is the mobile/remote surface.
+  A pay-per-use service with Lightning or Cashu funding is what works
+  there without a subscription or a desktop; a desktop-only API key never
+  did.
+- *Open by construction.* Both services speak the same OpenAI-compatible
+  wire format, discovery is Nostr, payment is sats. Adding a third service
+  is an account kind, not a provider rewrite.
+
+* Consequences
+
+- =[ai] echo = true= is the only model knob left in TOML — an echo
+  provider for plumbing tests.
+- The model can misreport itself (Kimi K2 on ppq said "I am Claude"): a
+  runtime identity system line now names the model and service every
+  turn, and =get_identities= tells it what it is.
+- =claude_sessions.rs= (the read-only Claude Code transcript browser)
+  stays: that is Claude Code's output viewed in tendrl, not tendrl calling
+  Claude. It is desktop-only and hidden when empty.
+
+* Related
+- [[file:decision-assistant-signs-own-key.org][The assistant signs with its own key]]
+- [[file:decision-engine-owns-provider-credentials.org][The engine owns provider credentials]]
