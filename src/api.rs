@@ -7468,6 +7468,21 @@ pub struct ChatAppState {
     pub providers: Arc<crate::providers::ProviderRegistry>,
 }
 
+/// A system line naming the runtime, prepended to every turn that runs on an
+/// agent service. Open-weight models served through proxies routinely
+/// misreport their identity ("I am Claude…"); stating the truth up front
+/// keeps the assistant honest about what it is and where it runs.
+fn runtime_identity_line(kind: crate::providers::ProviderKind, model: &str) -> String {
+    format!(
+        "Runtime: you are the model `{model}`, served through the {} agent service \
+         chosen by the user in tendrl. If asked what model you are or who made you, \
+         answer with that model id and its actual maker — you are not a model from \
+         any other vendor, and no Anthropic/OpenAI API is involved unless the model \
+         id says so.",
+        kind.label()
+    )
+}
+
 /// Which model answers this turn: the active agent service, else the echo
 /// fallback when configured, else nothing (the caller tells the UI to set a
 /// service up).
@@ -7716,17 +7731,26 @@ pub async fn chat_send(
     State(state): State<ChatAppState>,
     Json(req): Json<SendMessageRequest>,
 ) -> std::result::Result<Json<ChatResponse>, EngineError> {
-    let Some((provider, model, _)) = resolve_provider(&state) else {
+    let Some((provider, model, service_kind)) = resolve_provider(&state) else {
         return Err(EngineError::Config(
             "no agent service is active — set up ppq.ai or a routstr node in agent services".into(),
         ));
     };
-    let messages = {
+    let mut messages = {
         let mut chat = state.chat.lock().unwrap();
         chat.input = req.content;
         chat.generating = true;
         chat.send_message()
     };
+    if let (Some(kind), Some(m)) = (service_kind, model.as_deref()) {
+        messages.insert(
+            0,
+            crate::chat::LLMMessage {
+                role: ChatRole::System,
+                content: runtime_identity_line(kind, m),
+            },
+        );
+    }
 
     let response = match model {
         // The neutral `chat()` helper cannot carry a model override; run one
@@ -7825,6 +7849,9 @@ pub async fn chat_agent_handler(
             chat.generating = true;
             chat.to_agent_messages()
         };
+        if let (Some(kind), Some(m)) = (service, model_override.as_deref()) {
+            messages.insert(0, AgentMessage::System(runtime_identity_line(kind, m)));
+        }
 
 
         // Snapshot the live policy (guard dropped before any await/yield).
