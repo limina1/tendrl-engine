@@ -23,12 +23,16 @@ text". The answers are *definition sections* — ordinary kind-30041
 insertions tagged =t: definition=, one per term, anchored to the passage
 that needed them, several per term allowed because a 30041's =d= is an
 opaque nanoid (unlike NIP-54's slug-as-=d=, which gives every author one
-article per word). Findability comes from *promotion*: the definitions
-are folded into the publication as a glossary, and every =[[term]]= or
-={{wiki:term}}= in the text then resolves sibling-first by title slug.
-Relinking the text is a new version of each section under its own =d=
-when you own the publication; for someone else's, it is a derivative
-plus a *kind-818 merge request* that asks them to take it.
+article per word). The text is then *relinked*: each term becomes a
+nostrdown ={{ref:<coordinate>|term}}= pointing at /that one definition
+event/ — not a =[[term]]= wikilink, which unpacks to every article whose
+=d= happens to match. A coordinate ref resolves sibling-first and
+otherwise as a direct pointer, so it works whether or not the definition
+is ever promoted; promotion into a glossary is optional and only puts the
+definitions in the reading order. Relinking is a new version of each
+section under its own =d= when you own the publication; for someone
+else's, it is a derivative plus a *kind-818 merge request* that asks them
+to take it.
 
 * Actors and events
 
@@ -40,7 +44,7 @@ plus a *kind-818 merge request* that asks them to take it.
 |                       | local | reader (unsigned)| same fields in =<data_dir>/requests/=                                    | yes                                 |
 | Definition            | 30041 | reader's agent   | =t definition=, =title= = the term, =T= = slug, =A=/=a=/=e= anchor, =request= | new role                            |
 | Glossary bundle       | 30040 | reader's agent   | =a= per definition, =A=/=K=/=P= anchor, =request=                        | bundle insertions exist             |
-| Relinked section      | 30041 | owner / forker   | content with =[[term]]=, =w= per term (emitted by =reference_tags=)      | =w= emission exists                 |
+| Relinked section      | 30041 | owner / forker   | content with ={{ref:<coord>\vert{}term}}=, =a= per definition (emitted by =reference_tags=) | =a= emission exists                 |
 | Derivative index      | 30040 | forker           | every tag copied, =E= + =p= back to the original                         | =fork_index= exists                 |
 | Merge request         | 818   | forker           | =a= target (30040/30041), =e= base, =e … source=, =p= owner              | NIP-54, extended to NKBIP-01 kinds  |
 | Accept / reject       | 7     | owner            | =e= the 818, content =+= / =-=                                           | NIP-25                              |
@@ -75,7 +79,7 @@ digraph workflow {
   subgraph cluster_fold { label="Back in the reader"; style="rounded"; color="#bbb"; fontsize=10;
     cards  [label="definition cards under the passage\ntable: role = definition, \"def\" badge"];
     own    [label="own publication?", shape=diamond, fillcolor="#e2e3e5"];
-    relink [label="relink + promote\nnew versions, same d\n[[term]] → sibling glossary", fillcolor="#cfe2ff"];
+    relink [label="relink (+ promote, optional)\nnew versions, same d\n{{ref:coord|term}} → the definition", fillcolor="#cfe2ff"];
     fork   [label="derivative\nfork_index + relinked sections\nE / p back-pointers", fillcolor="#cfe2ff"];
     mr     [label="kind 818 merge request\na = their 30040 · e = source", fillcolor="#f8d7da"];
     react  [label="owner reacts + / −\n(+ = republish under their d)", fillcolor="#e2e3e5"];
@@ -172,10 +176,14 @@ Two things the graph shows on purpose:
 * Relink: before and after
 
 The one new algorithm. Engine-side, pure, in =nostrdown.rs=: wrap the
-first plain-text occurrence of each term per section, skip code spans,
-headings, existing links and anything inside ={{ }}=; per markup
-format. =reference_tags= then emits the =w= tags on publish as it
-already does for any =[[ ]]=.
+first plain-text occurrence of each term per section in a
+={{ref:<definition coordinate>|<term as written>}}=, skipping code
+spans, headings, existing links and anything already inside ={{ }}=;
+per markup format. The display part keeps the author's wording and
+case; the target is the definition's coordinate, so the link names one
+event and nothing else. =reference_tags= then emits an =a= tag per
+definition on publish, as it already does for any coordinate ref — so
+=a:<definition coord>= finds every section that cites it.
 
 #+begin_example
 ── §2 (Markdown), before ─────────────────────────────────────────────
@@ -184,33 +192,44 @@ breaking its own rules; the incommensurability of paradigms is the
 reason no single method survives contact with history.
 
 ── §2, after relink (new version, same d) ────────────────────────────
-Feyerabend's [[epistemological anarchism]] holds that science advances
-by breaking its own rules; the [[incommensurability]] of paradigms is
-the reason no single method survives contact with history.
+Feyerabend's {{ref:30041:<agent-pk>:z2k7…|epistemological anarchism}}
+holds that science advances by breaking its own rules; the
+{{ref:30041:<agent-pk>:b9w1…|incommensurability}} of paradigms is the
+reason no single method survives contact with history.
 
 tags added by reference_tags:
-  ["w", "epistemological-anarchism"]
-  ["w", "incommensurability"]
+  ["a", "30041:<agent-pk>:z2k7…"]
+  ["a", "30041:<agent-pk>:b9w1…"]
+
+(not [[incommensurability]] — a wikilink unpacks to any 30818 whose d
+matches, or any sibling whose title slug matches; the ref names one.)
 #+end_example
 
-Resolution then needs nothing new: =[[incommensurability]]= is a =wiki=
-ref, and =resolve_refs= tries the publication's *siblings* by title slug
-before it ever asks for a 30818. Once the glossary is in the index, the
-definition is a sibling.
+Resolution needs nothing new: =resolve_refs= already treats an entity
+=ref:= as sibling-first, then a direct event pointer (decided 2026-09-15,
+the target form sets the scope). Promoted or not, the reader lands on
+the definition; promotion only changes whether it is an in-place jump
+or an event link.
 
 #+begin_src dot :file docs/vocabulary/resolve.png
 digraph resolve {
   rankdir=LR; fontname="Helvetica"; node [fontname="Helvetica", fontsize=10, shape=box, style="rounded,filled", fillcolor="#f7f7f7", color="#888"];
   edge [fontname="Helvetica", fontsize=9, color="#666"];
-  link [label="[[incommensurability]]\nin §2 (relinked)"];
-  sib  [label="sibling 30041 with\nT = incommensurability?", shape=diamond, fillcolor="#e2e3e5"];
-  def  [label="the promoted definition\n(glossary → d2)", fillcolor="#d1e7dd"];
-  wiki [label="30818 by d\n(global, optional)", fillcolor="#eee"];
-  none [label="unresolved chip\n(\"no article yet\")", fillcolor="#f8d7da"];
+  link [label="{{ref:30041:pk:b9w1…|incommensurability}}
+in §2 (relinked)"];
+  sib  [label="that coordinate is a
+sibling of the publication?", shape=diamond, fillcolor="#e2e3e5"];
+  def  [label="in-place jump to the
+promoted definition", fillcolor="#d1e7dd"];
+  ev   [label="direct event link to d2
+(local: opens · not local: pending)", fillcolor="#d1e7dd"];
+  wiki [label="[[incommensurability]] instead?
+any sibling by title slug,
+else any 30818 with that d", fillcolor="#f8d7da"];
   link -> sib;
-  sib -> def  [label="yes — sibling-first"];
-  sib -> wiki [label="no"];
-  wiki -> none [label="none", style=dashed];
+  sib -> def [label="yes (glossary promoted)"];
+  sib -> ev  [label="no — still exact"];
+  link -> wiki [label="what we avoid", style=dotted, color="#999"];
 }
 #+end_src
 
@@ -260,7 +279,7 @@ source MUST be a 30818).
 
 #+begin_example
 ┌─ §2 · Against Method ───────────────────────────────────────────────┐
-│ Feyerabend's [[epistemological anarchism]] holds that science …      │
+│ Feyerabend's {{ref:…|epistemological anarchism}} holds that science …│
 │                                                                      │
 │ ▌ ? request · answered      vocabulary · 2 terms · ✎ glossary style  │
 │ ▌   ↳ 2 definitions                                                  │
@@ -288,7 +307,7 @@ Foreign publication: the same card, the button reads
 | Definition role                   | =insertion.rs::InsertionRole::Definition= (from =t definition=), load pass      | =InsertionCard= "def" badge, table =role= filter             |
 | Agent answers                     | =propose_insertion= gains =role: definition= (sets =t=, =T= from title)         | =/tendrl-requests= skill: vocabulary branch                 |
 | Glossary bundle                   | =propose_bundle= unchanged                                                      | bundle card as today                                        |
-| Relink transform                  | =nostrdown::link_terms(content, format, terms) -> (content, changed)=, pure     | diff gate (existing primitive)                              |
+| Relink transform                  | =nostrdown::link_terms(content, format, [(term, coord)]) -> (content, changed)=, pure; emits ={{ref:coord\vert{}term}}= | diff gate (existing primitive)                              |
 | Relink publish                    | =POST /publication/relink= (+ =/preview=): own → same =d=; else derivative      | armed button on the request card                            |
 | Merge request                     | =publication/merge_request.rs=: 818 template + parse; card data in load pass    | =MergeRequestCard= under the target                         |
 | Accept                            | kind-7 on the 818 + republish (owner side)                                      | one armed button on the card                                |
@@ -299,11 +318,17 @@ Foreign publication: the same card, the button reads
   agent may write a second with =t: background= if the term needs a
   history, and that is an ordinary note.
 - *Relink every occurrence or the first per section?* Default first per
-  section. Every occurrence makes prose unreadable and the =w= tag is
+  section. Every occurrence makes prose unreadable and the =a= tag is
   the same either way.
-- *Global 30818 as well?* Not by default. A definition section can be
-  minted into a 30818 under the user's key later, as a separate act
-  with a separate scope.
+- *Promote at all?* Optional. The ref resolves without it; promotion
+  puts the glossary in the reading order and the TOC. Default: offer it
+  on the same card, do not require it.
+- *Two definitions of one term, which does the relink cite?* The one
+  answering this request; if several answer it, the card asks. A
+  =[[term]]= would have hidden this choice; the coordinate makes it
+  explicit.
+- *Global 30818 as well?* No. That is the ambiguity being moved away
+  from; a term that wants a global article is a separate act.
 - *Merge-request status.* NIP-25 =+= / =-= only. An open 818 stays a
   card until a reaction lands; no draft/closed states.
 - *Who may relink a foreign publication into a derivative?* Anyone, as
@@ -313,6 +338,7 @@ Foreign publication: the same card, the button reads
 - [[file:insertions-plan.org][Insertions plan]] — Phase 5c goes here
 - [[file:zettel/feat-insertions.org][Insertions]] · [[file:zettel/feat-annotations-table.org][Annotations table]]
 - [[file:zettel/decision-requests-are-events.org][Requests are records, never a harness]]
-- [[file:zettel/decision-wikilinks-30818-only.org][Wikilinks resolve to 30818 only]] — why definitions are 30041s, and why promotion is the findability step
+- [[file:zettel/decision-wikilinks-30818-only.org][Wikilinks resolve to 30818 only]] — the ambiguity a coordinate ref avoids
+- [[file:zettel/feat-nostrdown.org][Nostrdown]] — ={{ref:}}= entity scope: sibling-first, then a direct pointer (2026-09-15)
 - [[file:../nips/NKBIP-01-insertions.org][NKBIP-01 insertions]] — bundles; the 818 extension clause goes here
 - =nips/34.md= — considered and set aside: patches are git bytes, PRs are commits on a clone URL; a publication's version is the signed event itself
