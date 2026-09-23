@@ -455,7 +455,111 @@ and returns a structured diff:
 | The diff          | =GET /asks/:id/diff=: base pairing, content hunks, index structure diff | =MergeRequestReview.svelte= on the diff-gate primitive  |
 | Merge / decline   | =POST /asks/:id/merge= (sign next versions + react + broadcast), =/decline= | armed button; "open in composer" hand-off               |
 | In place          | 818s folded into =insertions/load= as =role: merge_request=             | card under the target section / index                   |
+| Agent             | =list_asks= · =get_ask_diff= · =review_ask= · =prepare_merge= · =fetch_asks= (=tools.rs=, one catalog, MCP + in-app) | =/tendrl-requests= skill; asks buffer "ask the assistant" |
 
+
+* The agent's side: gathering asks, still a pull
+
+The user's agent has to see the same asks the inbox shows — annotation
+requests it can answer, merge requests it can review — or the loop
+breaks the moment a request comes from someone else. But the line from
+[[file:zettel/decision-requests-are-events.org][the requests decision]]
+holds: *nothing wakes the agent*. "Listening" is the user typing "check
+tendrl" (external harness, =/tendrl-requests=) or pressing "ask the
+assistant" in the asks buffer (in-app, agent services). Both read the
+same list through the same tools; both stop where the user's key is
+needed.
+
+#+begin_src dot :file vocabulary/agent-asks.png
+digraph agentasks {
+  rankdir=TB; fontname="Helvetica"; node [fontname="Helvetica", fontsize=10, shape=box, style="rounded,filled", fillcolor="#f7f7f7", color="#888"];
+  edge [fontname="Helvetica", fontsize=9, color="#666"];
+
+  prompt [label="user: \"check tendrl\"\n(harness) · \"review these\" (in-app)", fillcolor="#fff3cd"];
+  list   [label="list_asks\n= GET /api/v1/asks over MCP\nlocal store · fetch only if asked (Confirm)"];
+  kind   [label="what kind of ask?", shape=diamond, fillcolor="#e2e3e5"];
+
+  subgraph cluster_req { label="annotation request (mine, or on my publication)"; style="rounded"; color="#bbb"; fontsize=10;
+    r1 [label="read anchor + scope\n(existing loop)"];
+    r2 [label="propose_insertion / propose_bundle\nassistant-signed, request → the ask", fillcolor="#d1e7dd"];
+    r3 [label="answer_request"];
+    r1 -> r2 -> r3;
+  }
+
+  subgraph cluster_mr { label="merge request (targets my publication)"; style="rounded"; color="#bbb"; fontsize=10;
+    m1 [label="get_ask_diff\nbase · source · hunks · index changes"];
+    m2 [label="review_ask\nassistant-signed 1111 on the 818:\nfindings, recommendation\n(local until publish)", fillcolor="#d1e7dd"];
+    m3 [label="prepare_merge (optional)\nthe owner's next version as a DRAFT\n(DraftStore, unsigned)", fillcolor="#cfe2ff"];
+    m1 -> m2 -> m3;
+  }
+
+  subgraph cluster_verdict { label="verdict on my merge request"; style="rounded"; color="#bbb"; fontsize=10;
+    v1 [label="report: merged / declined / open\n(+ the owner's reason if any)"];
+  }
+
+  stop [label="the user's key\nmerge · decline · relink · 818\nalways the user's press", fillcolor="#f8d7da"];
+
+  prompt -> list -> kind;
+  kind -> r1 [label="request"];
+  kind -> m1 [label="818 for me"];
+  kind -> v1 [label="7 on mine"];
+  r3 -> stop [style=dashed, label="user promotes / relinks"];
+  m3 -> stop [style=dashed, label="user signs the draft\n= merge + react +"];
+}
+#+end_src
+
+#+RESULTS:
+[[file:vocabulary/agent-asks.png]]
+
+** Tools (additions to the one catalog)
+
+| Tool             | Category     | Does                                                                                                 | Signs as    |
+|------------------+--------------+------------------------------------------------------------------------------------------------------+-------------|
+| =list_asks=      | Read         | The inbox list: 818s for me, verdicts on mine, signed requests on my publications; =list_requests= stays for records | —           |
+| =get_ask_diff=   | Read         | The engine's structured diff for an 818 (same payload the review screen renders)                     | —           |
+| =review_ask=     | ComposeWrite | A NIP-22 comment on the 818: what changed, what the agent recommends; local until =publish=          | assistant   |
+| =prepare_merge=  | ComposeWrite | Base + source → the owner's next version(s) as an unsigned draft in =DraftStore=; nothing is signed  | —           |
+| =fetch_asks=     | Network      | Pull =#p me= from my outbox relays; Confirm-gated like every fetch, only when the user asks           | —           |
+
+Not added: =merge_ask= / =decline_ask=. A merge is the owner's new
+version under the owner's key plus a reaction from the owner's key.
+The assistant signs only as itself
+([[file:zettel/decision-assistant-signs-own-key.org][decision]]), so
+those are the user's press in the review screen. =sign_draft= is not a
+back door either: it signs as the assistant, and the draft from
+=prepare_merge= is signed by the *user* in the composer, with the engine
+reacting =+= as part of that publish.
+
+** The skill, extended
+
+=/tendrl-requests= grows from "answer open requests" to "work the asks":
+
+1. =list_asks= (status open). Group by kind.
+2. Annotation requests: the existing loop, unchanged. Requests *on my
+   publication from someone else* are answered only if the user said
+   so ("answer theirs too"); default is to list them.
+3. Merge requests for me: =get_ask_diff=, read the changed sections,
+   write one =review_ask= per 818 (findings first, then merge / decline
+   / edit-first). Never call =prepare_merge= unless the user asked for
+   the draft; never touch the 818 itself.
+4. Verdicts on mine: report them in one line each.
+5. End with the list of what still needs the user's key.
+
+** In-app, the same
+
+The asks buffer's "ask the assistant" runs the same tools on the agent
+service (=needs_service= / =needs_funding= as for any turn). The
+review's summary panel is =review_ask='s output rendered inline, not a
+second implementation.
+
+** Why not subscribe
+
+A live relay subscription for =#p me= would make the inbox fill without
+a fetch, and it is on the follow-up list for insertions already ("live
+relay subscriptions"). It changes nothing here: the *engine* may hold a
+subscription and the store stream may announce an 818 the moment it
+lands; the agent still reads on the user's word. Live store, pulled
+agent.
 
 * Open questions (defaults stated)
 
