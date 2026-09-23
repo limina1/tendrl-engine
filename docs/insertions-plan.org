@@ -419,7 +419,7 @@ beside the reader rather than a plain open, requests as badged cards.
 - [X] =actions/draggable.ts= (pointer action); WM registration — =tours.ts=
       (=annotations=, work class), =registry.ts=, =BufferRenderer= if-chain,
       stub =AnnotationsBuffer.svelte= (=.abuf[data-root]= + a read-only
-      =.spell__input=); =tendrl-annotations-table= command, =SPC b o a=,
+      =.spell__input=); =tendrl-annotations-table= command, =SPC b o t=,
       the =+page.svelte= =openAnnotationsTable= arm (=openBuffer= form)
 
 *Track A — engine* (=src/api/insertions.rs=, =src/engine.rs=)

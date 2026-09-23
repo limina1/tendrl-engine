@@ -1,0 +1,543 @@
+#+TITLE: Agent service — signup, storage, and the Agent screen (mockup)
+#+DATE: 2026-09-22
+#+BRANCH: feat/paid-providers
+#+STATUS: implemented 2026-09-22 (branch feat/paid-providers) — deviations noted inline
+
+Mobile-first mockup of the "agent service" flow: how a user gets a paid
+model provider (ppq.ai or a routstr node) from nothing to working, where
+the access tokens live so they survive an app restart, and what tapping
+*agent* in the main menu shows once accounts exist. Built on the shapes
+verified in [[file:paid-providers.org][paid-providers.org]]. Nothing here
+is implemented; the questions at the end are what I need answered.
+
+* The chat runs on agent services only (2026-09-22)
+
+The Anthropic API-key provider was removed from the engine. The in-app
+chat — the mobile/remote surface — runs on the active agent service and
+nothing else; a turn with no service emits =needs_service= (the modal
+opens on signup with "Send it again"), a turn below the ceiling emits
+=needs_funding=. Claude Code stays the *external* harness: it drives
+tendrl over MCP with its own credential, so the compliance line is
+"your harness calls tendrl", never "tendrl calls Claude". =[ai] echo=
+is the only knob left: an echo provider for plumbing tests.
+
+* Storage: where the tokens live
+
+*Decision proposed: the engine owns them, in =<data_dir>/providers.json=.*
+
+- On Android the engine runs in-process inside the Tauri host, and
+  =data_dir= is the app's private storage — sandboxed per app by the OS,
+  wiped on uninstall, backed up only if the user's backup policy says
+  so. That is the right home for an =sk-= key. It also survives a
+  WebView storage reset, which browser =localStorage= would not.
+- The engine, not the WebView, calls ppq / routstr on every agent turn,
+  so the credential must be readable by Rust. Putting it in the browser
+  would mean shipping it back to the engine on every request: wrong side
+  of the frontend/backend boundary and one more place it can leak.
+- Desktop: same file, mode 0600. The OS keyring is available there and
+  the assistant identity already uses it; the key could go in the
+  keyring with the non-secret part in the file. Proposed: file on both
+  platforms first (one code path, one recovery story), keyring as a
+  later hardening. (Question 1.)
+- Never a Nostr event, never in TOML, never in =relays.json=.
+
+What is stored:
+
+#+begin_src json
+{
+  "active": { "provider": "ppq", "model": "claude-sonnet-5" },
+  "ppq":     { "credit_id": "3a16…", "api_key": "sk-…", "created_at": 1790086895,
+               "model": "claude-sonnet-5",
+               "balance": { "usd": 0.0, "fetched_at": 1790086900 } },
+  "routstr": { "node": { "url": "https://routstr.eduvietkieu.com", "name": "Hana Gateway",
+                         "npub": "npub1…", "version": "0.4.7", "mints": ["https://mint.minibits.cash/Bitcoin"] },
+               "api_key": "sk-…", "created_at": 1790087000,
+               "model": "claude-fable-5",
+               "balance": { "msat": 0, "reserved": 0, "total_spent": 0, "fetched_at": 1790087010 } }
+}
+#+end_src
+
+The API never returns =api_key= in full — a redacted form
+(=sk-aJv…(25)=) plus a one-shot *reveal* endpoint for copying it out.
+
+* Entry point: the drawer
+
+The mobile drawer's *status* hub gets a *collapsible* =agent services=
+section below the identity row. Open, it lists one row per configured
+service (the active one with a filled dot) and a =+= row. Collapsed, the
+header alone carries the summary. Everything it opens is a *modal* (the
+Agent services modal, below), not a work buffer — the drawer closes, the
+modal appears over whatever buffer was active, and dismissing it lands
+you back where you were.
+
+#+begin_example
+ status
+ ─────────────────────────────
+ settings                    ›
+ ● network            confirm
+ relays                      ›
+ identity          npub1…k3f
+
+ ▾ agent services          2          ← header: tap to fold; count
+   ● ppq.ai            $0.42   ›      ← active (filled dot) · balance
+     routstr       1,240 sat   ›      ← configured, not active
+   + add a service             ›      ← only providers not yet set up
+ ─────────────────────────────
+ embeddings                  ›
+ wiki links               3/7
+ ⇅ activity                  ›
+#+end_example
+
+Folded, the header keeps the active service's state so the drawer still
+reads at a glance:
+
+#+begin_example
+ ▸ agent services   ● ppq.ai · $0.42
+#+end_example
+
+*No services yet:* there is nothing to fold, so the section is a single
+row that prompts the add — no header/child split, no empty list:
+
+#+begin_example
+ agent services       add one  ›      ← opens the modal on Signup (S1)
+#+end_example
+
+Pill states per row:
+
+#+begin_example
+   ● ppq.ai            $0.42   ›      funded
+   ● ppq.ai         low  ▲     ›      below the per-turn ceiling (warn pill)
+   ● ppq.ai         offline    ›      last balance fetch failed; key kept
+     routstr        unfunded   ›      key exists, balance 0
+#+end_example
+
+- The fold state is per-device view state (=localStorage= like
+  =menuEdge=), default open.
+- Tapping a *service row* closes the drawer and opens the modal on the
+  Agent screen (S5) scrolled to that service. Tapping the *dot* switches
+  the active service in place (one =POST /providers/select=) without
+  leaving the drawer.
+- Tapping =+= (or the =add one= row) opens the modal on Signup (S1),
+  showing only the providers not yet set up; =+= hides once both exist
+  and returns if one is forgotten.
+- On desktop the same collapsible list sits at the top of
+  Settings → AI Tools and opens the same modal.
+
+The section reads =GET /api/v1/providers=, refreshed when the drawer
+opens and after every agent turn.
+
+* The Agent services modal
+
+One modal hosts every screen below (S1–S5); S6 is the existing intent
+modal family. It follows the repo's overlay pattern
+(=feat-ui-patterns.org=): copy =FetchConfirmModal='s structure, mount
+once in =+layout=, drive it from a nullable =app= field —
+
+#+begin_src ts
+app.agentServicesModal = null
+  | { view: 'signup' }                                   // S1 (→ S2/S3 or S4 inside)
+  | { view: 'manage'; focus?: 'ppq' | 'routstr' }        // S5 (→ S3 fund / S4 node pick inside)
+#+end_src
+
+— rendered declaratively (no manual =mount()=; that breaks the embedded
+build). Inside the modal a small step state (=signup → ppq-created →
+ppq-fund=, =signup → routstr-nodes → routstr-token=) is component
+=$state=; a half-typed token goes to =entryDrafts= so a rotation or an
+accidental close does not lose it.
+
+*Modal-yield rule applies twice:* routstr discovery is a relay fetch
+(Confirm-gated) and a low balance raises the S6 funding intent. While
+either intent is pending the modal hides itself (=visibility: hidden=,
+state alive) and returns when the intent resolves; while its own request
+is in flight it ignores Escape and backdrop taps. Escape / backdrop /
+=‹= close it otherwise; a close mid-signup keeps whatever the engine
+already stored (an account created but unfunded shows as *unfunded* in
+the drawer).
+
+Phone: full-height sheet, header with =‹= and the title (=add a
+service= / =agent services=), body scrolls. Desktop: centred card, same
+content.
+
+* State machine
+
+#+begin_example
+                ┌──────────────┐
+   no accounts  │  UNDEFINED   │  drawer: "agent services · add one ›" → modal on Signup (both cards)
+                └──────┬───────┘
+        ppq created ───┤─── routstr key created
+                       ▼
+                ┌──────────────┐
+                │  CONFIGURED  │  drawer: collapsible list, ● = active, + for the missing one → modal
+                └──────┬───────┘
+                       │ per provider:   unfunded → funded → low → offline
+                       │ "forget" on the last account → UNDEFINED
+#+end_example
+
+A provider card is *unfunded* when its balance is 0, *low* when it is
+under =max_turn_cost=, *offline* when the last balance call failed
+(the key is kept; the pill says so).
+
+* Screens
+
+All at phone width. =[ ]= is a button, =( )= a radio, =▾= a picker,
+=⧉= copy, =⟳= refresh. Toasts (=app.pushToast=) acknowledge copies and
+saves; destructive actions are *armed buttons* (tap once to arm, again
+to fire), never browser dialogs — per =feat-ui-patterns.org=.
+
+** S1 — Signup (modal, from =add one= / =+=)
+
+Shows both cards when nothing is configured; only the missing provider's
+card when one already exists.
+
+#+begin_example
+ ‹ add a service
+ ─────────────────────────────────────────
+ Give the assistant a model to run on.
+ Both options pay per use; no subscription.
+ You can set up both and switch any time.
+
+ ┌ ppq.ai ───────────────────────────────┐
+ │ One account, 370+ models, web search  │
+ │ built in. Fund with Lightning.        │
+ │ Balance in USD.                       │
+ │                                       │
+ │ [ Create account ]                    │
+ └───────────────────────────────────────┘
+
+ ┌ routstr ──────────────────────────────┐
+ │ No account. Pick a node on the Nostr  │
+ │ network, pay with Cashu ecash. Balance│
+ │ in sats, withdrawable any time.       │
+ │                                       │
+ │ [ Find nodes ]                        │
+ └───────────────────────────────────────┘
+
+ Already have a key?  [ Paste an existing key ]
+#+end_example
+
+"Paste an existing key" takes a ppq =sk-= key (+ credit id) or a
+routstr =sk-= key + node URL, for people who signed up elsewhere.
+(Question 2.)
+
+** S2 — ppq: create account
+
+One tap. =POST /accounts/create= takes under a second.
+
+#+begin_example
+ ┌ ppq.ai ───────────────────────────────┐
+ │ ● creating account…                   │
+ └───────────────────────────────────────┘
+
+ ┌ ppq.ai ────────────────────── created ┐
+ │ credit id   3a165eb3-…-6450cf12df04 ⧉ │
+ │ api key     sk-aJv…            ⧉ 👁   │
+ │                                       │
+ │ ⚠ Save the credit id somewhere safe.  │
+ │   It is the only way to recover this  │
+ │   account if the app data is lost.    │
+ │                                       │
+ │ balance     $0.00                     │
+ │                                       │
+ │ [ Fund now ]          [ Later ]       │
+ └───────────────────────────────────────┘
+#+end_example
+
+Both =⧉= copy via clipboard + toast. =👁= is the one-shot reveal. On
+"Later" the card collapses to the configured state (S5) with an
+*unfunded* pill; the assistant can't run until there is balance, and
+a turn attempted in that state raises the S6 intent.
+
+** S3 — ppq: fund
+
+#+begin_example
+ ‹ fund ppq.ai
+ ─────────────────────────────────────────
+ amount   ( 500 sat ) ( 2,000 sat ) ( 10,000 sat ) ( other… )
+          ≈ $0.51       ≈ $2.05        ≈ $10.25
+
+ [ Create invoice ]
+
+ ┌───────────────────────────────────────┐
+ │           ▄▄▄▄▄ ▄ ▄▄ ▄▄▄▄▄            │
+ │           █   █ ▄██▄ █   █            │
+ │           █▄▄▄█ █ ▄▄ █▄▄▄█   (QR)     │
+ │           ▄▄▄▄▄ ▄ ▄▄ ▄ ▄ ▄            │
+ │                                       │
+ │ lnbc20u1p4t9r…                    ⧉   │
+ │ [ Open in wallet ]  (lightning: link) │
+ │                                       │
+ │ ● waiting for payment · expires 14:32 │
+ └───────────────────────────────────────┘
+#+end_example
+
+The engine polls =GET /topup/status/{id}= every 3 s while this screen is
+open, and once more when the app returns to the foreground. On
+=status != "New"= the card flips to *paid · balance $2.05* and a toast
+fires. On expiry: *expired — [ New invoice ]*. Amount chips are in sats
+because the invoice is sats; the USD estimate comes from the ppq
+response (=amount_due= vs =amount=). Minimum 100 sats. No NWC auto
+top-up (decided out, 2026-09-22): funding is always an explicit invoice
+the user pays.
+
+** S4 — routstr: find a node, paste a token
+
+Step 1, discovery. The engine REQs kind 38421 on the routstr relays,
+probes each https node's =/v1/info= and =/v1/models= concurrently
+(5 s cap), and ranks: healthy first, then has-a-Claude-class-model,
+then latency.
+
+#+begin_example
+ ‹ routstr · pick a node
+ ─────────────────────────────────────────
+ ● found 16 nodes, 5 answering          ⟳
+ show: ( answering ) ( all )
+
+ ┌ Hana Gateway ────────────────── 0.6 s ┐
+ │ 32 models · claude-fable-5 · v0.4.7   │
+ │ mints: minibits                       │
+ │ routstr.eduvietkieu.com    npub1…q4   │
+ └───────────────────────────────────────┘
+ ┌ GitHappens2Routstr ──────────── 1.3 s ┐
+ │ 118 models · v0.4.7                   │
+ │ mints: cubabitcoin, minibits          │
+ └───────────────────────────────────────┘
+ ┌ Omochi Node ─────────────────── 1.8 s ┐
+ │ 366 models · v0.4.5                   │
+ │ mints: minibits, cubabitcoin, otrta   │
+ └───────────────────────────────────────┘
+ ┌ Blazelight Node 1 ───────────── 3.2 s ┐
+ │ 108 models · v0.4.3                   │
+ └───────────────────────────────────────┘
+
+ [ Enter a node URL by hand ]
+#+end_example
+
+Tap a node → step 2. Cashu is the only way in (no Lightning on any live
+node), so the screen says exactly that and shows which mints this node
+takes.
+
+#+begin_example
+ ‹ routstr · Hana Gateway
+ ─────────────────────────────────────────
+ This node accepts ecash from:
+   • mint.minibits.cash/Bitcoin
+ Send a token from a wallet that uses one
+ of these mints (Minibits, Nutstash, cashu.me).
+
+ ┌───────────────────────────────────────┐
+ │ cashuBo2FteCJodHRwczovL21pbnQubWluaWJ │
+ │ pdHMuY2FzaC9CaXRjb2luIiwidW5pdCI6…    │
+ └───────────────────────────────────────┘
+ [ Paste from clipboard ]
+
+ amount in token   1,000 sat · mint ok   ← parsed client-side before sending
+
+ [ Create key with this token ]
+#+end_example
+
+=GET /v1/balance/create?initial_balance_token=… = → key. The engine then
+calls =/v1/balance/info= and the card lands in the configured state:
+
+#+begin_example
+ ┌ routstr ─────────────────────── ready ┐
+ │ node      Hana Gateway   v0.4.7       │
+ │ key       sk-9f2…              ⧉ 👁   │
+ │ balance   1,000 sat  (0 reserved)     │
+ │ [ Done ]                              │
+ └───────────────────────────────────────┘
+#+end_example
+
+Failure modes shown inline, not as toasts: *token already spent*, *mint
+not accepted by this node* (with the list again), *node unreachable —
+pick another*.
+
+** S5 — Agent screen (modal, from a service row)
+
+What a service row in the drawer opens — the same modal on its =manage=
+view, scrolled to that service. Both cards are on one screen so switching
+is a glance away.
+
+#+begin_example
+ ‹ agent
+ ─────────────────────────────────────────
+ running on   ppq.ai · claude-sonnet-5
+ last turn    $0.012 · 3 tool calls · 41 s
+
+ ┌ (●) ppq.ai ─────────────── $0.42 ⟳ ┐
+ │ model      claude-sonnet-5        ▾ │
+ │ web search built in                 │
+ │ credit id  3a165eb3-…          ⧉    │
+ │ api key    sk-aJv…             ⧉ 👁 │
+ │ spent      $1.58 all time · $0.20 today │
+ │                                     │
+ │ [ Fund ]   [ Spend history ]        │
+ │ [ Forget this account ]  (armed)    │
+ └─────────────────────────────────────┘
+
+ ┌ ( ) routstr ────────── 1,240 sat ⟳ ┐
+ │ node       Hana Gateway  v0.4.7   ▾ │
+ │ model      claude-fable-5         ▾ │
+ │ mints      minibits                 │
+ │ key        sk-9f2…             ⧉ 👁 │
+ │ reserved   0 sat · spent 760 sat    │
+ │                                     │
+ │ [ Top up ]  [ Withdraw ]  [ History ] │
+ │ [ Forget this key ]      (armed)    │
+ └─────────────────────────────────────┘
+
+ ceiling per turn   $0.25 ▾   (a turn that would exceed it asks first)
+
+ [ + add a service ]   ← same target as the drawer's + row; hidden when both exist
+#+end_example
+
+- The radio picks the *active* provider; the model picker under it
+  picks the model. Switching is one write (=POST /providers/select=);
+  the next agent turn uses it. No restart.
+- The *model* picker lists the provider's =/v1/models= filtered to chat
+  models, showing price (=$/1M in= for ppq, =sat/1k tokens= for routstr)
+  next to each id.
+  - *ppq* advertises =supported_parameters= per model, so the picker
+    shows only models that list =tools=; the rest are hidden.
+  - *routstr* nodes advertise no capability data at all (checked on
+    three nodes, 516 entries, 2026-09-22), so the picker cannot filter.
+    It opens with a standing note above the list and marks each model
+    with what tendrl has learned:
+
+    #+begin_example
+     ‹ routstr · model                    Hana Gateway
+     ─────────────────────────────────────────
+     ⓘ The assistant works by calling tools, not
+       just chatting. This node doesn't say which
+       of its models can do that. Pick one you
+       know supports tool calling — Claude, GPT,
+       Gemini, GLM, DeepSeek and Qwen families
+       usually do; small or older chat models
+       often don't.
+
+     ● claude-fable-5          1.16 sat/1k  ✓ tools ok
+       claude-sonnet-4-6       0.35 sat/1k  · untested
+       gemini-3-6-flash        0.05 sat/1k  ✓ tools ok
+       mimo-v2.6-pro           0.45 sat/1k  ✗ no tool calls
+       llama-3.3-8b            0.01 sat/1k  · untested
+    #+end_example
+
+    =✓ / ✗= come from a one-shot *self-test* the engine runs the first
+    time a model is selected on a node: one tiny request with a single
+    trivial tool, a few sats, result remembered per node + model in
+    =providers.json=. Picking an *untested* model runs the test before
+    the first real turn and shows the outcome as a toast; a =✗= model
+    can still be selected (the user may know better) but the card shows
+    a warn pill *no tool calls* and the assistant will explain rather
+    than fail silently. A curated allowlist of known-good families sorts
+    to the top. The routstr *node* picker reopens S4 step 1 with the
+  current node marked; switching node with a balance on the old one
+  warns that the balance stays on the old node (a key is per node) and
+  offers *Withdraw first*.
+- =⟳= on a card refetches that balance; the pill in the drawer follows.
+- *Withdraw* (routstr) calls refund, shows the returned Cashu token once
+  in a copy box with "paste this into your wallet now — it is not stored",
+  and marks the card *unfunded*. Armed.
+- *Forget* removes the account from the store after the second tap. For
+  routstr with a balance, the button is disabled until withdrawn; for ppq
+  it warns that only the credit id can get the account back.
+- *Spend history* opens the provider ledger (ppq =queries/history=,
+  routstr =balance/history=) as a plain list.
+
+** S6 — Mid-chat: not enough balance
+
+/As built:/ the engine checks the active service's balance against its
+ceiling *before* recording the user turn and answers the agent stream
+with a =needs_funding= event + =done= (no Confirm intent — there is no
+engine-side operation to approve). The web drops the optimistic
+fragments, parks the text as =pendingAgentMessage=, and opens the Agent
+services modal on funding with a "Send it again" banner that appears
+once the active service is funded (or another is made active). The
+ceiling is per provider — =ceiling_usd= for ppq, =ceiling_sats= for
+routstr — because the engine has no offline BTC rate to convert one
+global value.
+
+Original sketch:
+
+#+begin_example
+ ┌ the assistant needs funds ─────────────┐
+ │ ppq.ai balance $0.03 · ceiling $0.25    │
+ │                                         │
+ │ [ Fund ppq.ai ]  → S3, then resumes     │
+ │ [ Switch to routstr (1,240 sat) ]       │
+ │ [ Run anyway ]  (ceiling ignored once)  │
+ │ [ Cancel ]                              │
+ └─────────────────────────────────────────┘
+#+end_example
+
+The chat turn stays queued until the intent resolves, like a
+Confirm-mode fetch.
+
+** S7 — Desktop
+
+Same modal, opened from the collapsible "agent services" list at the
+top of Settings → AI Tools (and from the command palette). The existing
+AI Tools =provider= / =model= fields become read-only mirrors of the
+active selection, so there is one place that owns the choice.
+
+* API surface behind the screens
+
+| Screen | Call |
+|--------+------|
+| drawer section, S5 | =GET /api/v1/providers= → =ProviderState= (one entry per service: redacted key, cached balance, state; =active=) |
+| drawer dot tap | =POST /providers/select {provider}= (model unchanged) |
+| S2 | =POST /api/v1/providers/ppq/setup= → creates account, stores it, returns state |
+| S1 paste | =POST /api/v1/providers/ppq/adopt {api_key, credit_id}= · =POST /providers/routstr/adopt {node_url, api_key}= |
+| S3 | =POST /providers/ppq/fund {amount_sats}= → ={invoice_id, bolt11, expires_at}= · =GET /providers/ppq/fund/:id= → status (server polls provider) |
+| S4 step 1 | =POST /providers/routstr/discover= → ranked =[NodeRef + health]= (Confirm-gated like any relay fetch) |
+| S4 step 2 | =POST /providers/routstr/create {node_url, cashu_token}= → key + balance |
+| S5 | =POST /providers/select {provider, model}= · =GET /providers/:p/models= · =POST /providers/:p/refresh= · =POST /providers/routstr/topup {cashu_token}= · =POST /providers/routstr/refund= → token (once) · =GET /providers/:p/ledger= · =POST /providers/:p/reveal= → full key (once) · =DELETE /providers/:p= |
+| S6 | funding intent on the =fetch-events= SSE stream; =POST /providers/intent/:id {action}= |
+| every turn | the agent loop reads =active= from the store and builds the provider on the fly (=OpenAiCompatProvider=), so a switch needs no restart |
+
+* Rules applied from =feat-ui-patterns.org=
+
+- No =window.prompt= / =confirm=: paste fields are inline textareas,
+  forget/withdraw are armed buttons.
+- Toasts for copy / saved / paid; inline errors for anything the user
+  must fix on that screen.
+- Each drawer service row is a *pill-as-action* (status you can tap),
+  matching network / identity; the dot switches, the row opens.
+- Modal step state is component =$state=; a half-pasted token lives in
+  =entryDrafts=; the drawer fold is a =localStorage= view pref. Account
+  state lives in the engine. Modal follows =FetchConfirmModal= +
+  the modal-yield rule (discovery and funding both raise intents).
+- Async affordances always show what a tap does now (creating…, waiting
+  for payment · 14:32, refreshing).
+
+* Questions to confirm
+
+1. *Storage.* File under =data_dir= on both platforms, 0600, keyring later —
+   or keyring-first on desktop from day one?
+2. *"Paste an existing key"* on the signup screen — wanted in v1, or
+   create-only?
+3. *NWC auto top-up.* Settled: out. Invoice-only funding (2026-09-22).
+4. *Active provider semantics.* One active at a time with a radio (as
+   drawn), or let the S6 modal offer failover automatically when the
+   active one is unfunded?
+5. *Per-turn ceiling.* Global (one value, unit-converted) as drawn, or
+   per provider?
+6. *routstr node switch.* Keep one key per node as drawn (balances don't
+   travel), or hold several routstr keys at once and show them as
+   separate cards?
+7. *Mobile QR.* Render the invoice QR in the WebView (a small pure-JS
+   encoder) — fine — or rely on "Open in wallet" alone?
+8. *Drawer placement.* Settled: an "agent services" section under
+   identity with one row per service and a =+= row (2026-09-22).
+
+* Implementation slices once confirmed
+
+- [X] engine: =src/providers.rs= store + ppq/routstr clients + =ProviderState= view (2026-09-22)
+- [X] engine: =OpenAiCompatProvider= in =llm.rs= (arguments parsed from the JSON string; parallel calls; =role: tool= results); agent loop reads the store per turn
+- [X] engine: tool-call self-test per node+model (routstr) + =supported_parameters= filter (ppq); results in =providers.json=
+- [X] engine: =/api/v1/providers/*= routes; discovery Confirm-gated; =needs_funding= event (see S6 "as built")
+- [X] web: =AgentServicesModal= (mounted in =+layout=, =app.agentServicesModal= driven, yields to intents) with S1–S5
+- [X] web: drawer collapsible "agent services" section (rows, active dot, + row, "add one" empty row); Settings → AI assistant mirror
+- [X] web: S6 as a =needs_funding= event → modal on funding + "Send it again"
+- [X] verify: engine smoke test on a scratch port (recipe in =docs/commands.org=) — adopt, balance, models, invoice, discovery, error mapping, 402 path, funding gate, forget
+- [ ] verify on device: a funded ppq account (QR → paid → balance) and one routstr token → key → self-test → an agent turn
+- [ ] zettel: =feat-paid-providers.org=, decision "engine owns provider credentials", update =feat-assistant.org= / =feat-mobile-shell.org=

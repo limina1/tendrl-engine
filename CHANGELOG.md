@@ -1,3 +1,29 @@
+## v0.15.1 — 2026-09-22
+
+- feat(wm): tendrl-open-chat — SPC c / SPC b o a / M-x opens the assistant chat on both shells
+
+## v0.15.0 — 2026-09-22
+
+- docs(zettel): agent services feature note, two decisions, web-tools idea; index + mobile/assistant notes updated
+- feat(providers): inspect Cashu tokens (v3 + v4) before they reach a node; mint mismatch explained with alternatives
+- feat(chat): saved chats on desktop and phone — chat bar slot, named saves, drawer row
+- test(assistant): an AI broadcast raises the publish intent in Confirm mode
+- feat(assistant): relay search + lookups go through the Confirm intent — scope/from_relays on the tools
+- feat(assistant): publishing under its own identity + get_identities; every tool on by default
+- feat(modeline): agent services pill — desktop twin of the drawer's status section
+- docs(config): drop the [ai] block from the example config — the model is an agent service chosen in-app
+- fix(chat): tell service-backed models what they are — runtime identity system line
+- feat(chat): the in-app assistant runs on agent services only — Anthropic API provider removed
+- feat(providers): agent services — ppq.ai + routstr accounts, funding, and model choice for the agent loop
+- docs(providers): routstr model picker — tool-calling note, per-model self-test marks; ppq filters by supported_parameters
+- docs(providers): drop NWC auto top-up — ppq funding is invoice-only
+- docs(providers): agent services = collapsible drawer section ("add one" when empty) opening one modal
+- docs(providers): drawer shows an 'agent services' section — one row per service, active dot, + to add
+- docs(providers): mockup of the agent-service signup, storage and Agent screen flows
+- feat(providers): probe ppq.ai + routstr signup/balance surface; design doc
+- fix(bunker): never lose the first request; fail fast when no relay is reachable; log sends and relay OKs
+- fix(identity): real OS keyring backend — pairings and identities persist across restarts
+
 ## v0.14.0 — 2026-09-16
 
 - docs(kasten): decision — no OS keyring backend, nsec signing to be phased out

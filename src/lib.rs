@@ -66,6 +66,7 @@ pub mod error;
 pub mod git;
 pub mod identity;
 pub mod llm;
+pub mod providers;
 pub mod network;
 pub mod nip11;
 pub mod nip19;

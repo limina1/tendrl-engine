@@ -10,16 +10,18 @@
 //!
 //! Provider-neutral types ([`ContentBlock`], [`ToolDefinition`], [`AgentMessage`])
 //! are declared once; each provider translates them to/from its wire format.
-//! Auth is abstracted behind [`ClaudeCredential`] (api-key vs subscription
-//! bearer), mirroring `signing.rs`'s pluggable `Signer`.
+//!
+//! Two implementations: [`NoopProvider`] (echo, for plumbing tests) and
+//! [`OpenAiCompatProvider`] (chat-completions wire format — what the paid
+//! agent services in `providers.rs`, ppq.ai and routstr nodes, speak). The
+//! former Anthropic Messages API provider was removed on 2026-09-22: the
+//! in-app chat runs on agent services only; Claude reaches tendrl as an
+//! *external* harness over MCP, never as a key the engine holds.
 
 use crate::chat::{ChatRole, LLMMessage};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::fmt;
-use std::sync::Arc;
-
-const ANTHROPIC_URL: &str = "https://api.anthropic.com/v1/messages";
 
 /// Errors from LLM providers
 #[derive(Debug)]
@@ -219,81 +221,174 @@ impl LLMProvider for NoopProvider {
 }
 
 // ---------------------------------------------------------------------------
-// ClaudeProvider (Anthropic Messages API)
+// OpenAiCompatProvider — chat-completions wire format (ppq.ai, routstr nodes,
+// anything else OpenAI-shaped)
 // ---------------------------------------------------------------------------
 
-/// Provider that calls the Anthropic Messages API (API-key auth only).
-pub struct ClaudeProvider {
+/// A provider speaking `POST {base}/chat/completions` with bearer auth.
+///
+/// The neutral types never change: tools become `function` entries, a
+/// returned `tool_calls` list becomes [`ContentBlock::ToolUse`]s (arguments
+/// arrive as a JSON *string* and are parsed here), and
+/// [`AgentMessage::ToolResults`] go back as one `role: tool` message per
+/// result. `reasoning` / `reasoning_content` on the reply becomes a
+/// display-only [`ContentBlock::Thinking`]. No streaming yet.
+pub struct OpenAiCompatProvider {
+    name: &'static str,
+    /// Up to and including `/v1` — `https://api.ppq.ai/v1`, `https://node/v1`.
+    base_url: String,
     api_key: String,
     model: String,
     client: reqwest::Client,
 }
 
-impl ClaudeProvider {
-    /// Construct from a developer-platform API key (`ANTHROPIC_API_KEY`).
-    pub fn new(api_key: String) -> Self {
+impl OpenAiCompatProvider {
+    pub fn new(name: &'static str, base_url: String, api_key: String, model: String) -> Self {
         Self {
+            name,
+            base_url: base_url.trim_end_matches('/').to_string(),
             api_key,
-            model: "claude-haiku-4-5-20251001".to_string(),
-            client: reqwest::Client::new(),
+            model,
+            client: reqwest::Client::builder()
+                .timeout(std::time::Duration::from_secs(300))
+                .build()
+                .unwrap_or_else(|_| reqwest::Client::new()),
         }
     }
 
-    pub fn with_model(mut self, model: String) -> Self {
-        self.model = model;
-        self
-    }
-}
-
-/// Map an assistant-side block to its Anthropic JSON shape. Thinking blocks are
-/// dropped (no signature to echo); tool_result blocks never belong here.
-fn block_to_assistant_json(b: &ContentBlock) -> Option<Value> {
-    match b {
-        ContentBlock::Text { text } => Some(json!({ "type": "text", "text": text })),
-        ContentBlock::ToolUse { id, name, input } => {
-            Some(json!({ "type": "tool_use", "id": id, "name": name, "input": input }))
+    /// Render the neutral history as chat-completions messages.
+    pub fn to_wire_messages(messages: &[AgentMessage]) -> Vec<Value> {
+        let mut out: Vec<Value> = Vec::new();
+        for msg in messages {
+            match msg {
+                AgentMessage::System(s) => out.push(json!({ "role": "system", "content": s })),
+                AgentMessage::User(s) => out.push(json!({ "role": "user", "content": s })),
+                AgentMessage::Assistant(blocks) => {
+                    let text: String = blocks
+                        .iter()
+                        .filter_map(|b| match b {
+                            ContentBlock::Text { text } => Some(text.as_str()),
+                            _ => None,
+                        })
+                        .collect::<Vec<_>>()
+                        .join("");
+                    let calls: Vec<Value> = blocks
+                        .iter()
+                        .filter_map(|b| match b {
+                            ContentBlock::ToolUse { id, name, input } => Some(json!({
+                                "id": id,
+                                "type": "function",
+                                "function": { "name": name, "arguments": input.to_string() }
+                            })),
+                            _ => None,
+                        })
+                        .collect();
+                    let mut m = json!({ "role": "assistant" });
+                    m["content"] = if text.is_empty() { Value::Null } else { Value::String(text) };
+                    if !calls.is_empty() {
+                        m["tool_calls"] = Value::Array(calls);
+                    }
+                    out.push(m);
+                }
+                AgentMessage::ToolResults(blocks) => {
+                    for b in blocks {
+                        if let ContentBlock::ToolResult { tool_use_id, content, is_error } = b {
+                            let content = if *is_error {
+                                format!("ERROR: {content}")
+                            } else {
+                                content.clone()
+                            };
+                            out.push(json!({
+                                "role": "tool",
+                                "tool_call_id": tool_use_id,
+                                "content": content,
+                            }));
+                        }
+                    }
+                }
+            }
         }
-        ContentBlock::Thinking { .. } | ContentBlock::ToolResult { .. } => None,
+        out
     }
-}
 
-/// Map a tool-result block to its Anthropic JSON shape (lives in a user turn).
-fn block_to_tool_result_json(b: &ContentBlock) -> Option<Value> {
-    match b {
-        ContentBlock::ToolResult {
-            tool_use_id,
-            content,
-            is_error,
-        } => Some(json!({
-            "type": "tool_result",
-            "tool_use_id": tool_use_id,
-            "content": content,
-            "is_error": is_error,
-        })),
-        _ => None,
+    pub fn to_wire_tools(tools: &[ToolDefinition]) -> Vec<Value> {
+        tools
+            .iter()
+            .map(|t| {
+                json!({
+                    "type": "function",
+                    "function": {
+                        "name": t.name,
+                        "description": t.description,
+                        "parameters": t.input_schema,
+                    }
+                })
+            })
+            .collect()
     }
-}
 
-/// Parse one Anthropic response content block into a [`ContentBlock`].
-fn parse_content_block(block: &Value) -> Option<ContentBlock> {
-    match block["type"].as_str()? {
-        "text" => Some(ContentBlock::Text {
-            text: block["text"].as_str().unwrap_or("").to_string(),
-        }),
-        "thinking" => Some(ContentBlock::Thinking {
-            thinking: block["thinking"].as_str().unwrap_or("").to_string(),
-        }),
-        "tool_use" => Some(ContentBlock::ToolUse {
-            id: block["id"].as_str().unwrap_or("").to_string(),
-            name: block["name"].as_str().unwrap_or("").to_string(),
-            input: block.get("input").cloned().unwrap_or(Value::Null),
-        }),
-        _ => None,
+    /// Parse `choices[0]` into blocks + a stop reason.
+    pub fn parse_choice(choice: &Value) -> TurnOutput {
+        let message = &choice["message"];
+        let mut blocks: Vec<ContentBlock> = Vec::new();
+        let reasoning = message["reasoning"]
+            .as_str()
+            .or_else(|| message["reasoning_content"].as_str())
+            .unwrap_or("");
+        if !reasoning.is_empty() {
+            blocks.push(ContentBlock::Thinking {
+                thinking: reasoning.to_string(),
+            });
+        }
+        match &message["content"] {
+            Value::String(s) if !s.is_empty() => blocks.push(ContentBlock::Text { text: s.clone() }),
+            Value::Array(parts) => {
+                let text: String = parts
+                    .iter()
+                    .filter_map(|p| p["text"].as_str())
+                    .collect::<Vec<_>>()
+                    .join("");
+                if !text.is_empty() {
+                    blocks.push(ContentBlock::Text { text });
+                }
+            }
+            _ => {}
+        }
+        let mut saw_tool_call = false;
+        if let Some(calls) = message["tool_calls"].as_array() {
+            for (i, c) in calls.iter().enumerate() {
+                let id = c["id"]
+                    .as_str()
+                    .map(str::to_string)
+                    .unwrap_or_else(|| format!("call_{i}"));
+                let name = c["function"]["name"].as_str().unwrap_or("").to_string();
+                let input = match &c["function"]["arguments"] {
+                    Value::String(s) if s.trim().is_empty() => json!({}),
+                    Value::String(s) => serde_json::from_str::<Value>(s)
+                        .unwrap_or_else(|_| json!({ "_unparsed_arguments": s })),
+                    Value::Null => json!({}),
+                    other => other.clone(),
+                };
+                saw_tool_call = true;
+                blocks.push(ContentBlock::ToolUse { id, name, input });
+            }
+        }
+        let stop_reason = match choice["finish_reason"].as_str() {
+            _ if saw_tool_call => StopReason::ToolUse,
+            Some("stop") | None => StopReason::EndTurn,
+            Some("tool_calls") | Some("function_call") => StopReason::ToolUse,
+            Some("length") => StopReason::MaxTokens,
+            Some(other) => StopReason::Other(other.to_string()),
+        };
+        TurnOutput {
+            content: blocks,
+            stop_reason,
+        }
     }
 }
 
 #[async_trait::async_trait]
-impl LLMProvider for ClaudeProvider {
+impl LLMProvider for OpenAiCompatProvider {
     async fn run_turn(
         &self,
         messages: &[AgentMessage],
@@ -301,145 +396,60 @@ impl LLMProvider for ClaudeProvider {
         model: Option<&str>,
     ) -> Result<TurnOutput, LLMError> {
         let model = model.unwrap_or(&self.model);
-
-        // The Anthropic API takes `system` as a top-level param, not in the
-        // messages array.
-        let mut system_parts: Vec<String> = Vec::new();
-        let mut api_messages: Vec<Value> = Vec::new();
-
-        for msg in messages {
-            match msg {
-                AgentMessage::System(s) => system_parts.push(s.clone()),
-                AgentMessage::User(s) => api_messages.push(json!({ "role": "user", "content": s })),
-                AgentMessage::Assistant(blocks) => {
-                    let content: Vec<Value> =
-                        blocks.iter().filter_map(block_to_assistant_json).collect();
-                    api_messages.push(json!({ "role": "assistant", "content": content }));
-                }
-                AgentMessage::ToolResults(blocks) => {
-                    let content: Vec<Value> = blocks
-                        .iter()
-                        .filter_map(block_to_tool_result_json)
-                        .collect();
-                    api_messages.push(json!({ "role": "user", "content": content }));
-                }
-            }
-        }
-
-        // Anthropic requires at least one message
-        if api_messages.is_empty() {
+        let wire = Self::to_wire_messages(messages);
+        if !wire.iter().any(|m| m["role"] != "system") {
             return Err(LLMError::ProviderError(
                 "No user/assistant messages to send".into(),
             ));
         }
-
-        // NOTE: we deliberately do NOT send `temperature`/`top_p`/`top_k` —
-        // they are removed on Opus 4.8/4.7 (a 400), and omitting them is valid
-        // on every current model. `thinking` is likewise omitted (valid
-        // everywhere); revisit if adaptive thinking is wanted for the loop.
         let mut body = json!({
             "model": model,
+            "messages": wire,
             "max_tokens": 4096,
-            "messages": api_messages,
         });
-        if !system_parts.is_empty() {
-            body["system"] = Value::String(system_parts.join("\n\n"));
-        }
         if !tools.is_empty() {
-            body["tools"] =
-                serde_json::to_value(tools).map_err(|e| LLMError::ProviderError(e.to_string()))?;
+            body["tools"] = Value::Array(Self::to_wire_tools(tools));
+            body["tool_choice"] = json!("auto");
         }
-
+        let url = format!("{}/chat/completions", self.base_url);
         let resp = self
             .client
-            .post(ANTHROPIC_URL)
-            .header("anthropic-version", "2023-06-01")
+            .post(&url)
             .header("content-type", "application/json")
-            .header("x-api-key", &self.api_key)
+            .header("authorization", format!("Bearer {}", self.api_key))
             .json(&body)
             .send()
             .await
             .map_err(|e| LLMError::RequestFailed(e.to_string()))?;
-
         let status = resp.status();
-        let resp_body: Value = resp
-            .json()
+        let text = resp
+            .text()
             .await
-            .map_err(|e| LLMError::RequestFailed(format!("Failed to read response: {}", e)))?;
-
+            .map_err(|e| LLMError::RequestFailed(format!("Failed to read response: {e}")))?;
+        let resp_body: Value = serde_json::from_str(&text)
+            .unwrap_or_else(|_| json!({ "error": { "message": text.chars().take(300).collect::<String>() } }));
         if !status.is_success() {
             let err_msg = resp_body["error"]["message"]
                 .as_str()
+                .or_else(|| resp_body["detail"]["error"]["message"].as_str())
+                .or_else(|| resp_body["detail"].as_str())
                 .unwrap_or("Unknown error");
-            return Err(LLMError::ProviderError(format!("{}: {}", status, err_msg)));
+            let hint = if status.as_u16() == 402 {
+                " (payment required — the account balance is too low for this request)"
+            } else {
+                ""
+            };
+            return Err(LLMError::ProviderError(format!("{}: {}{}", status, err_msg, hint)));
         }
-
-        let content = resp_body["content"]
+        let choice = resp_body["choices"]
             .as_array()
-            .ok_or_else(|| LLMError::ProviderError("No content in response".into()))?;
-        let blocks: Vec<ContentBlock> = content.iter().filter_map(parse_content_block).collect();
-
-        let stop_reason = match resp_body["stop_reason"].as_str() {
-            Some("end_turn") => StopReason::EndTurn,
-            Some("tool_use") => StopReason::ToolUse,
-            Some("max_tokens") => StopReason::MaxTokens,
-            Some(other) => StopReason::Other(other.to_string()),
-            None => StopReason::EndTurn,
-        };
-
-        Ok(TurnOutput {
-            content: blocks,
-            stop_reason,
-        })
+            .and_then(|c| c.first())
+            .ok_or_else(|| LLMError::ProviderError("No choices in response".into()))?;
+        Ok(Self::parse_choice(choice))
     }
 
     fn name(&self) -> &str {
-        "claude"
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Construction
-// ---------------------------------------------------------------------------
-
-/// Build a provider from the `[ai]` config block. The API key comes from
-/// `ANTHROPIC_API_KEY` in the environment, never the config file. Falls back to
-/// the echo provider when the key is missing, so it degrades gracefully.
-pub fn provider_from_config(ai: &crate::config::AiConfig) -> Arc<dyn LLMProvider> {
-    match ai.provider.as_str() {
-        "noop" => {
-            tracing::info!("LLM provider: noop (echo)");
-            Arc::new(NoopProvider::echo())
-        }
-        _ => match std::env::var("ANTHROPIC_API_KEY") {
-            Ok(key) => {
-                tracing::info!("LLM provider: claude (model: {})", ai.model);
-                Arc::new(ClaudeProvider::new(key).with_model(ai.model.clone()))
-            }
-            Err(_) => {
-                tracing::warn!("LLM provider: echo (no ANTHROPIC_API_KEY set)");
-                Arc::new(NoopProvider::echo())
-            }
-        },
-    }
-}
-
-/// Build a provider from environment configuration (legacy entry point).
-///
-/// If `ANTHROPIC_API_KEY` is set, returns a ClaudeProvider.
-/// The model can be overridden with `ANTHROPIC_MODEL`.
-/// Otherwise falls back to the echo NoopProvider.
-pub fn provider_from_env() -> Arc<dyn LLMProvider> {
-    if let Ok(api_key) = std::env::var("ANTHROPIC_API_KEY") {
-        let mut provider = ClaudeProvider::new(api_key);
-        if let Ok(model) = std::env::var("ANTHROPIC_MODEL") {
-            provider = provider.with_model(model);
-        }
-        tracing::info!("LLM provider: claude (model: {})", provider.model);
-        Arc::new(provider)
-    } else {
-        tracing::info!("LLM provider: echo (no ANTHROPIC_API_KEY set)");
-        Arc::new(NoopProvider::echo())
+        self.name
     }
 }
 

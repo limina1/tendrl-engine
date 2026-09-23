@@ -22,6 +22,7 @@
 	import HighlightComposerModal from '$lib/components/HighlightComposerModal.svelte';
 	import InsertionComposerModal from '$lib/components/InsertionComposerModal.svelte';
 	import AnnotationRequestModal from '$lib/components/AnnotationRequestModal.svelte';
+	import AgentServicesModal from '$lib/components/AgentServicesModal.svelte';
 	// fetch-events self-starts the SSE subscription at module scope; we
 	// only need confirmState here to render the modal.
 	import { confirmState } from '$lib/network/fetch-events.svelte';
@@ -229,6 +230,10 @@
 
 {#if app.annotationRequest}
 	<AnnotationRequestModal />
+{/if}
+
+{#if app.agentServicesModal}
+	<AgentServicesModal />
 {/if}
 
 <ComparePublishModal />

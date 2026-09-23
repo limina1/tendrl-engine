@@ -62,6 +62,13 @@ import type {
 } from '$lib/types';
 import type { Buffer } from '$lib/wm/types';
 import * as api from '$lib/api';
+
+export type AgentServicesModalState = {
+	view: 'signup' | 'manage' | 'fund';
+	focus?: api.ProviderKind;
+	/** Opened because a turn was refused for lack of balance. */
+	pending?: boolean;
+};
 import { identityCanSign } from '$lib/identity/signer';
 import { sectionDiverged } from '$lib/compose/state';
 
@@ -518,6 +525,39 @@ function _createAppState() {
 	// NIP-84 highlight from pasted text against any source — nostr ref, URL,
 	// or external id.
 	let highlightComposer: { text?: string; source?: string } | null = $state(null);
+
+	// Paid model services (ppq.ai / routstr): engine-owned accounts, mirrored
+	// here for the drawer rows / Settings; the Agent services modal is driven
+	// by `agentServicesModal` (one modal hosts signup, funding, management).
+	let providersState: api.ProvidersState | null = $state(null);
+	let agentServicesModal: AgentServicesModalState | null = $state(null);
+	/** A user turn the engine refused for lack of balance — resent from the
+	 *  modal once the service is funded or switched. */
+	let pendingAgentMessage: string | null = $state(null);
+
+	async function refreshProviders() {
+		try {
+			providersState = await api.getProviders();
+		} catch {
+			// Older engine without the providers route: leave null (section hidden).
+		}
+	}
+
+	async function selectService(kind: api.ProviderKind) {
+		try {
+			providersState = await api.selectProvider(kind);
+			pushToast(`assistant now runs on ${kind === 'ppq' ? 'ppq.ai' : 'routstr'}`, 'success');
+		} catch (e) {
+			pushToast(e instanceof Error ? e.message : String(e), 'error');
+		}
+	}
+
+	async function resendPendingAgentMessage() {
+		const m = pendingAgentMessage;
+		pendingAgentMessage = null;
+		agentServicesModal = null;
+		if (m) await handleSend(m);
+	}
 
 	// The highlighter's unpublished draft — written when the modal closes,
 	// restored on the next open, cleared by a successful publish. Session
@@ -1811,10 +1851,18 @@ function _createAppState() {
 		render();
 
 		let streamOk = true;
+		let fundingNeed: api.FundingNeed | null = null;
+		let needsService = false;
 		try {
 			await api.streamAgentTurn(content, (ev) => {
 				const d = ev.data ?? {};
 				switch (ev.type) {
+					case 'needs_funding':
+						fundingNeed = d as unknown as api.FundingNeed;
+						break;
+					case 'needs_service':
+						needsService = true;
+						break;
 					case 'text':
 						text += (d.text as string) ?? '';
 						blocks.push({ type: 'text', text: (d.text as string) ?? '' });
@@ -1845,6 +1893,34 @@ function _createAppState() {
 			blocks.push({ type: 'text', text: `⚠️ ${e instanceof Error ? e.message : String(e)}` });
 			render();
 		}
+
+		// The engine refused the turn — no agent service is active, or the
+		// active one is below its ceiling. Nothing was recorded server-side, so
+		// drop the optimistic fragments, park the text, and open Agent services
+		// (signup or funding); the modal offers "Send it again" once ready.
+		if (fundingNeed || needsService) {
+			if (chat) {
+				const frags = chat.fragments.filter(
+					(f) => f.id !== liveId && !(f.role === 'user' && f.content === content)
+				);
+				chat = { ...chat, fragments: frags, fragment_count: frags.length };
+			}
+			pendingAgentMessage = content;
+			void refreshProviders();
+			if (fundingNeed) {
+				const need: api.FundingNeed = fundingNeed;
+				agentServicesModal = { view: 'fund', focus: need.provider, pending: true };
+				pushToast(
+					`${need.provider === 'ppq' ? 'ppq.ai' : 'routstr'} balance is below the per-turn ceiling — fund it or switch`,
+					'info'
+				);
+			} else {
+				agentServicesModal = { view: 'signup', pending: true };
+				pushToast('the assistant needs an agent service — set up ppq.ai or a routstr node', 'info');
+			}
+			return;
+		}
+		if (providersState?.configured) void refreshProviders();
 
 		// Reconcile with the canonical persisted conversation only when the
 		// turn streamed successfully — otherwise the refetch could overwrite the
@@ -4179,10 +4255,16 @@ function _createAppState() {
 		}
 	}
 
-	async function handleSaveChat(opts?: { asNew?: boolean }) {
+	/** Open the chat's saved-chats list (the drawer row / commands land here). */
+	function openSavedChats() {
+		sessionsExpanded = true;
+		void refreshSavedSessions();
+	}
+
+	async function handleSaveChat(opts?: { asNew?: boolean; title?: string }) {
 		try {
 			const overwrite = opts?.asNew ? null : activeSessionId;
-			const r = await api.saveChatSession(undefined, overwrite);
+			const r = await api.saveChatSession(opts?.title?.trim() || undefined, overwrite);
 			activeSessionId = r.id;
 			await refreshSavedSessions();
 			pushToast(
@@ -4439,6 +4521,8 @@ function _createAppState() {
 	// ===================== Initialization =====================
 
 	async function initialize() {
+		void refreshProviders();
+		void refreshSavedSessions();
 		loadSearchConfig();
 		loadDiscovery();
 		// The engine-owned context set outlives the tab — pull it on boot.
@@ -5224,6 +5308,16 @@ function _createAppState() {
 		set eventsModal(v: { title: string; events: EventsModalItem[] } | null) { eventsModal = v; },
 		openEventsModal(title: string, events: EventsModalItem[]) { eventsModal = { title, events }; },
 
+		// Paid model services + the Agent services modal
+		get providersState() { return providersState; },
+		get agentServicesModal() { return agentServicesModal; },
+		set agentServicesModal(v: AgentServicesModalState | null) { agentServicesModal = v; },
+		get pendingAgentMessage() { return pendingAgentMessage; },
+		set pendingAgentMessage(v: string | null) { pendingAgentMessage = v; },
+		refreshProviders,
+		selectService,
+		resendPendingAgentMessage,
+
 		// General highlighter modal
 		get highlightComposer() { return highlightComposer; },
 		set highlightComposer(v: { text?: string; source?: string } | null) { highlightComposer = v; },
@@ -5521,6 +5615,7 @@ function _createAppState() {
 		handleFetchFromRelay,
 		refreshChat,
 		handleToggleSessions,
+		openSavedChats,
 		handleSaveChat,
 		handleLoadSavedSession,
 		handleDeleteSavedSession,

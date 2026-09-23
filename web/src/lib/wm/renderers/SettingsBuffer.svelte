@@ -20,6 +20,7 @@
 	import { trigger as triggerTip } from '$lib/wm/discovery.svelte';
 	import { discovery, rearmDiscovery, rearmFeatureTours, setWalkthroughEnabled } from '$lib/wm/discovery.svelte';
 	import * as api from '$lib/api';
+	import { serviceRows } from '$lib/services';
 	import { entryDrafts } from '$lib/wm/entry-drafts';
 	import {
 		atScaleMax,
@@ -1466,25 +1467,61 @@
 		<summary class="settings-group-title">AI assistant</summary>
 		<div class="settings-group-body">
 
+		{#if app.providersState}
+			<!-- Paid model services (ppq.ai / routstr). The engine owns the
+			     accounts; this mirrors the drawer's "agent services" section and
+			     opens the same modal. When a service is active it overrides the
+			     provider/model below for every agent turn. -->
+			<div class="settings-subtitle">Agent services</div>
+			{#if app.providersState.configured}
+				{#each serviceRows(app.providersState) as r (r.kind)}
+					<div class="settings-row">
+						<span class="settings-label">
+							<span class="svc-dot" class:svc-dot--active={r.active}>{r.active ? '●' : '○'}</span>
+							{r.label}
+							<span class="ai-tool-cat">{r.detail}</span>
+						</span>
+						<span class="pill {r.pillClass}">{r.pillLabel}</span>
+						<button
+							class="settings-action"
+							onclick={() => (app.agentServicesModal = { view: 'manage', focus: r.kind })}
+							>manage ›</button
+						>
+					</div>
+				{/each}
+				{#if !(app.providersState.ppq && app.providersState.routstr)}
+					<div class="settings-row">
+						<button
+							class="settings-action"
+							onclick={() => (app.agentServicesModal = { view: 'signup' })}>+ add a service</button
+						>
+					</div>
+				{/if}
+				<p class="settings-hint">
+					The active service (●) is what the assistant runs on — model, balance and
+					funding live in its card. Claude Code and other external harnesses reach
+					tendrl over MCP with their own credentials; the engine holds no model key.
+				</p>
+			{:else}
+				<div class="settings-row">
+					<span class="settings-label">None set up</span>
+					<button
+						class="settings-action"
+						onclick={() => (app.agentServicesModal = { view: 'signup' })}>add one ›</button
+					>
+				</div>
+				<p class="settings-hint">
+					The in-app assistant runs only on an agent service: ppq.ai (one account,
+					Lightning-funded, web search built in) or a routstr node (no account, Cashu
+					ecash). Pay per use, no subscription. Until one exists, chat turns ask you to
+					set one up.
+				</p>
+			{/if}
+		{/if}
+
 		{#if !aiSettings}
 			<p class="settings-hint">AI settings unavailable (engine not reachable).</p>
 		{:else}
-			<div class="settings-row">
-				<span class="settings-label">Model</span>
-				<input
-					class="settings-input"
-					type="text"
-					value={aiSettings.model}
-					disabled={aiBusy}
-					onchange={(e) => applyAiUpdate({ model: e.currentTarget.value.trim() })}
-				/>
-			</div>
-
-			<p class="settings-hint">
-				Auth uses <code>ANTHROPIC_API_KEY</code> from the engine's environment. Model changes
-				apply on engine restart.
-			</p>
-
 			<div class="settings-subtitle">System prompt</div>
 			<p class="settings-hint">
 				Prepended to every agent turn, re-read each message. Editable here or on disk
@@ -2052,6 +2089,13 @@
 		padding: 2px 16px 12px;
 	}
 
+	.svc-dot {
+		color: var(--fg-alt);
+		margin-right: 4px;
+	}
+	.svc-dot--active {
+		color: var(--state-online);
+	}
 	.settings-subtitle {
 		font-size: var(--t-xs);
 		font-weight: 600;

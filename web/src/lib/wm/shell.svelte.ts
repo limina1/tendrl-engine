@@ -18,6 +18,7 @@ export type MenuEdge = 'left' | 'right';
 
 const STORAGE_KEY = 'tendrl:shell';
 const MENU_EDGE_KEY = 'tendrl:menuEdge';
+const SERVICES_FOLD_KEY = 'tendrl:servicesFold';
 const MOBILE_QUERY = '(max-width: 768px)';
 
 class ShellState {
@@ -25,6 +26,8 @@ class ShellState {
 	/** Mobile-bar layout: ☰ edge (right = thumb-side default). The first of
 	 *  the bar-ordering preferences; more (slot order) can join it here. */
 	menuEdge = $state<MenuEdge>('right');
+	/** Drawer "agent services" section folded? Per-device view state. */
+	servicesFolded = $state(false);
 	private compact = $state(false);
 	/** Session-only override from `?shell=` — wins over the stored pref,
 	 *  never persisted; cleared by an explicit setPref. */
@@ -43,6 +46,7 @@ class ShellState {
 		if (stored === 'desktop' || stored === 'mobile' || stored === 'auto') this.pref = stored;
 		const edge = localStorage.getItem(MENU_EDGE_KEY);
 		if (edge === 'left' || edge === 'right') this.menuEdge = edge;
+		this.servicesFolded = localStorage.getItem(SERVICES_FOLD_KEY) === '1';
 		const param = new URLSearchParams(window.location.search).get('shell');
 		if (param === 'desktop' || param === 'mobile') this.urlOverride = param;
 		const mq = window.matchMedia(MOBILE_QUERY);
@@ -75,6 +79,11 @@ class ShellState {
 	setMenuEdge(e: MenuEdge) {
 		this.menuEdge = e;
 		if (typeof window !== 'undefined') localStorage.setItem(MENU_EDGE_KEY, e);
+	}
+
+	setServicesFolded(v: boolean) {
+		this.servicesFolded = v;
+		if (typeof window !== 'undefined') localStorage.setItem(SERVICES_FOLD_KEY, v ? '1' : '0');
 	}
 }
 

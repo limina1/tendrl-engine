@@ -38,6 +38,9 @@ export type LeaderContext = {
 	openCompose: () => void;
 	/** Open the annotations table for the focused reader (Track B arms it). */
 	openAnnotationsTable: () => void;
+	/** Focus the chat: expands the chat rail into a window on desktop,
+	 *  switches to the chat panel on mobile. */
+	openChat: () => void;
 };
 
 export function buildLeaderRoot(ctx: LeaderContext): SubPrefix {
@@ -60,14 +63,18 @@ export function buildLeaderRoot(ctx: LeaderContext): SubPrefix {
 						desc: 'open',
 						children: {
 							c: { type: 'leaf', desc: 'compose', commandId: 'tendrl-open-compose', category: 'Compose', kind: 'client', run: () => ctx.openCompose() },
+							// Alias of SPC c — same commandId so the bindings list merges them.
+							a: { type: 'leaf', desc: 'assistant chat', commandId: 'tendrl-open-chat', category: 'Buffer', kind: 'client', run: () => ctx.openChat() },
 							// Same commandId as SPC s s — the two chords are aliases;
 							// desc/category match so listLeaderBindings merges the rows.
 							s: { type: 'leaf', desc: 'open settings', commandId: 'tendrl-open-settings', category: 'Configuration', kind: 'client', run: () => ctx.openSettings() },
-							a: { type: 'leaf', desc: 'annotations table', commandId: 'tendrl-annotations-table', category: 'View', kind: 'client', run: () => ctx.openAnnotationsTable() }
+							// 't' = table: 'a' is the assistant chat (SPC c alias, shipped v0.15.1).
+							t: { type: 'leaf', desc: 'annotations table', commandId: 'tendrl-annotations-table', category: 'View', kind: 'client', run: () => ctx.openAnnotationsTable() }
 						}
 					}
 				}
 			},
+			c: { type: 'leaf', desc: 'chat (assistant)', commandId: 'tendrl-open-chat', category: 'Buffer', kind: 'client', run: () => ctx.openChat() },
 			w: {
 				type: 'prefix',
 				desc: 'window',
@@ -262,7 +269,8 @@ function buildNoopRoot(): SubPrefix {
 		openSettings: noop,
 		openProfileEdit: noop,
 		openCompose: noop,
-		openAnnotationsTable: noop
+		openAnnotationsTable: noop,
+		openChat: noop
 	});
 }
 

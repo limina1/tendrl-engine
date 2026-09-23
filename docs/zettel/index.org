@@ -51,7 +51,8 @@ exists (with code paths), gaps.
 - [[file:feat-relays.org][Relay sets]] — general/fetch/publish, relays.json
 - [[file:feat-import.org][Document import]] — PDF/DOCX/EPUB/HTML → events, JSONL ingest/export
 - [[file:feat-assistant.org][LLM assistant]] — chat fragments, agentic tool-calling
-- [[file:feat-mcp.org][MCP surface]] — the engine speaks MCP (=/mcp=, Streamable HTTP, one catalog under the live tool policy; 2026-09-17)
+- [[file:feat-agent-services.org][Agent services]] — ppq.ai / routstr as the assistant's model: accounts, Cashu/Lightning funding, drawer + mode-line, the funding gate (v0.15.0)
+- [[file:feat-mcp.org][MCP surface]] — the engine speaks MCP (=/mcp=, Streamable HTTP, one catalog under the live tool policy; 2026-09-17); tendrl as tool server for an external harness, the only Claude path
 - [[file:feat-shell.org][WM shell]] — buffers, slots, modal nav
 - [[file:feat-mobile.org][Mobile & Android]] — mobile shell (bottom bar,
   buffer drawer), Tauri 2 Android plan through release
@@ -65,6 +66,8 @@ exists (with code paths), gaps.
 - [[file:decision-wikilinks-30818-only.org][Global wikilinks resolve to 30818 only]]
 - [[file:decision-context-set-engine-owned.org][The context set is engine-owned]] — flags web, set engine; supersedes the web-pool call in half
 - [[file:decision-assistant-signs-own-key.org][The assistant signs with its own key]] — named =sign_as= source, never the user's
+- [[file:decision-chat-runs-on-agent-services.org][The chat runs on agent services; Claude is the external harness]] — Anthropic provider removed 2026-09-22
+- [[file:decision-engine-owns-provider-credentials.org][The engine owns provider credentials]] — =providers.json= 0600, redacted API, one-shot reveal
 - [[file:decision-insertions-load-on-demand.org][Insertions load on demand, pointing at their anchor]] — a button, not a pass; no author policy
 - [[file:decision-refresh-on-mount.org][Buffers re-read shared engine state on mount]] — no subscriptions until a flow needs mid-visit updates
 - [[file:decision-bunker-engine-is-the-client.org][Bunker (NIP-46): the engine is the client]] — one signing chokepoint covers publish + AUTH; NIP-44 only
@@ -89,6 +92,18 @@ index, never deleted:
 - [[file:eval-performance-2026-08.org][Performance evaluation
   (2026-08-12)]] — the two-part desktop/Android audit the fix layer grew
   from; cost models, what's healthy, the leverage-ordered plan
+
+* In flight — agent services (v0.15.0, 2026-09-22)
+
+[[file:feat-agent-services.org][The feature note]]:
+- [X] ppq.ai + routstr accounts in the engine; one OpenAI-compatible adapter; Anthropic provider removed
+- [X] drawer section + mode-line pill + Agent services modal (signup, fund, node/token, manage)
+- [X] funding gate (=needs_service= / =needs_funding=), per-turn cost, identity line
+- [X] assistant publishes as itself (=publish_publication=, =get_identities=); relay tools raise the Confirm intent; saved chats on both shells
+- [X] Cashu token inspection (v3 + v4) — mint mismatch refused with alternatives
+- [ ] [[file:idea-web-tools.org][web tools]]: =web_search= / =fetch_url= (Web category, Confirm-gated; SearXNG default)
+- [ ] device pass: invoice → paid on the phone; a routstr self-test success; ppq web plugin with tools
+- [ ] engine wallet (=cdk=) so routstr needs no external wallet
 
 * In flight — the mobile / Android epoch
 
@@ -172,6 +187,7 @@ path: [[file:conventions.org][conventions]].
 - [[file:idea-spells.org][Spells (kind 777)]] — portable, composable saved queries; pipelines, spellbooks
 
 ** Substrate & network
+- [[file:idea-web-tools.org][Web tools]] — =web_search= / =fetch_url= for the assistant; backend decision (SearXNG / Brave / ppq plugin)
 - [[file:idea-relay-kind-routing.org][Kind-scoped relay routing]] — relays list the kinds they serve; resolution goes to the claimers, not the whole set
 - [[file:idea-entity-hinted-relay-intent.org][Entity-hinted relay intent]] — surface a naddr/nevent's TLV relays in the Confirm modal; hinted-vs-full choice
 

@@ -392,13 +392,36 @@ pub async fn start(opts: ServeOptions) -> anyhow::Result<RunningServer> {
         Ok(None) => {}
         Err(e) => tracing::warn!("Context set: could not restore the active set: {e}"),
     }
+    // Paid model services (ppq.ai / routstr) — accounts persist in
+    // <data_dir>/providers.json; a corrupt file is reported, not fatal.
+    let providers = match crate::providers::ProviderRegistry::new(state.data_dir()) {
+        Ok(r) => r,
+        Err(e) => {
+            tracing::warn!("providers.json: {e}; starting with no paid services");
+            crate::providers::ProviderRegistry::new(&std::env::temp_dir().join(format!(
+                "tendrl-providers-fallback-{}",
+                std::process::id()
+            )))
+            .expect("fallback provider registry")
+        }
+    };
+    if let Some(kind) = providers.snapshot().active {
+        info!("Agent service: {} active", kind.label());
+    }
+    let fallback: Option<Arc<dyn llm::LLMProvider>> = if config.ai.echo {
+        info!("Agent: [ai] echo = true — turns without an active service echo (testing)");
+        Some(Arc::new(llm::NoopProvider::echo()))
+    } else {
+        None
+    };
     let chat_state = api::ChatAppState {
         chat: Arc::new(Mutex::new(initial_chat)),
-        provider: llm::provider_from_config(&config.ai),
+        fallback,
         engine: state.clone(),
         max_tool_turns: config.ai.max_tool_turns,
         policy: Arc::new(std::sync::RwLock::new(ai_policy)),
         system_prompt_path: prompt_path,
+        providers: Arc::new(providers),
     };
 
     // The engine speaks MCP: same catalog, same live policy, token-gated.
@@ -474,6 +497,66 @@ pub async fn start(opts: ServeOptions) -> anyhow::Result<RunningServer> {
         )
         .route("/api/v1/context/sets/:id/load", post(api::context_sets_load))
         .route("/api/v1/chat/load", put(api::chat_load_fragments))
+        // Paid model services: accounts, balances, funding, model choice.
+        .route("/api/v1/providers", get(crate::providers::handlers::state))
+        .route("/api/v1/providers/select", post(crate::providers::handlers::select))
+        .route("/api/v1/providers/ceiling", post(crate::providers::handlers::ceiling))
+        .route("/api/v1/providers/self-test", post(crate::providers::handlers::self_test))
+        .route("/api/v1/providers/ppq/setup", post(crate::providers::handlers::ppq_setup))
+        .route("/api/v1/providers/ppq/adopt", post(crate::providers::handlers::ppq_adopt))
+        .route("/api/v1/providers/ppq/fund", post(crate::providers::handlers::ppq_fund))
+        .route(
+            "/api/v1/providers/ppq/fund/:id",
+            get(crate::providers::handlers::ppq_fund_status),
+        )
+        .route(
+            "/api/v1/providers/routstr/discover",
+            post(crate::providers::handlers::routstr_discover),
+        )
+        .route(
+            "/api/v1/providers/routstr/probe",
+            post(crate::providers::handlers::routstr_probe),
+        )
+        .route(
+            "/api/v1/providers/routstr/inspect",
+            post(crate::providers::handlers::routstr_inspect),
+        )
+        .route(
+            "/api/v1/providers/routstr/create",
+            post(crate::providers::handlers::routstr_create),
+        )
+        .route(
+            "/api/v1/providers/routstr/adopt",
+            post(crate::providers::handlers::routstr_adopt),
+        )
+        .route(
+            "/api/v1/providers/routstr/topup",
+            post(crate::providers::handlers::routstr_topup),
+        )
+        .route(
+            "/api/v1/providers/routstr/refund",
+            post(crate::providers::handlers::routstr_refund),
+        )
+        .route(
+            "/api/v1/providers/:provider/models",
+            get(crate::providers::handlers::models),
+        )
+        .route(
+            "/api/v1/providers/:provider/ledger",
+            get(crate::providers::handlers::ledger),
+        )
+        .route(
+            "/api/v1/providers/:provider/refresh",
+            post(crate::providers::handlers::refresh),
+        )
+        .route(
+            "/api/v1/providers/:provider/reveal",
+            post(crate::providers::handlers::reveal),
+        )
+        .route(
+            "/api/v1/providers/:provider",
+            axum::routing::delete(crate::providers::handlers::forget),
+        )
         .with_state(chat_state);
 
     // The assistant slot accepts the same direct external signers as the user

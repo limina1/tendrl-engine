@@ -7,6 +7,8 @@
 	import SystemPrompt from './SystemPrompt.svelte';
 	import ContextPanel from './ContextPanel.svelte';
 	import ClaudeSessionView from './ClaudeSessionView.svelte';
+	import { promptText } from '$lib/wm/text-prompt.svelte';
+	import { shell } from '$lib/wm/shell.svelte';
 
 	let {
 		chat,
@@ -89,7 +91,7 @@
 		onloadsessiontochat?: (session: { id: string; messages: ClaudeSessionMessage[] }) => void;
 		savedSessions?: SavedSessionSummary[];
 		activeSessionId?: string | null;
-		onsavechat?: (opts?: { asNew?: boolean }) => void;
+		onsavechat?: (opts?: { asNew?: boolean; title?: string }) => void;
 		onloadsavedsession?: (id: string) => void;
 		ondeletesavedsession?: (id: string) => void;
 	} = $props();
@@ -143,6 +145,31 @@
 	}
 
 	const hasChecked = $derived(checkedFragmentIds.size > 0);
+
+	// Saving: a first save (or "save as new") asks for a name — blank keeps
+	// the engine's derived title (the first user line). Re-saving a linked
+	// chat updates in place without asking.
+	async function saveChat(asNew = false) {
+		if (activeSessionId && !asNew) {
+			onsavechat?.();
+			return;
+		}
+		const title = await promptText({
+			title: asNew ? 'Save a copy as' : 'Save chat as',
+			placeholder: 'name (leave blank to use the first message)',
+			hint: 'Saved chats live in the engine and are listed under Chats on every device this engine serves.',
+			confirmLabel: 'Save'
+		});
+		if (title === null) return;
+		onsavechat?.({ asNew, title });
+	}
+
+	// The Claude Code transcript browser reads ~/.claude on the engine's
+	// machine: a desktop convenience, meaningless on the phone.
+	const showTranscripts = $derived(
+		shell.mode !== 'mobile' && ((claudeSessions ?? []).length > 0 || (claudeSessionsLoading ?? false))
+	);
+	const activeSaved = $derived((savedSessions ?? []).find((s) => s.id === activeSessionId) ?? null);
 </script>
 
 <div class="chat-panel">
@@ -158,19 +185,29 @@
 		</button>
 		<button onclick={onedit} disabled={loading || (chat?.edit_mode ?? false)}>Edit</button>
 		<button onclick={onreset} disabled={loading}>Reset</button>
-		<button onclick={ontogglesessions} class:active={sessionsExpanded} disabled={loading}>Sessions</button>
 		<button
-			onclick={() => onsavechat?.()}
+			onclick={ontogglesessions}
+			class:active={sessionsExpanded}
+			disabled={loading}
+			title={activeSaved ? `Saved chats — this one is “${activeSaved.title}”` : 'Saved chats — load an earlier chat'}
+		>
+			Chats
+			{#if (savedSessions ?? []).length > 0}
+				<span class="toolbar-badge">{(savedSessions ?? []).length}</span>
+			{/if}
+		</button>
+		<button
+			onclick={() => saveChat(false)}
 			disabled={loading || visibleFragments.length === 0}
-			title={activeSessionId
-				? 'Update the saved session this chat is linked to'
-				: 'Save this chat to your sessions folder'}>{activeSessionId ? 'Update' : 'Save'}</button
+			title={activeSaved
+				? `Update “${activeSaved.title}” with this chat`
+				: 'Save this chat (you will be asked for a name)'}>{activeSessionId ? 'Update' : 'Save'}</button
 		>
 		{#if activeSessionId}
 			<button
-				onclick={() => onsavechat?.({ asNew: true })}
+				onclick={() => saveChat(true)}
 				disabled={loading || visibleFragments.length === 0}
-				title="Save a separate copy as a new session">Save as new</button
+				title="Save a separate copy under a new name">Save as…</button
 			>
 		{/if}
 		<span class="toolbar-spacer"></span>
@@ -208,20 +245,24 @@
 	{/if}
 
 	{#if sessionsExpanded}
-		<div class="sessions-container">
-			<div class="saved-sessions">
-				<div class="saved-sessions-title">Saved chats</div>
+		<div class="sessions-container" class:sessions-container--solo={!showTranscripts}>
+			<div class="saved-sessions" class:saved-sessions--solo={!showTranscripts}>
+				<div class="saved-sessions-title">
+					Saved chats
+					<span class="saved-sessions-hint">kept by the engine · same list on desktop and phone</span>
+				</div>
 				{#if (savedSessions ?? []).length === 0}
-					<p class="saved-empty">No saved chats yet — use “Save” to keep this one.</p>
+					<p class="saved-empty">No saved chats yet — “Save” keeps this one under a name you choose.</p>
 				{:else}
 					{#each savedSessions ?? [] as s (s.id)}
-						<div class="saved-row">
+						<div class="saved-row" class:saved-row--active={s.id === activeSessionId}>
 							<button
 								class="saved-load"
 								onclick={() => onloadsavedsession?.(s.id)}
-								disabled={loading}
-								title="Load this chat"
+								disabled={loading || s.id === activeSessionId}
+								title={s.id === activeSessionId ? 'This is the chat you are in' : 'Load this chat (replaces the current one — save it first if you want to keep it)'}
 							>
+								<span class="saved-dot" aria-hidden="true">{s.id === activeSessionId ? '●' : '○'}</span>
 								<span class="saved-title">{s.title}</span>
 								<span class="saved-meta">{s.message_count} msg{s.message_count === 1 ? '' : 's'}</span>
 							</button>
@@ -229,20 +270,23 @@
 								class="saved-del"
 								onclick={() => ondeletesavedsession?.(s.id)}
 								disabled={loading}
-								title="Delete saved chat">🗑</button
+								title="Delete saved chat"
+								aria-label={`Delete saved chat ${s.title}`}>🗑</button
 							>
 						</div>
 					{/each}
 				{/if}
 			</div>
-			<ClaudeSessionView
-				sessions={claudeSessions ?? []}
-				selectedSession={claudeSessionDetail ?? null}
-				loading={claudeSessionsLoading ?? false}
-				onselect={onclaudesessionselect}
-				onback={onclaudesessionback}
-				onload={onloadsessiontochat && claudeSessionDetail ? () => onloadsessiontochat?.(claudeSessionDetail!) : undefined}
-			/>
+			{#if showTranscripts}
+				<ClaudeSessionView
+					sessions={claudeSessions ?? []}
+					selectedSession={claudeSessionDetail ?? null}
+					loading={claudeSessionsLoading ?? false}
+					onselect={onclaudesessionselect}
+					onback={onclaudesessionback}
+					onload={onloadsessiontochat && claudeSessionDetail ? () => onloadsessiontochat?.(claudeSessionDetail!) : undefined}
+				/>
+			{/if}
 		</div>
 	{/if}
 
@@ -349,6 +393,39 @@
 		border-bottom: 1px solid var(--border);
 		background: var(--bg-surface);
 	}
+	/* Without the transcript browser the list owns the section. */
+	.sessions-container--solo {
+		flex: 0 1 auto;
+	}
+	.saved-sessions--solo {
+		max-height: 50dvh;
+	}
+	.saved-sessions-hint {
+		font-weight: 400;
+		text-transform: none;
+		letter-spacing: 0;
+		margin-left: 8px;
+		opacity: 0.8;
+	}
+	.saved-row--active .saved-title {
+		color: var(--id-yours);
+	}
+	.saved-dot {
+		flex-shrink: 0;
+		color: var(--fg-muted);
+	}
+	.saved-row--active .saved-dot {
+		color: var(--state-online);
+	}
+	@media (max-width: 768px) {
+		.saved-load {
+			min-height: 44px;
+		}
+		.saved-del {
+			min-width: 40px;
+			min-height: 44px;
+		}
+	}
 
 	.saved-sessions-title {
 		font-size: var(--t-3xs);
@@ -375,7 +452,6 @@
 		flex: 1;
 		min-width: 0;
 		display: flex;
-		justify-content: space-between;
 		align-items: baseline;
 		gap: 8px;
 		text-align: left;
@@ -392,6 +468,7 @@
 	}
 
 	.saved-title {
+		flex: 1;
 		overflow: hidden;
 		text-overflow: ellipsis;
 		white-space: nowrap;

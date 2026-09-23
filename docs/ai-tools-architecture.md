@@ -1,5 +1,13 @@
 # AI tool-calling architecture (provider-agnostic writing assistance)
 
+> **Update 2026-09-22 — the Anthropic API provider is gone.** The in-app
+> assistant now runs only on an *agent service* (ppq.ai or a routstr node)
+> set up and funded in the app; the engine holds no model API key and
+> `[ai] provider` / `model` no longer exist. `ClaudeProvider`,
+> `ANTHROPIC_API_KEY` and the "API key only" auth discussion below are
+> historical. Claude reaches tendrl as an external harness over MCP. See
+> `docs/paid-providers.org` and `docs/agent-service-flows.org`.
+
 > How tendrl-engine exposes the Nostr corpus — publications, sections, KB docs,
 > events, embeddings, relays — to an LLM as a set of callable tools, so the
 > assistant can inspect context, search, pull from relays, view documents, and

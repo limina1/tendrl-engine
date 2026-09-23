@@ -288,7 +288,16 @@ sections and embeds new events on a 60-second interval when embeddings are enabl
 - **`chat.rs`**: Pure state logic for LLM chat fragments, edit mode, context
   injection, message serialization (no IO)
 - **`llm.rs`**: Async `LLMProvider` trait — `NoopProvider` (testing) and
-  `ClaudeProvider` (Anthropic Messages API)
+  `OpenAiCompatProvider` (chat-completions wire format: tools ↔ `tool_calls`).
+  The engine holds **no** model API key: the in-app assistant runs on an
+  *agent service* from **`providers.rs`** — ppq.ai (account + Lightning
+  funding) or a routstr node (kind-38421 discovery, Cashu token → key) —
+  persisted in `<data_dir>/providers.json` (0600), chosen/funded in the UI
+  (drawer → agent services → `AgentServicesModal`). A turn with no active
+  service emits `needs_service`; one below the per-provider ceiling emits
+  `needs_funding` (nothing recorded). Claude Code reaches tendrl only as an
+  external harness over MCP (`docs/zettel/feat-mcp.org`). Design:
+  `docs/paid-providers.org`, `docs/agent-service-flows.org`.
 - **`claude_sessions.rs`**: Reader for Claude Code conversation JSONL files in
   `~/.claude/projects/`
 - **`drafts.rs`**: Local JSON draft storage for unsigned NKBIP-01 publications before

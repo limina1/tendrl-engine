@@ -18,7 +18,7 @@ tracks them by checkbox ([[file:../insertions-plan.org][plan]] § Phase 5b).
 
 - *One buffer kind*, =annotations:<root>= (=30040:<pk>:<d>=), opened from
   the reader's Tools sheet (*table N*, N = notes, not requests) or
-  =SPC b o a=. On desktop it *splits the pane* — reader | table
+  =SPC b o t=. On desktop it *splits the pane* — reader | table
   (=store.splitFocused=) — so the two stay in view together; on the phone
   it is the focused work buffer, listed in the ☰ drawer, and the
   reader is one tap away. Beside the reader or filling the window is the

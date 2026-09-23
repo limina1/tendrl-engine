@@ -339,14 +339,16 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let prompt_path = dir.path().join("prompt.md");
         let engine = Arc::new(crate::engine::Engine::new(dir.path()).unwrap());
+        let data_dir = dir.path().to_path_buf();
         std::mem::forget(dir);
         ChatAppState {
             chat: Arc::new(Mutex::new(ChatState::new())),
-            provider: Arc::new(NoopProvider::echo()),
+            fallback: Some(Arc::new(NoopProvider::echo())),
             engine,
             max_tool_turns: 25,
             policy: Arc::new(std::sync::RwLock::new(tools::ToolPolicy::default())),
             system_prompt_path: prompt_path,
+            providers: Arc::new(crate::providers::ProviderRegistry::new(&data_dir).unwrap()),
         }
     }
 
@@ -392,7 +394,8 @@ mod tests {
         assert!(names.contains(&"search_events"));
         assert!(names.contains(&"get_context"));
         assert!(names.contains(&"propose_insertion"));
-        assert!(!names.contains(&"publish"), "Publish tools are off by default");
+        // Every tool is on by default; Publish/Network are gated by approval, not hidden.
+        assert!(names.contains(&"publish"), "publish is listed by default");
         assert!(r["result"]["tools"][0]["inputSchema"].is_object());
         // Disable everything but one: the list follows the live policy.
         *s.policy.write().unwrap() = tools::ToolPolicy::from_enabled(vec!["get_context".into()]);
@@ -431,6 +434,7 @@ mod tests {
         // Unknown and disabled tools are protocol errors.
         let r = handle_message(&s, json!({"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"zzz"}})).await.unwrap();
         assert_eq!(r["error"]["code"], -32602);
+        *s.policy.write().unwrap() = tools::ToolPolicy::from_enabled(vec!["get_context".into()]);
         let r = handle_message(&s, json!({"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"publish","arguments":{"id":"x"}}})).await.unwrap();
         assert!(r["error"]["message"].as_str().unwrap().contains("not enabled"));
     }

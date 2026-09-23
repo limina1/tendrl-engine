@@ -47,6 +47,7 @@ export const commands: Command[] = [
 	{ id: 'tendrl-switch-layout', name: 'tendrl-switch-layout', description: 'Switch the active layout', category: 'Layout', scope: 'nav', deferred: true, keybinding: 'SPC l b', shells: ['desktop'] },
 	{ id: 'tendrl-save-layout', name: 'tendrl-save-layout', hiddenByDefault: true, description: 'Save the current frame configuration as a named layout', category: 'Layout', scope: 'nav', deferred: true, shells: ['desktop'] },
 	// Compose
+	{ id: 'tendrl-open-chat', name: 'tendrl-open-chat', description: 'Open the chat with the assistant — a window on desktop, the chat panel on mobile', category: 'Buffer', scope: 'opener', keybinding: 'SPC c' },
 	{ id: 'tendrl-open-compose', name: 'tendrl-open-compose', description: 'Open the composer (current draft)', category: 'Compose', scope: 'opener', keybinding: 'SPC b o c' },
 	{ id: 'tendrl-save-draft', name: 'tendrl-save-draft', hiddenByDefault: true, description: 'Save the current draft to the engine', category: 'Compose', scope: 'contextual', context: 'a composer buffer', deferred: true },
 	{ id: 'tendrl-publish-draft', name: 'tendrl-publish-draft', hiddenByDefault: true, description: 'Sign and broadcast the current draft', category: 'Compose', scope: 'contextual', context: 'a composer buffer', deferred: true },
@@ -67,7 +68,7 @@ export const commands: Command[] = [
 	// View
 	{ id: 'tendrl-show-event-json', name: 'tendrl-show-event-json', hiddenByDefault: true, description: 'Show the raw JSON of the focused event', category: 'View', scope: 'contextual', context: 'a focused buffer carrying an event' },
 	{ id: 'tendrl-highlight-mode', name: 'tendrl-highlight-mode', hiddenByDefault: true, description: 'Toggle highlight mode — select text in a reader/doc to publish a NIP-84 highlight', category: 'View', scope: 'contextual', context: 'a reader or doc buffer, then a text selection' },
-	{ id: 'tendrl-annotations-table', name: 'tendrl-annotations-table', description: "Open the annotations table for the focused reader's publication — beside it on desktop, as its own view on mobile", category: 'View', scope: 'contextual', context: 'a reader buffer', keybinding: 'SPC b o a' },
+	{ id: 'tendrl-annotations-table', name: 'tendrl-annotations-table', description: "Open the annotations table for the focused reader's publication — beside it on desktop, as its own view on mobile", category: 'View', scope: 'contextual', context: 'a reader buffer', keybinding: 'SPC b o t' },
 	// Versioning
 	{ id: 'tendrl-undo', name: 'tendrl-undo', hiddenByDefault: true, description: 'Undo the last action', category: 'Versioning', scope: 'contextual', context: 'an editable buffer', deferred: true },
 	{ id: 'tendrl-redo', name: 'tendrl-redo', hiddenByDefault: true, description: 'Redo', category: 'Versioning', scope: 'contextual', context: 'an editable buffer', deferred: true },

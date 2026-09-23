@@ -43,20 +43,29 @@ Decisions made (2026-07-27/28):
   command (toast feedback).
 - =web/src/lib/wm/MobileShell.svelte= — bottom bar and drawer, reworked
   2026-08-11 (merged to master =31dced7=):
-  - *Bar*: =work= / =search= class slots + a small fixed ☰ slot on the
-    *right* edge by default. =shell.menuEdge= ('left'|'right',
+  - *Bar*: =chat= / =work= / =search= class slots + a small fixed ☰ slot
+    on the *right* edge by default. =shell.menuEdge= ('left'|'right',
     localStorage =tendrl:menuEdge=, Settings → Appearance → "Menu edge")
     picks the edge, and the drawer slides out from that same edge. Chat
-    has no bar slot (reachable via the drawer's commands entry; its
-    panel still renders when something opens it). The old =cmds= bar
-    column is gone. More bar-ordering prefs planned alongside menuEdge.
+    got its own slot on 2026-09-22 — with the assistant running on
+    [[file:feat-agent-services.org][agent services]] the phone is the
+    chat's primary home (it used to hide behind the commands entry). The
+    old =cmds= bar column is gone. More bar-ordering prefs planned
+    alongside menuEdge.
   - *Drawer = buffers + THE status hub*: work-buffer rows, "+ compose",
     "+ commands" (anchor =mobile-cmds=), then STATUS carrying every
     modeline pill in the same dot/pill vocabulary: settings ›, network
     (tap toggles auto/confirm), relays ›, identity, embed (tap →
     settings), wiki =n/m= (tap = resolve-all), ⇅ activity (inline
     expand), 🔍 search history (inline expand, tap replays). › marks
-    rows that open a buffer vs. toggle in place.
+    rows that open a buffer vs. toggle in place. Added 2026-09-22: a
+    collapsible *agent services* section (one row per service, ● = active
+    — tap the dot to switch in place, tap the row for the Agent services
+    modal, =+= for the missing one, "add one" when empty; fold =
+    =tendrl:servicesFold=) and a *saved chats* row (count or the active
+    saved chat's title; opens the chat with its list). The desktop
+    mode-line carries the same agent pill + popover, so the two shells
+    show the same status set except =settings= (the desktop menu).
   - =web/src/lib/wm/ActivityCenter.svelte= is the *one* activity-list
     implementation — the desktop modeline popover and the drawer both
     render it (active fetches w/ kill ×, recent w/ expand-cause ▸).

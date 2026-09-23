@@ -1,0 +1,120 @@
+#+TITLE: Agent services — ppq.ai and routstr as the assistant's model
+#+TYPE: feature
+#+STATUS: shipped 2026-09-22 (v0.15.0); device verification + web tools open
+#+DATE: 2026-09-22
+
+The in-app assistant runs on an *agent service*: a paid, pay-per-use model
+provider the user sets up, funds and picks inside tendrl. Two services:
+**ppq.ai** (one account, Lightning-funded, USD balance, 370+ models, web
+search built in) and the **routstr** network (no account — a Cashu token
+turned into a key on one node found over Nostr, sats balance, withdrawable).
+The engine owns the accounts; the phone is the primary home. Claude never
+enters this path: Claude Code drives tendrl as an *external* harness over
+MCP ([[file:feat-mcp.org][MCP surface]]), and the engine holds no model key
+of its own ([[file:decision-chat-runs-on-agent-services.org][decision]]).
+
+Design + live-probed shapes: =docs/paid-providers.org=; screen flows and
+the as-built deviations: =docs/agent-service-flows.org=.
+
+* What exists
+
+** Engine (=src/providers.rs=, =src/llm.rs=)
+- =ProviderRegistry= over =<data_dir>/providers.json= (mode 0600): the two
+  accounts, the active selection, per-provider ceilings, the last turn's
+  cost. The API returns *redacted* keys plus a one-shot reveal.
+  [[file:decision-engine-owns-provider-credentials.org][Decision: the
+  engine owns provider credentials]].
+- =OpenAiCompatProvider= — one chat-completions adapter for both (tools ↔
+  =tool_calls=, arguments parsed from the JSON string, =role: tool=
+  results, =reasoning= → display-only thinking, 402 surfaced with a hint).
+  The Anthropic Messages API provider is gone; =NoopProvider= stays for
+  plumbing tests (=[ai] echo = true=).
+- ppq: =POST /accounts/create= is one unauthenticated call (201) → credit
+  id + key; balance; models filtered to those advertising =tools=;
+  Lightning invoice (min 100 sat, 15-min expiry) + status polling; spend
+  ledger. Funding is invoice-only (NWC decided out).
+- routstr: discovery = a Confirm-gated kind-38421 REQ on the routstr relays
+  → concurrent =/v1/info= + =/v1/models= probes → ranked nodes (reachable,
+  tool-capable families, latency). =api.routstr.com= itself is dead, so
+  discovery is mandatory. A Cashu token → =GET /v1/balance/create= → key;
+  top-up / refund (token returned once, never stored) / history / balance
+  (msats). No live 0.4.x node serves =/v2/lightning/invoice=: **Cashu is
+  the only on-ramp**, and each node accepts only the mints it lists
+  (=/v1/info.mints=) — =inspect_cashu_token= decodes v3 (JSON) and v4
+  (CBOR) tokens engine-side so a mismatch is refused, with both mint
+  lists and the discovered nodes that do accept that mint, before any
+  network call.
+- Per node + model *tool self-test* (one tiny request with a =ping= tool),
+  remembered in =providers.json= — routstr nodes publish no capability
+  data, ppq does (=supported_parameters=).
+- The agent loop (=api.rs::chat_agent_handler=) resolves the provider per
+  turn from the active service. Before the user turn is recorded it
+  checks the balance against the ceiling: no service → =needs_service=,
+  below ceiling → =needs_funding= (both SSE events, nothing stored; the
+  web parks the text and reopens it with "Send it again"). After a turn
+  the balance delta is recorded as the turn's cost. A runtime identity
+  system line names the model and service every turn (Kimi K2 on ppq
+  claimed to be Claude).
+- API: =/api/v1/providers= (state), =/select=, =/ceiling=, =/self-test=,
+  =/ppq/{setup,adopt,fund,fund/:id}=, =/routstr/{discover,probe,inspect,
+  create,adopt,topup,refund}=, =/:p/{models,ledger,refresh,reveal}=,
+  =DELETE /:p=.
+
+** Web
+- Mobile drawer: a collapsible *agent services* section under identity —
+  one row per service (● = active, tap the dot to switch in place, tap
+  the row to manage), a =+= row for the missing one, a single "add one"
+  row when nothing is configured. Fold = device pref.
+- Desktop mode-line: the agent pill (=● ppq.ai · $0.42= / =agent · none
+  active= / =agent · add=) with the same rows in a popover + last-turn
+  cost; listed in the mode-line help.
+- =AgentServicesModal= (mounted in =+layout=, =app.agentServicesModal=):
+  signup cards → ppq create (credit-id warning) → fund (sat chips, QR,
+  open-in-wallet, live paid/expired) · routstr node list (mints, latency,
+  models) → paste token (engine-side inspect, ✓/✗, alternatives on
+  mismatch) → key → model picker with the tool-calling note and ✓/✗/
+  untested marks → manage cards (active radio, model/node pickers,
+  reveal/copy, spend, fund/top up/withdraw/history, armed forget,
+  per-provider ceilings). Yields while a Confirm intent is pending.
+- Settings → AI assistant mirrors the list; the old Model field and API-key
+  hint are gone.
+
+** Assistant capabilities that landed with it
+- =get_identities= (its own pubkey/npub/name/signer source + the user's,
+  with =by:assistant= / =by:me=), =publish_publication= (sign as itself —
+  engine key or bunker — store, broadcast under one confirmation; atomic
+  30023/30818 via =kind= + =content=), =publish= takes =ids= for a whole
+  publication. Every tool is on by default; broadcasts still pass the
+  Confirm publish modal. =prompt.md= gained "Who you are" and the
+  publishing rules.
+- Relay access from the tools raises the same Confirm intent as a user
+  search: =search_events= =scope: "relays"=, =get_event= /
+  =get_addressable= =from_relays= (tag filters travel in the DSL);
+  decline ⇒ =approved: false=, never a silent local downgrade.
+- Saved chats work on both shells: chat has a mobile bar slot, the drawer
+  has a "saved chats" row, saves ask for a name; the Claude Code
+  transcript browser is desktop-only and hidden when empty.
+
+* Verified / not yet
+- Verified: the probe (=scripts/probe-paid-providers.py=) and the scratch
+  engine smoke test (=docs/commands.org=): accounts, balances, invoices,
+  discovery, error mapping, the 402 path, the funding gate, token
+  inspection against live nodes; unit tests for the Confirm gates (relay
+  search, lookups, broadcast) and the tools on a bare engine. The user
+  confirmed tool calling works on routstr (2026-09-22).
+- Not yet: the invoice → paid → balance flow and the modal on a device;
+  a self-test success recorded; ppq's web plugin alongside tool calls.
+
+* Open
+- [[file:idea-web-tools.org][Web tools]] — =web_search= / =fetch_url= so
+  the assistant can research the live web on any service.
+- A wallet in the engine (=cdk=) so routstr funding needs no external
+  wallet; per-request Cashu payment with no standing balance.
+- Streaming turns (both adapters are request/response today).
+- Device pass: QR on the phone, background suspension during a long turn.
+
+* Related
+- [[file:feat-assistant.org][LLM assistant]] · [[file:feat-mcp.org][MCP surface]] · [[file:feat-mobile.org][Mobile & Android]] · [[file:feat-network.org][Network modes]]
+- [[file:decision-assistant-signs-own-key.org][The assistant signs with its own key]]
+- [[file:decision-chat-runs-on-agent-services.org][The chat runs on agent services; Claude is the external harness]]
+- [[file:decision-engine-owns-provider-credentials.org][The engine owns provider credentials]]

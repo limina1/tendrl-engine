@@ -1678,7 +1678,10 @@ git add Cargo.toml Cargo.lock CHANGELOG.md mobile/src-tauri && git commit -m "v$
 #    tag, creates the release: CHANGELOG section = notes, portable tarball =
 #    asset, plus target/android/tendrl-<version>-arm64.apk when it exists):
 scripts/publish-release.sh --dry-run          # preview first
-scripts/publish-release.sh
+scripts/publish-release.sh                    # pushes the tag to github AND origin (Nostr/ngit, bunker-signed),
+                                              # then the GitHub release (tarball + APK); zapstore (`zsp publish`)
+                                              # reads the LATEST GitHub release, so it sees the new version after this
+git push github master && git push origin master   # branches, so neither repo looks behind
 
 # 4. Push the branch too (the tag alone leaves the branch view behind):
 git push origin master
@@ -2420,3 +2423,62 @@ curl -s -X POST localhost:3030/api/v1/insertions/load -H 'content-type: applicat
 Re-pinning: to have a rebuilt kasten supersede notes already stored under
 the assistant key, set the note's d-tag in =kasten-ids.json= to the
 stored coordinate's d-tag before building (same coordinate, newer event).
+* Paid providers — signup probe (branch =feat/paid-providers=)
+
+Exercises the live account / balance / funding surface of ppq.ai and the
+routstr network before any engine code touches them. Nothing is paid; the
+ppq account it creates has a zero balance and is cached so re-runs reuse it.
+Design + observed shapes: =docs/paid-providers.org=.
+
+#+begin_src sh
+# full run — report to a scratch dir (the key stays in <state>/ppq-account.json, mode 600)
+scripts/probe-paid-providers.py --state-dir ~/.cache/tendrl-probe --json /tmp/probe.json
+jq '.ppq | {account, balance, topup_invoice, topup_status}' /tmp/probe.json
+jq '.routstr | {healthy_count, chosen_node, nodes: [.nodes[] | select(.model_count>0) | {url,name,model_count,mints,latency_s}]}' /tmp/probe.json
+
+# one side only
+scripts/probe-paid-providers.py --skip routstr
+scripts/probe-paid-providers.py --skip ppq
+
+# routstr discovery by hand (nak blocks on an open stdin — always redirect)
+nak req -k 38421 --limit 200 wss://relay.routstr.com wss://nos.lol < /dev/null \
+  | jq -r '[.tags[] | select(.[0]=="u") | .[1]][0]' | sort -u
+curl -s https://routstr.eduvietkieu.com/v1/info | jq .
+curl -s https://routstr.eduvietkieu.com/v1/models | jq '.data[0].sats_pricing'
+#+end_src
+
+Expected (2026-09-22): ppq create → 201 with =credit_id= + =api_key=; balance
+0; a 100-sat invoice with =status: "New"=. routstr: ~16 https nodes announced,
+~5 healthy; =api.routstr.com= itself 404; =/v2/lightning/invoice= 404 on every
+node (Cashu is the only on-ramp).
+
+* Agent services — engine smoke test (branch =feat/paid-providers=)
+
+Drives the wired =/api/v1/providers= endpoints on a scratch engine (own port +
+data dir — never the live :3030). Uses the zero-balance ppq account the probe
+created (=~/.cache/tendrl-probe/ppq-account.json= or the session scratch dir).
+
+#+begin_src sh
+S=/tmp/tendrl-smoke; mkdir -p $S
+# test relay ONLY: theforest — never the user's or public relays for test traffic
+printf 'initial_relays=["wss://theforest.nostr1.com"]\ntimeout_ms=8000\n[network]\nmode="auto"\n[embedding]\nenabled=false\n[ai]\necho=true\n' > $S/config.toml
+cargo build && ./target/debug/tendrl-engine -c $S/config.toml --port 3057 --data-dir $S/data --no-open &
+B=http://127.0.0.1:3057/api/v1
+curl -s $B/providers | jq .                                  # configured:false, ceilings 0.25 / 250
+KEY=$(jq -r .api_key ~/.cache/tendrl-probe/ppq-account.json); CID=$(jq -r .credit_id ~/.cache/tendrl-probe/ppq-account.json)
+curl -s -X POST $B/providers/ppq/adopt -H 'content-type: application/json' -d "{\"api_key\":\"$KEY\",\"credit_id\":\"$CID\"}" | jq '.ppq'
+ls -l $S/data/providers.json                                 # -rw------- ; key only in this file
+curl -s $B/providers/ppq/models | jq '.models|length'        # tool-capable chat models only
+curl -s -X POST $B/providers/ppq/fund -H 'content-type: application/json' -d '{"amount_sats":100}' | jq .   # bolt11 (not paid)
+curl -s -X POST $B/providers/routstr/discover | jq '{announced,reachable}'                                  # Confirm-gated in confirm mode
+curl -s -X POST $B/providers/routstr/probe -H 'content-type: application/json' -d '{"node_url":"https://routstr.eduvietkieu.com"}' | jq .
+curl -s -X POST $B/providers/self-test -H 'content-type: application/json' -d '{"provider":"ppq","model":"claude-sonnet-5"}' | jq .  # ok:false, 402 hint while unfunded
+curl -s -N -X POST $B/chat/agent -H 'content-type: application/json' -d '{"content":"hi"}'   # needs_funding + done; /chat stays empty
+# Confirm-mode gating of the AI's relay tools (search_events scope:"relays", get_event/get_addressable from_relays)
+# is covered by `cargo test --lib test_ai_relay_search_raises_a_confirm_intent` (intent raised, decline → approved:false)
+curl -s -X DELETE $B/providers/ppq | jq .configured           # false
+#+end_src
+
+Web: =pnpm -C web build= then open =http://127.0.0.1:3057/?shell=mobile= — the
+drawer's *agent services* row reads "add one" until a service exists; the
+modal is =AgentServicesModal.svelte= (mounted in =+layout=).

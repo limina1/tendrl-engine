@@ -65,18 +65,10 @@ dimensions = 384
 # instead of pinning the cores.
 # max_per_tick = 64
 
-# AI assistant (optional). The Anthropic API key is NEVER stored here —
-# set ANTHROPIC_API_KEY in the environment. Without it the chat falls
-# back to a no-op echo provider.
-# [ai]
-# provider = "claude"                 # "claude" or "noop" (echo, testing)
-# model = "claude-sonnet-4-6"
-# max_tool_turns = 25                 # cap on tool round-trips per turn
-# system_prompt_path = "prompt.md"    # Markdown prepended to the system
-#                                     # prompt, re-read each turn; relative
-#                                     # to this config file
-# enabled_tools = ["search_events"]   # omit for the default policy
-#                                     # (everything except publish)
+# The assistant's model is not configured here. It runs on an agent service
+# (ppq.ai or a routstr node) set up, funded and chosen inside the app —
+# drawer → agent services — and kept in <data_dir>/providers.json. No model
+# API key exists in this file or in the environment.
 
 # Editor defaults (written by Save Settings; shown here for reference)
 # [editor]

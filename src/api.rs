@@ -7486,7 +7486,10 @@ use std::sync::Mutex;
 #[derive(Clone)]
 pub struct ChatAppState {
     pub chat: Arc<Mutex<ChatState>>,
-    pub provider: Arc<dyn LLMProvider>,
+    /// Echo provider used only when `[ai] echo = true` and no agent service
+    /// is active (plumbing tests). Production is `None`: no service ⇒ the
+    /// turn asks the user to set one up.
+    pub fallback: Option<Arc<dyn LLMProvider>>,
     /// Engine handle, for tool dispatch in the agent loop.
     pub engine: AppState,
     /// Hard cap on tool round-trips per agent turn (from `[ai] max_tool_turns`).
@@ -7496,6 +7499,40 @@ pub struct ChatAppState {
     pub policy: Arc<std::sync::RwLock<crate::tools::ToolPolicy>>,
     /// Path to the editable Markdown system prompt, re-read each agent turn.
     pub system_prompt_path: std::path::PathBuf,
+    /// Agent services (ppq.ai / routstr): accounts, balances, the active
+    /// selection. The agent loop runs on the active service.
+    pub providers: Arc<crate::providers::ProviderRegistry>,
+}
+
+/// A system line naming the runtime, prepended to every turn that runs on an
+/// agent service. Open-weight models served through proxies routinely
+/// misreport their identity ("I am Claude…"); stating the truth up front
+/// keeps the assistant honest about what it is and where it runs.
+fn runtime_identity_line(kind: crate::providers::ProviderKind, model: &str) -> String {
+    format!(
+        "Runtime: you are the model `{model}`, served through the {} agent service \
+         chosen by the user in tendrl. If asked what model you are or who made you, \
+         answer with that model id and its actual maker — you are not a model from \
+         any other vendor, and no Anthropic/OpenAI API is involved unless the model \
+         id says so.",
+        kind.label()
+    )
+}
+
+/// Which model answers this turn: the active agent service, else the echo
+/// fallback when configured, else nothing (the caller tells the UI to set a
+/// service up).
+fn resolve_provider(
+    state: &ChatAppState,
+) -> Option<(
+    Arc<dyn LLMProvider>,
+    Option<String>,
+    Option<crate::providers::ProviderKind>,
+)> {
+    if let Some((p, m, k)) = state.providers.active_provider() {
+        return Some((p, Some(m), Some(k)));
+    }
+    state.fallback.clone().map(|p| (p, None, None))
 }
 
 /// A single fragment in the API response
@@ -7724,28 +7761,60 @@ pub async fn session_delete(
     Ok(Json(json!({ "deleted": true })))
 }
 
-/// POST /api/v1/chat/message — send message, get LLM response
+/// POST /api/v1/chat/message — send message, get a plain (tool-less) reply
+/// from the active agent service. 409 when no service is set up.
 pub async fn chat_send(
     State(state): State<ChatAppState>,
     Json(req): Json<SendMessageRequest>,
-) -> Json<ChatResponse> {
-    let messages = {
+) -> std::result::Result<Json<ChatResponse>, EngineError> {
+    let Some((provider, model, service_kind)) = resolve_provider(&state) else {
+        return Err(EngineError::Config(
+            "no agent service is active — set up ppq.ai or a routstr node in agent services".into(),
+        ));
+    };
+    let mut messages = {
         let mut chat = state.chat.lock().unwrap();
         chat.input = req.content;
         chat.generating = true;
         chat.send_message()
     };
+    if let (Some(kind), Some(m)) = (service_kind, model.as_deref()) {
+        messages.insert(
+            0,
+            crate::chat::LLMMessage {
+                role: ChatRole::System,
+                content: runtime_identity_line(kind, m),
+            },
+        );
+    }
 
-    let response = state
-        .provider
-        .chat(messages)
-        .await
-        .unwrap_or_else(|e| format!("Error: {}", e));
+    let response = match model {
+        // The neutral `chat()` helper cannot carry a model override; run one
+        // tool-less turn directly so the active service's model is used.
+        Some(m) => {
+            let agent: Vec<crate::llm::AgentMessage> = messages
+                .into_iter()
+                .map(|msg| match msg.role {
+                    ChatRole::System => crate::llm::AgentMessage::System(msg.content),
+                    ChatRole::User => crate::llm::AgentMessage::User(msg.content),
+                    ChatRole::Assistant => crate::llm::AgentMessage::Assistant(vec![
+                        crate::llm::ContentBlock::Text { text: msg.content },
+                    ]),
+                })
+                .collect();
+            provider
+                .run_turn(&agent, &[], Some(&m))
+                .await
+                .map(|out| assistant_text(&out.content))
+        }
+        None => provider.chat(messages).await,
+    }
+    .unwrap_or_else(|e| format!("Error: {}", e));
 
     let mut chat = state.chat.lock().unwrap();
     chat.generating = false;
     chat.receive_response(response);
-    Json(build_chat_response(&chat))
+    Ok(Json(build_chat_response(&chat)))
 }
 
 /// Build one SSE event for the agent stream: `{ "type": kind, "data": {...} }`.
@@ -7787,6 +7856,25 @@ pub async fn chat_agent_handler(
     let stream = async_stream::stream! {
         use crate::llm::{AgentMessage, ContentBlock};
 
+        // Which model runs this turn: the active agent service (ppq / routstr).
+        // Checked before the user turn is recorded so a missing/unfunded
+        // service leaves no dangling fragment — the web keeps the typed text
+        // and opens agent services.
+        let Some((provider, model_override, service)) = resolve_provider(&state) else {
+            yield agent_sse("needs_service", json!({
+                "message": "no agent service is active — set up ppq.ai or a routstr node",
+            }));
+            yield agent_sse("done", json!({ "skipped": true }));
+            return;
+        };
+        if service.is_some() {
+            if let Some(need) = state.providers.funding_need().await {
+                yield agent_sse("needs_funding", serde_json::to_value(&need).unwrap_or_default());
+                yield agent_sse("done", json!({ "skipped": true }));
+                return;
+            }
+        }
+
         // Seed the loop from history + the new user turn. Guard is dropped
         // before any await/yield (std Mutex must never cross those). The system
         // prompt is refreshed from prompt.md each turn (live on-disk edits).
@@ -7797,6 +7885,9 @@ pub async fn chat_agent_handler(
             chat.generating = true;
             chat.to_agent_messages()
         };
+        if let (Some(kind), Some(m)) = (service, model_override.as_deref()) {
+            messages.insert(0, AgentMessage::System(runtime_identity_line(kind, m)));
+        }
 
 
         // Snapshot the live policy (guard dropped before any await/yield).
@@ -7814,6 +7905,7 @@ pub async fn chat_agent_handler(
         let started = tokio::time::Instant::now();
         let budget = std::time::Duration::from_secs(600);
         let mut turn: usize = 0;
+        let mut tool_calls_made: usize = 0;
 
         loop {
             turn += 1;
@@ -7826,7 +7918,7 @@ pub async fn chat_agent_handler(
                 break;
             }
 
-            let out = match state.provider.run_turn(&messages, &tools, None).await {
+            let out = match provider.run_turn(&messages, &tools, model_override.as_deref()).await {
                 Ok(o) => o,
                 Err(e) => {
                     yield agent_sse("error", json!({ "message": e.to_string() }));
@@ -7897,6 +7989,7 @@ pub async fn chat_agent_handler(
             }
 
             // Persist tool results as a user-role fragment carrying the blocks.
+            tool_calls_made += results.len();
             {
                 let mut chat = state.chat.lock().unwrap();
                 chat.push_agent_fragment(crate::chat::ChatRole::User, String::new(), results.clone());
@@ -7907,6 +8000,15 @@ pub async fn chat_agent_handler(
         {
             let mut chat = state.chat.lock().unwrap();
             chat.generating = false;
+        }
+        // Settle the paid service's balance off the SSE path: the delta is
+        // the turn's cost (shown on the Agent screen's "last turn" line).
+        if let (Some(kind), Some(model)) = (service, model_override.clone()) {
+            let providers = state.providers.clone();
+            let secs = started.elapsed().as_secs_f64();
+            tokio::spawn(async move {
+                providers.record_turn(kind, model, tool_calls_made, secs).await;
+            });
         }
         yield agent_sse("done", json!({}));
     };
@@ -8005,14 +8107,11 @@ pub async fn ai_prompt_put(
 pub struct AiSettingsRequest {
     #[serde(default)]
     pub enabled_tools: Option<Vec<String>>,
-    #[serde(default)]
-    pub provider: Option<String>,
-    #[serde(default)]
-    pub model: Option<String>,
 }
 
-/// Shape the AI settings response: config-backed provider/model + the tool
-/// catalog annotated with each tool's live enablement.
+/// Shape the AI settings response: the tool-turn cap + the tool catalog
+/// annotated with each tool's live enablement (the model itself is the active
+/// agent service — `GET /api/v1/providers`).
 fn build_ai_settings_response(
     engine: &crate::engine::Engine,
     policy: &crate::tools::ToolPolicy,
@@ -8033,22 +8132,19 @@ fn build_ai_settings_response(
         })
         .collect();
     json!({
-        "provider": cfg.ai.provider,
-        "model": cfg.ai.model,
         "max_tool_turns": cfg.ai.max_tool_turns,
         "tools": tools,
     })
 }
 
-/// GET /api/v1/ai/settings — current provider/model/auth + per-tool enablement.
+/// GET /api/v1/ai/settings — tool-turn cap + per-tool enablement.
 pub async fn ai_settings_get(State(state): State<ChatAppState>) -> Json<Value> {
     let policy = state.policy.read().unwrap().clone();
     Json(build_ai_settings_response(&state.engine, &policy))
 }
 
 /// POST /api/v1/ai/settings — update enabled tools (live, immediate) and
-/// persist provider/model/auth/enabled_tools to config.toml (provider/model/
-/// auth apply on next boot; the tool allowlist also restores the policy on boot).
+/// persist the allowlist to config.toml so the policy is restored on boot.
 pub async fn ai_settings_post(
     State(state): State<ChatAppState>,
     Json(req): Json<AiSettingsRequest>,
@@ -8078,12 +8174,10 @@ fn persist_ai_config(
         .and_then(|v| v.as_table())
         .cloned()
         .unwrap_or_default();
-    if let Some(v) = &req.provider {
-        ai_tbl.insert("provider".into(), toml::Value::String(v.clone()));
-    }
-    if let Some(v) = &req.model {
-        ai_tbl.insert("model".into(), toml::Value::String(v.clone()));
-    }
+    // The provider/model used to live here; since 2026-09-22 the model comes
+    // from the active agent service (providers.json), never from TOML.
+    ai_tbl.remove("provider");
+    ai_tbl.remove("model");
     if let Some(names) = &req.enabled_tools {
         let arr = names
             .iter()
@@ -9354,15 +9448,213 @@ mod chat_api_tests {
         let dir = tempfile::tempdir().unwrap();
         let prompt_path = dir.path().join("prompt.md");
         let engine = Arc::new(crate::engine::Engine::new(dir.path()).unwrap());
+        let data_dir = dir.path().to_path_buf();
         std::mem::forget(dir); // keep the temp dir alive for the test process
         ChatAppState {
             chat: Arc::new(Mutex::new(ChatState::new())),
-            provider: Arc::new(NoopProvider::echo()),
+            fallback: Some(Arc::new(NoopProvider::echo())),
             engine,
             max_tool_turns: 25,
             policy: Arc::new(std::sync::RwLock::new(crate::tools::ToolPolicy::default())),
             system_prompt_path: prompt_path,
+            providers: Arc::new(crate::providers::ProviderRegistry::new(&data_dir).unwrap()),
         }
+    }
+
+    #[tokio::test]
+    async fn test_identity_and_publish_tools_on_a_bare_engine() {
+        use crate::tools::{dispatch, ToolCx};
+        let state = make_state();
+        let cx = ToolCx {
+            engine: state.engine.clone(),
+            chat: state.chat.clone(),
+        };
+        // No identities configured: the tool still answers, and says so.
+        let v = dispatch(&cx, "get_identities", json!({})).await.unwrap();
+        assert_eq!(v["assistant"]["can_publish"], false);
+        assert_eq!(v["assistant"]["search"], "by:assistant");
+        assert_eq!(v["user"]["logged_in"], false);
+        assert_eq!(v["user"]["search"], "by:me");
+        // publish needs at least one id.
+        let err = dispatch(&cx, "publish", json!({})).await.unwrap_err();
+        assert!(matches!(err, EngineError::BadRequest(_)), "{err}");
+        // publish_publication without an assistant identity is an auth error,
+        // never a fall-through to the user's key.
+        let err = dispatch(
+            &cx,
+            "publish_publication",
+            json!({ "title": "t", "sections": [{ "content": "hello" }] }),
+        )
+        .await
+        .unwrap_err();
+        assert!(matches!(err, EngineError::Auth(_)), "{err}");
+        // Every tool is enabled by default, Publish included.
+        let policy = crate::tools::ToolPolicy::default();
+        assert!(policy.enabled.contains("publish_publication"));
+        assert!(policy.enabled.contains("get_identities"));
+    }
+
+    /// In Confirm mode an AI relay search (scope: "relays", or from_relays on
+    /// a lookup) must raise the SAME fetch intent the user's own searches do,
+    /// and a decline must come back as approved:false — never a silent local
+    /// downgrade, never an ungated relay hit. Local scope raises nothing.
+    #[tokio::test]
+    async fn test_ai_relay_search_raises_a_confirm_intent() {
+        use crate::network::{ConfirmDecision, FetchEvent};
+        use crate::tools::{dispatch, ToolCx};
+        let state = make_state();
+        assert!(!state.engine.is_auto(), "fresh engine should be in Confirm mode");
+        let cx = ToolCx {
+            engine: state.engine.clone(),
+            chat: state.chat.clone(),
+        };
+
+        // Local scope: no intent, no network.
+        let mut rx = state.engine.subscribe_fetch_events();
+        let v = dispatch(&cx, "search_events", json!({ "query": "k:30040 d:test-slug" }))
+            .await
+            .unwrap();
+        assert_eq!(v["scope"], "local");
+        assert!(rx.try_recv().is_err(), "local search must not emit an intent");
+
+        // Relay scope with a tag filter: an Intent appears; declining it
+        // returns approved:false with the note the model is told to act on.
+        let cx2 = ToolCx {
+            engine: state.engine.clone(),
+            chat: state.chat.clone(),
+        };
+        let task = tokio::spawn(async move {
+            dispatch(
+                &cx2,
+                "search_events",
+                json!({ "query": "k:30041 T:what's-up", "scope": "relays" }),
+            )
+            .await
+        });
+        let intent = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            loop {
+                if let Ok(FetchEvent::Intent { operation_id, label, .. }) = rx.recv().await {
+                    break (operation_id, label);
+                }
+            }
+        })
+        .await
+        .expect("an Intent within 5s");
+        assert!(intent.1.contains("AI relay search"), "{}", intent.1);
+        assert!(
+            state
+                .engine
+                .network()
+                .resolve_confirm(ConfirmDecision {
+                    operation_id: intent.0,
+                    approved: false,
+                    relays: None,
+                })
+                .await
+        );
+        let v = task.await.unwrap().unwrap();
+        assert_eq!(v["scope"], "relays");
+        assert_eq!(v["approved"], false);
+        assert_eq!(v["count"], 0);
+
+        // from_relays on a lookup goes through the same gate.
+        let cx3 = ToolCx {
+            engine: state.engine.clone(),
+            chat: state.chat.clone(),
+        };
+        let mut rx2 = state.engine.subscribe_fetch_events();
+        let task = tokio::spawn(async move {
+            dispatch(
+                &cx3,
+                "get_event",
+                json!({ "id": "f".repeat(64), "from_relays": true }),
+            )
+            .await
+        });
+        let op_id = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            loop {
+                if let Ok(FetchEvent::Intent { operation_id, .. }) = rx2.recv().await {
+                    break operation_id;
+                }
+            }
+        })
+        .await
+        .expect("an Intent for get_event");
+        state
+            .engine
+            .network()
+            .resolve_confirm(ConfirmDecision {
+                operation_id: op_id,
+                approved: false,
+                relays: None,
+            })
+            .await;
+        let v = task.await.unwrap().unwrap();
+        assert_eq!(v["approved"], false);
+        assert_eq!(v["found"], false);
+    }
+
+    /// Broadcasting is gated the same way: `publish` (and the broadcast half
+    /// of `publish_publication` / `sign_draft`) opens a publish operation →
+    /// PublishIntent → PublishConfirmModal in Confirm mode; a decline comes
+    /// back as published:false and nothing reaches a relay.
+    #[tokio::test]
+    async fn test_ai_broadcast_raises_a_publish_intent() {
+        use crate::network::{ConfirmDecision, FetchEvent};
+        use crate::tools::{dispatch, ToolCx};
+        let state = make_state();
+        assert!(!state.engine.is_auto());
+        let ev = crate::engine::build_test_event(1, "ai broadcast gate probe", vec![], 1_700_000_002);
+        let id = serde_json::from_str::<Value>(&ev).unwrap()["id"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        state.engine.ingest_event(&ev).unwrap();
+        for _ in 0..100 {
+            if state
+                .engine
+                .get_by_id(&id, crate::engine::FetchPolicy::LocalOnly)
+                .await
+                .unwrap()
+                .is_some()
+            {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(30)).await;
+        }
+        let mut rx = state.engine.subscribe_fetch_events();
+        let cx = ToolCx {
+            engine: state.engine.clone(),
+            chat: state.chat.clone(),
+        };
+        let id2 = id.clone();
+        let task = tokio::spawn(async move {
+            dispatch(&cx, "publish", json!({ "ids": [id2] })).await
+        });
+        let (op_id, label) = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            loop {
+                if let Ok(FetchEvent::PublishIntent { operation_id, label, .. }) = rx.recv().await {
+                    break (operation_id, label);
+                }
+            }
+        })
+        .await
+        .expect("a PublishIntent within 5s");
+        assert!(label.contains("AI broadcast"), "{label}");
+        assert!(
+            state
+                .engine
+                .network()
+                .resolve_confirm(ConfirmDecision {
+                    operation_id: op_id,
+                    approved: false,
+                    relays: None,
+                })
+                .await
+        );
+        let v = task.await.unwrap().unwrap();
+        assert_eq!(v["published"], false);
+        assert!(v["note"].as_str().unwrap().contains("declined"));
     }
 
     #[tokio::test]
@@ -9383,7 +9675,7 @@ mod chat_api_tests {
         let req = SendMessageRequest {
             content: "Hello world".into(),
         };
-        let Json(resp) = chat_send(State(state), Json(req)).await;
+        let Json(resp) = chat_send(State(state), Json(req)).await.unwrap();
         assert_eq!(resp.fragment_count, 2);
         assert_eq!(resp.fragments[0].role, "user");
         assert_eq!(resp.fragments[0].content, "Hello world");
