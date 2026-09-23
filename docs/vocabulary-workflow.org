@@ -322,18 +322,65 @@ from you*, counted, never pushed. The mission's dial
 say the same thing: an entry point, a modeline count, never an
 interruption.
 
-** What counts as an ask
+** What counts: a default the user extends
 
-| Kind | Addressed how              | You are   | The act                          |
-|------+----------------------------+-----------+----------------------------------|
-| 818  | =p= you, =a= your 30040/41 | owner     | review the diff, merge or decline |
-| 7    | =e= your 818               | requester | see the verdict, nothing to do   |
-| 30041 =t: annotation-request= | =A= your publication (signed, broadcast) | owner | optional: answer it yourself, or ignore |
+The engine ships a default set — the kinds it has a verb for — and the
+user *appends* kinds they want to hear about. So the same list can
+carry "someone highlighted your section" for the person who wants it
+and stay silent for the one who does not. Comments, highlights and
+reactions are not asks by default; they become *activity* when opted
+in, listed below the asks, with no verb but "read".
 
-Comments (1111), highlights, reactions on notes: *not* asks. *Provisionally,* they stay
-where they are, under the section, found when you read. The inbox is
-kind-relevant by construction: the engine lists only kinds it has a
-verb for.
+| Kind  | Addressed how (the engine's rule)                  | You are   | Verb                              | Default |
+|-------+----------------------------------------------------+-----------+-----------------------------------+---------|
+| 818   | =p= you, or =a= one of your 30040/30041            | owner     | review the diff, merge or decline | on      |
+| 7     | =e= an 818 you sent                                 | requester | see the verdict                   | on      |
+| 30041 =t: annotation-request= | =A= your publication (signed) | owner  | answer it yourself, or ignore     | on      |
+| 1111  | =A=/=a= your coordinates, or =P=/=p= you            | author    | read, reply in place              | off     |
+| 9802  | =a= your coordinate, or =p= you                     | author    | read ("N highlighted §2")         | off     |
+| 7     | =e=/=a= any event of yours (not an 818)             | author    | read                              | off     |
+| 9735  | =p= you (zap receipt)                               | author    | read                              | off     |
+| any   | =p= you                                              | —         | read                              | off     |
+
+The rule column is the point: for each kind the *engine* knows what
+"addressed to me" means (a tag, not a search), so adding a kind is a
+preference, not a query the web has to build. An unknown kind gets the
+generic =p= rule. Muted authors and the ignore list apply before
+anything is counted, as they do for insertions.
+
+** The preference
+
+Settings → *Asks*: the default rows fixed and greyed, then a list the
+user appends to — a kind number (or a pick from the kinds tendrl
+knows), a one-line rule shown back ("9802 · a highlight of one of your
+sections"), on/off, and whether it counts toward the modeline number
+or only shows in the list. Persisted engine-side in
+=<data_dir>/asks.json= (like =relays.json= / =providers.json=: local
+state, never a Nostr event — nothing about what you want to hear is
+published), so both shells and =list_asks= over MCP honour the same
+set.
+
+#+begin_example
+Settings › Asks — what tendrl lists for you
+
+  on   818   merge requests on your publications            act   default
+  on   7     verdicts on merge requests you sent             act   default
+  on   30041 signed annotation requests on your publications act   default
+  ─────────────────────────────────────────────────────────────────────
+  on   9802  highlights of your sections                     count  ×
+  on   1111  comments on your publications                   list   ×
+  off  7     reactions to anything of yours                  list   ×
+  [+ add a kind ▾]   9735 zaps · 1111 · 9802 · 7 · 30045 shelved you · custom…
+
+  count = adds to the modeline number · list = shows in the buffer only
+#+end_example
+
+The modeline number is then "2 asks · 5 new" — acts first, activity
+second, and the second half is whatever the user turned on. Nothing
+here is a push; the number sits there until the buffer is opened.
+=fetch_asks= pulls exactly the enabled kinds with =#p me= (plus =#a= /
+=#A= on your coordinates for the kinds whose rule is the coordinate) —
+one filter per rule, on your read relays.
 
 ** Where it lives
 
@@ -344,15 +391,17 @@ digraph inbox {
 
   subgraph cluster_engine { label="Engine"; style="rounded"; color="#bbb"; fontsize=10;
     store  [label="nostrdb\n818 · 7 · 30041 requests", fillcolor="#e2e3e5"];
-    asks   [label="GET /api/v1/asks\nkinds it has a verb for\n#p me · #a my coordinates\nstatus from kind-7 by the owner\n(newest wins, like git status)", fillcolor="#fff3cd"];
+    prefs  [label="asks.json\ndefault kinds + the user's\n(rule per kind, count | list)", fillcolor="#fff3cd"];
+    asks   [label="GET /api/v1/asks\nenabled kinds · engine's rule per kind\n#p me · #a / #A my coordinates\nstatus from kind-7 by the owner\n(newest wins, like git status)", fillcolor="#fff3cd"];
+    prefs -> asks;
     stream [label="store stream\nIngested{kind: 818}", fillcolor="#e2e3e5"];
     fetch  [label="fetch (Confirm-gated)\nmy READ (inbox) relays · #p me\n(kind-10002 read entries)", fillcolor="#e2e3e5"];
     store -> asks; stream -> asks [style=dashed]; fetch -> store [style=dashed];
   }
 
   subgraph cluster_web { label="Web"; style="rounded"; color="#bbb"; fontsize=10;
-    pill   [label="modeline pill\n\"2 asks\" (desktop)\ndrawer row (phone)"];
-    buf    [label="asks buffer\nfor me | mine\nSPC b o i", fillcolor="#cfe2ff"];
+    pill   [label="modeline pill\n\"2 asks · 5 new\" (desktop)\ndrawer row (phone)"];
+    buf    [label="asks buffer\nasks | activity | mine\nSPC b o i", fillcolor="#cfe2ff"];
     review [label="merge-request review\n(diff + one armed button)", fillcolor="#cfe2ff"];
     card   [label="card under the target\nin the reader / table\n(\"merge? · 2 sections\")"];
     pill -> buf -> review;
@@ -476,6 +525,7 @@ and returns a structured diff:
 |-------------------+-------------------------------------------------------------------------+---------------------------------------------------------|
 | 818 parse + build | =publication/merge_request.rs=: template, parse, status from kind-7     | —                                                       |
 | The list          | =GET /api/v1/asks= (+ store-stream kind filter, Confirm-gated fetch)    | modeline pill, drawer row, =asks= buffer (=SPC b o i=)  |
+| Preference        | =asks.rs=: =AskRule= per kind (tag → mine), =AsksPrefs= in =<data_dir>/asks.json=, =GET/PUT /api/v1/asks/prefs= | Settings › Asks; modeline splits act count / activity count |
 | Routing           | =engine.inbox_relays_for(pubkey)= (10002 via the indexer composition → =read_relays()=), =union_relays= into the broadcast set | Confirm modal names the owner's inbox relays          |
 | The diff          | =GET /asks/:id/diff=: base pairing, content hunks, index structure diff | =MergeRequestReview.svelte= on the diff-gate primitive  |
 | Merge / decline   | =POST /asks/:id/merge= (sign next versions + react + broadcast), =/decline= | armed button; "open in composer" hand-off               |
@@ -540,7 +590,7 @@ digraph agentasks {
 
 | Tool             | Category     | Does                                                                                                 | Signs as    |
 |------------------+--------------+------------------------------------------------------------------------------------------------------+-------------|
-| =list_asks=      | Read         | The inbox list: 818s for me, verdicts on mine, signed requests on my publications; =list_requests= stays for records | —           |
+| =list_asks=      | Read         | The inbox list under the user's preference: acts (818s for me, verdicts on mine, signed requests) then opted-in activity; =list_requests= stays for records | —           |
 | =get_ask_diff=   | Read         | The engine's structured diff for an 818 (same payload the review screen renders)                     | —           |
 | =review_ask=     | ComposeWrite | A NIP-22 comment on the 818: what changed, what the agent recommends; local until =publish=          | assistant   |
 | =prepare_merge=  | ComposeWrite | Base + source → the owner's next version(s) as an unsigned draft in =DraftStore=; nothing is signed  | —           |
@@ -610,6 +660,9 @@ agent.
 - *Is the asks list a buffer or a profile tab?* Default a buffer: it
   spans publications and has its own verb, unlike Repositories / Spells
   which list what you own.
+- *Where does a kind the user adds get its rule?* From the engine's
+  table; a kind it does not know falls to =p= you. Adding a smarter rule
+  is a code change, on purpose: the web never builds the filter.
 - *Do signed annotation requests on your publication count as asks?*
   Default yes, low in the list, with no verb but "read"; the owner may
   answer with their own agent or ignore.
