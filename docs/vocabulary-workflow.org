@@ -51,7 +51,7 @@ to take it.
 
 * The workflow
 
-#+begin_src dot :file docs/vocabulary/workflow.png
+#+begin_src dot :file vocabulary/workflow.png
 digraph workflow {
   rankdir=TB; fontname="Helvetica"; node [fontname="Helvetica", fontsize=10, shape=box, style="rounded,filled", fillcolor="#f7f7f7", color="#888"];
   edge [fontname="Helvetica", fontsize=9, color="#666"];
@@ -96,7 +96,7 @@ digraph workflow {
 #+end_src
 
 #+RESULTS:
-[[file:docs/vocabulary/workflow.png]]
+[[file:vocabulary/workflow.png]]
 
 The three clusters are three moments, hours apart. Nothing in the
 middle wakes an agent: the user types "check tendrl requests" in their
@@ -108,7 +108,7 @@ own harness, as today
 What the store holds once the agent has answered a two-term request on
 section 2 of a three-section publication, before anything is promoted.
 
-#+begin_src dot :file docs/vocabulary/events.png
+#+begin_src dot :file vocabulary/events.png
 digraph events {
   rankdir=TB; nodesep=0.35; ranksep=0.55; fontname="Helvetica";
   node [fontname="Helvetica", fontsize=10, shape=plaintext];
@@ -163,7 +163,7 @@ no collision", style=dotted, color="#999", dir=none, constraint=false];
 #+end_src
 
 #+RESULTS:
-[[file:docs/vocabulary/events.png]]
+[[file:vocabulary/events.png]]
 
 Two things the graph shows on purpose:
 
@@ -211,7 +211,7 @@ the target form sets the scope). Promoted or not, the reader lands on
 the definition; promotion only changes whether it is an in-place jump
 or an event link.
 
-#+begin_src dot :file docs/vocabulary/resolve.png
+#+begin_src dot :file vocabulary/resolve.png
 digraph resolve {
   rankdir=LR; fontname="Helvetica"; node [fontname="Helvetica", fontsize=10, shape=box, style="rounded,filled", fillcolor="#f7f7f7", color="#888"];
   edge [fontname="Helvetica", fontsize=9, color="#666"];
@@ -234,11 +234,11 @@ else any 30818 with that d", fillcolor="#f8d7da"];
 #+end_src
 
 #+RESULTS:
-[[file:docs/vocabulary/resolve.png]]
+[[file:vocabulary/resolve.png]]
 
 * Own publication vs someone else's
 
-#+begin_src mermaid :file docs/vocabulary/merge.png :width 1100
+#+begin_src mermaid :file vocabulary/merge.png :width 1100
 sequenceDiagram
     autonumber
     participant R as Reader (web)
@@ -266,7 +266,7 @@ sequenceDiagram
 #+end_src
 
 #+RESULTS:
-[[file:docs/vocabulary/merge.png]]
+[[file:vocabulary/merge.png]]
 
 Path A is the common case for a reader-writer and needs no request
 event at all. Path B reuses =fork_index= for the index and adds the same
