@@ -259,7 +259,7 @@ sequenceDiagram
     E-->>R: "derivative": minted d's, E/p back-pointers, 818 draft
     R->>E: POST /publication/relink {sign_as: user}
     E->>E: derivative §2' + index' (fork_index) + kind 818 {a: their 30040, e: base, e: index' source, p: owner}
-    R->>N: broadcast derivative + 818 to the owner's outbox relays
+    R->>N: derivative → my write relays · 818 → the OWNER's read (inbox) relays ∪ my write relays
     N-->>O: 818 shows as a merge-request card under their index
     O->>N: kind 7 "+" on the 818 · republishes §2 + index under their own d
     N-->>R: reader shows "merged" · the derivative stays as provenance
@@ -330,7 +330,7 @@ interruption.
 | 7    | =e= your 818               | requester | see the verdict, nothing to do   |
 | 30041 =t: annotation-request= | =A= your publication (signed, broadcast) | owner | optional: answer it yourself, or ignore |
 
-Comments (1111), highlights, reactions on notes: *not* asks. They stay
+Comments (1111), highlights, reactions on notes: *not* asks. *Provisionally,* they stay
 where they are, under the section, found when you read. The inbox is
 kind-relevant by construction: the engine lists only kinds it has a
 verb for.
@@ -346,7 +346,7 @@ digraph inbox {
     store  [label="nostrdb\n818 · 7 · 30041 requests", fillcolor="#e2e3e5"];
     asks   [label="GET /api/v1/asks\nkinds it has a verb for\n#p me · #a my coordinates\nstatus from kind-7 by the owner\n(newest wins, like git status)", fillcolor="#fff3cd"];
     stream [label="store stream\nIngested{kind: 818}", fillcolor="#e2e3e5"];
-    fetch  [label="fetch (Confirm-gated)\nmy outbox relays · #p me", fillcolor="#e2e3e5"];
+    fetch  [label="fetch (Confirm-gated)\nmy READ (inbox) relays · #p me\n(kind-10002 read entries)", fillcolor="#e2e3e5"];
     store -> asks; stream -> asks [style=dashed]; fetch -> store [style=dashed];
   }
 
@@ -372,7 +372,9 @@ digraph inbox {
   the way =git.rs= resolves issue status; nothing is recorded. The store
   stream already emits =Ingested= per kind, so an open inbox updates
   without a refresh. Pulling new asks from relays is a fetch like any
-  other: Confirm-gated, =#p= you on your outbox relays.
+  other: Confirm-gated, =#p= you on your *read* relays — the inbox
+  half of your kind 10002, where others write to reach you (NIP-65).
+  See /Relay routing/ below.
 - *Two doors.* The count on the modeline (a pill next to agent
   services, the drawer's status section on the phone) opens the asks
   buffer; the same 818 also shows as a card under the section it
@@ -380,6 +382,28 @@ digraph inbox {
 - *Never a push.* No OS notification, no badge that demands clearing.
   An ignored 818 just stays open; the requester sees "open" on their
   side and nothing more.
+
+** Relay routing (NIP-65)
+
+Asks travel the inbox/outbox way round, not the publish way round:
+
+| Event                        | Goes to                                                        | Read back from                     |
+|------------------------------+----------------------------------------------------------------+------------------------------------|
+| my derivative (30040/30041s) | my *write* relays (the publish set)                            | anyone, via my write relays        |
+| my 818 to an owner           | the *owner's read relays* ∪ my write relays                     | the owner, from their read relays  |
+| the owner's kind-7 verdict   | *my* read relays ∪ their write relays                          | me, from my read relays            |
+| a signed request on their publication | their read relays ∪ my write relays                    | them                               |
+
+What exists: =user_data.rs= parses kind 10002 into read/write entries
+(=RelayList::read_relays()=), and =pull-user-data= fetches *my own*
+10002 through the indexer composition. What is missing is one engine
+helper — resolve /another/ pubkey's 10002 through the same composition
+and take its read entries — and the union into the broadcast set, which
+=union_relays= already does for a NIP-34 repository's =relays= on issue
+comments. With no 10002 found, fall back to the target's relay hints
+(the =a= tag's, the index's) and the publish set, and say so in the
+Confirm modal. =fetch_asks= is the mirror: =#p me= on my read relays,
+falling back to the general set.
 
 ** The review
 
@@ -452,6 +476,7 @@ and returns a structured diff:
 |-------------------+-------------------------------------------------------------------------+---------------------------------------------------------|
 | 818 parse + build | =publication/merge_request.rs=: template, parse, status from kind-7     | —                                                       |
 | The list          | =GET /api/v1/asks= (+ store-stream kind filter, Confirm-gated fetch)    | modeline pill, drawer row, =asks= buffer (=SPC b o i=)  |
+| Routing           | =engine.inbox_relays_for(pubkey)= (10002 via the indexer composition → =read_relays()=), =union_relays= into the broadcast set | Confirm modal names the owner's inbox relays          |
 | The diff          | =GET /asks/:id/diff=: base pairing, content hunks, index structure diff | =MergeRequestReview.svelte= on the diff-gate primitive  |
 | Merge / decline   | =POST /asks/:id/merge= (sign next versions + react + broadcast), =/decline= | armed button; "open in composer" hand-off               |
 | In place          | 818s folded into =insertions/load= as =role: merge_request=             | card under the target section / index                   |
@@ -519,7 +544,7 @@ digraph agentasks {
 | =get_ask_diff=   | Read         | The engine's structured diff for an 818 (same payload the review screen renders)                     | —           |
 | =review_ask=     | ComposeWrite | A NIP-22 comment on the 818: what changed, what the agent recommends; local until =publish=          | assistant   |
 | =prepare_merge=  | ComposeWrite | Base + source → the owner's next version(s) as an unsigned draft in =DraftStore=; nothing is signed  | —           |
-| =fetch_asks=     | Network      | Pull =#p me= from my outbox relays; Confirm-gated like every fetch, only when the user asks           | —           |
+| =fetch_asks=     | Network      | Pull =#p me= from my *read* (inbox) relays; Confirm-gated like every fetch, only when the user asks   | —           |
 
 Not added: =merge_ask= / =decline_ask=. A merge is the owner's new
 version under the owner's key plus a reaction from the owner's key.
