@@ -1,0 +1,318 @@
+#+TITLE: Vocabulary requests — unpack the words a text leaves undefined
+#+SUBTITLE: Mock-up of the workflow, the events, and where each step lands (plan Phase 5c)
+#+DATE: 2026-09-23
+#+STATUS: mock-up (design/vocabulary-requests, off feat/annotations-table)
+#+STARTUP: inlineimages showall
+#+OPTIONS: ^:nil toc:2
+#+PROPERTY: header-args:dot :exports results :cmd dot :cmdline -Tpng -Gdpi=110
+#+PROPERTY: header-args:mermaid :exports results
+
+Every diagram below is a source block with its rendered PNG under
+=docs/vocabulary/= checked in beside it. =C-c C-c= on a block re-renders
+(ob-dot is built in; the sequence diagram needs =ob-mermaid= + =mmdc=).
+=C-c C-x C-v= toggles the inline images if =#+STARTUP: inlineimages=
+did not already show them.
+
+* The idea in one paragraph
+
+A reader hits a word the text uses but never defines. Today they can ask
+for /notes/ on the passage (annotate mode → a request record → their own
+agent answers with insertions). A *vocabulary request* is the same ask
+with a different =output=: "unpack these words, with respect to this
+text". The answers are *definition sections* — ordinary kind-30041
+insertions tagged =t: definition=, one per term, anchored to the passage
+that needed them, several per term allowed because a 30041's =d= is an
+opaque nanoid (unlike NIP-54's slug-as-=d=, which gives every author one
+article per word). Findability comes from *promotion*: the definitions
+are folded into the publication as a glossary, and every =[[term]]= or
+={{wiki:term}}= in the text then resolves sibling-first by title slug.
+Relinking the text is a new version of each section under its own =d=
+when you own the publication; for someone else's, it is a derivative
+plus a *kind-818 merge request* that asks them to take it.
+
+* Actors and events
+
+| Piece                 | Kind  | Owner            | Tags that matter                                                         | Exists today?                       |
+|-----------------------+-------+------------------+--------------------------------------------------------------------------+-------------------------------------|
+| Publication index     | 30040 | author           | =a= per section, =title=, =d=                                            | yes                                 |
+| Section               | 30041 | author           | =d= (nanoid), =title=, =T= (slug), =m= (mime)                            | yes                                 |
+| Vocabulary request    | 30041 | reader (signed)  | =t annotation-request=, =output vocabulary=, =term …=, =context=, =style= | =output= is =notes= / =kasten= today |
+|                       | local | reader (unsigned)| same fields in =<data_dir>/requests/=                                    | yes                                 |
+| Definition            | 30041 | reader's agent   | =t definition=, =title= = the term, =T= = slug, =A=/=a=/=e= anchor, =request= | new role                            |
+| Glossary bundle       | 30040 | reader's agent   | =a= per definition, =A=/=K=/=P= anchor, =request=                        | bundle insertions exist             |
+| Relinked section      | 30041 | owner / forker   | content with =[[term]]=, =w= per term (emitted by =reference_tags=)      | =w= emission exists                 |
+| Derivative index      | 30040 | forker           | every tag copied, =E= + =p= back to the original                         | =fork_index= exists                 |
+| Merge request         | 818   | forker           | =a= target (30040/30041), =e= base, =e … source=, =p= owner              | NIP-54, extended to NKBIP-01 kinds  |
+| Accept / reject       | 7     | owner            | =e= the 818, content =+= / =-=                                           | NIP-25                              |
+
+* The workflow
+
+#+begin_src dot :file docs/vocabulary/workflow.png
+digraph workflow {
+  rankdir=TB; fontname="Helvetica"; node [fontname="Helvetica", fontsize=10, shape=box, style="rounded,filled", fillcolor="#f7f7f7", color="#888"];
+  edge [fontname="Helvetica", fontsize=9, color="#666"];
+
+  subgraph cluster_reader { label="Reader (web, annotate mode)"; style="rounded"; color="#bbb"; fontsize=10;
+    read   [label="reading a section\n(30041 in a 30040)"];
+    select [label="selects undefined words\n(or leaves the list empty:\n\"find the vocabulary\")"];
+    ask    [label="Ask → AnnotationRequestModal\noutput = vocabulary\nterm… · context · style"];
+    record [label="request record\n(local, unsigned)\n<data_dir>/requests/", fillcolor="#fff3cd"];
+    signed [label="signed request\n30041 · t: annotation-request\noutput: vocabulary · term…", fillcolor="#fff3cd"];
+    read -> select -> ask -> record;
+    ask -> signed [label="sign · keep local / broadcast", style=dashed];
+  }
+
+  subgraph cluster_agent { label="User's own agent (MCP, /tendrl-requests)"; style="rounded"; color="#bbb"; fontsize=10;
+    list   [label="list_requests\n→ output = vocabulary\n→ terms, context, style"];
+    research [label="read the anchor + siblings\n(scope) · research per term"];
+    defs   [label="propose_insertion × N\nt: definition · title = term\nrequest → the ask", fillcolor="#d1e7dd"];
+    bundle [label="propose_bundle (optional)\nglossary 30040 → the definitions", fillcolor="#d1e7dd"];
+    close  [label="answer_request"];
+    list -> research -> defs -> bundle -> close;
+    defs -> close [style=dashed];
+  }
+
+  subgraph cluster_fold { label="Back in the reader"; style="rounded"; color="#bbb"; fontsize=10;
+    cards  [label="definition cards under the passage\ntable: role = definition, \"def\" badge"];
+    own    [label="own publication?", shape=diamond, fillcolor="#e2e3e5"];
+    relink [label="relink + promote\nnew versions, same d\n[[term]] → sibling glossary", fillcolor="#cfe2ff"];
+    fork   [label="derivative\nfork_index + relinked sections\nE / p back-pointers", fillcolor="#cfe2ff"];
+    mr     [label="kind 818 merge request\na = their 30040 · e = source", fillcolor="#f8d7da"];
+    react  [label="owner reacts + / −\n(+ = republish under their d)", fillcolor="#e2e3e5"];
+    cards -> own;
+    own -> relink [label="yes"];
+    own -> fork   [label="no"];
+    fork -> mr -> react;
+  }
+
+  record -> list [label="read over MCP", lhead=cluster_agent];
+  signed -> list [style=dashed];
+  close -> cards [label="store stream\n(~300 ms)"];
+}
+#+end_src
+
+#+RESULTS:
+[[file:docs/vocabulary/workflow.png]]
+
+The three clusters are three moments, hours apart. Nothing in the
+middle wakes an agent: the user types "check tendrl requests" in their
+own harness, as today
+([[file:zettel/decision-requests-are-events.org][decision]]).
+
+* The event graph after an answer
+
+What the store holds once the agent has answered a two-term request on
+section 2 of a three-section publication, before anything is promoted.
+
+#+begin_src dot :file docs/vocabulary/events.png
+digraph events {
+  rankdir=TB; nodesep=0.35; ranksep=0.55; fontname="Helvetica";
+  node [fontname="Helvetica", fontsize=10, shape=plaintext];
+  edge [fontname="Helvetica", fontsize=9, color="#666"];
+
+  idx [label=<<table border="0" cellborder="1" cellspacing="0" cellpadding="4" bgcolor="#e2e3e5">
+    <tr><td><b>30040 · index</b></td></tr><tr><td>d: k1h9…</td></tr><tr><td>a → §1, §2, §3</td></tr></table>>];
+  s1 [label=<<table border="0" cellborder="1" cellspacing="0" cellpadding="4" bgcolor="#f7f7f7">
+    <tr><td><b>30041 · §1</b></td></tr><tr><td>d: q7f2…</td></tr><tr><td>T: on-method</td></tr></table>>];
+  s2 [label=<<table border="0" cellborder="1" cellspacing="0" cellpadding="4" bgcolor="#ffffff">
+    <tr><td><b>30041 · §2</b></td></tr><tr><td>d: m3x8…</td></tr><tr><td>T: against-method</td></tr>
+    <tr><td><i>"…epistemological anarchism…"</i></td></tr></table>>];
+  s3 [label=<<table border="0" cellborder="1" cellspacing="0" cellpadding="4" bgcolor="#f7f7f7">
+    <tr><td><b>30041 · §3</b></td></tr><tr><td>d: p0c4…</td></tr><tr><td>T: consequences</td></tr></table>>];
+  idx -> s1; idx -> s2; idx -> s3;
+
+  req [label=<<table border="0" cellborder="1" cellspacing="0" cellpadding="4" bgcolor="#fff3cd">
+    <tr><td><b>30041 · request</b></td></tr><tr><td>t: annotation-request</td></tr><tr><td>output: vocabulary</td></tr>
+    <tr><td>term: epistemological anarchism</td></tr><tr><td>term: incommensurability</td></tr>
+    <tr><td>context: "as used in §2"</td></tr><tr><td>A → index · a → §2 · e → §2 version</td></tr></table>>];
+  req -> s2 [label="a", style=dashed];
+
+  d1 [label=<<table border="0" cellborder="1" cellspacing="0" cellpadding="4" bgcolor="#d1e7dd">
+    <tr><td><b>30041 · definition</b></td></tr><tr><td>t: definition</td></tr>
+    <tr><td>title: Epistemological anarchism</td></tr><tr><td>T: epistemological-anarchism</td></tr>
+    <tr><td>d: z2k7… (nanoid)</td></tr><tr><td>A → index · a → §2</td></tr>
+    <tr><td>request → req · style → 30078</td></tr></table>>];
+  d2 [label=<<table border="0" cellborder="1" cellspacing="0" cellpadding="4" bgcolor="#d1e7dd">
+    <tr><td><b>30041 · definition</b></td></tr><tr><td>t: definition</td></tr>
+    <tr><td>title: Incommensurability</td></tr><tr><td>T: incommensurability</td></tr>
+    <tr><td>d: b9w1…</td></tr><tr><td>A → index · a → §2</td></tr><tr><td>request → req</td></tr></table>>];
+  d1 -> req [label="request"]; d2 -> req [label="request"];
+  d1 -> s2 [label="a", style=dashed]; d2 -> s2 [label="a", style=dashed];
+
+  gl [label=<<table border="0" cellborder="1" cellspacing="0" cellpadding="4" bgcolor="#d1e7dd">
+    <tr><td><b>30040 · glossary bundle</b></td></tr><tr><td>title: Glossary</td></tr>
+    <tr><td>a → d1, d2</td></tr><tr><td>A → index · request → req</td></tr></table>>];
+  gl -> d1; gl -> d2;
+  gl -> idx [label="A (anchor)", style=dashed, constraint=false];
+
+  other [label=<<table border="0" cellborder="1" cellspacing="0" cellpadding="4" bgcolor="#eeeeee" color="#bbbbbb">
+    <tr><td><font color="#666666"><b>30041 · definition (someone else)</b></font></td></tr>
+    <tr><td><font color="#666666">title: Incommensurability</font></td></tr>
+    <tr><td><font color="#666666">T: incommensurability · d: c4r0…</font></td></tr>
+    <tr><td><font color="#666666">A → a different 30040</font></td></tr></table>>];
+  other -> d2 [label="same T, different d:
+no collision", style=dotted, color="#999", dir=none, constraint=false];
+
+  { rank=same; s1; s2; s3; }
+  { rank=same; d1; d2; other; }
+}
+#+end_src
+
+#+RESULTS:
+[[file:docs/vocabulary/events.png]]
+
+Two things the graph shows on purpose:
+
+- The request is *answered* because two events point at it with
+  =request=; nothing records that state. This is the existing rule.
+- A second "Incommensurability" by another hand is a separate 30041 with
+  its own =d=. Under NIP-54 both would be =d: incommensurability= and
+  only one could exist per key.
+
+* Relink: before and after
+
+The one new algorithm. Engine-side, pure, in =nostrdown.rs=: wrap the
+first plain-text occurrence of each term per section, skip code spans,
+headings, existing links and anything inside ={{ }}=; per markup
+format. =reference_tags= then emits the =w= tags on publish as it
+already does for any =[[ ]]=.
+
+#+begin_example
+── §2 (Markdown), before ─────────────────────────────────────────────
+Feyerabend's epistemological anarchism holds that science advances by
+breaking its own rules; the incommensurability of paradigms is the
+reason no single method survives contact with history.
+
+── §2, after relink (new version, same d) ────────────────────────────
+Feyerabend's [[epistemological anarchism]] holds that science advances
+by breaking its own rules; the [[incommensurability]] of paradigms is
+the reason no single method survives contact with history.
+
+tags added by reference_tags:
+  ["w", "epistemological-anarchism"]
+  ["w", "incommensurability"]
+#+end_example
+
+Resolution then needs nothing new: =[[incommensurability]]= is a =wiki=
+ref, and =resolve_refs= tries the publication's *siblings* by title slug
+before it ever asks for a 30818. Once the glossary is in the index, the
+definition is a sibling.
+
+#+begin_src dot :file docs/vocabulary/resolve.png
+digraph resolve {
+  rankdir=LR; fontname="Helvetica"; node [fontname="Helvetica", fontsize=10, shape=box, style="rounded,filled", fillcolor="#f7f7f7", color="#888"];
+  edge [fontname="Helvetica", fontsize=9, color="#666"];
+  link [label="[[incommensurability]]\nin §2 (relinked)"];
+  sib  [label="sibling 30041 with\nT = incommensurability?", shape=diamond, fillcolor="#e2e3e5"];
+  def  [label="the promoted definition\n(glossary → d2)", fillcolor="#d1e7dd"];
+  wiki [label="30818 by d\n(global, optional)", fillcolor="#eee"];
+  none [label="unresolved chip\n(\"no article yet\")", fillcolor="#f8d7da"];
+  link -> sib;
+  sib -> def  [label="yes — sibling-first"];
+  sib -> wiki [label="no"];
+  wiki -> none [label="none", style=dashed];
+}
+#+end_src
+
+#+RESULTS:
+[[file:docs/vocabulary/resolve.png]]
+
+* Own publication vs someone else's
+
+#+begin_src mermaid :file docs/vocabulary/merge.png :width 1100
+sequenceDiagram
+    autonumber
+    participant R as Reader (web)
+    participant E as Engine
+    participant O as Owner (another key)
+    participant N as Relays
+
+    Note over R,E: A. You own the publication
+    R->>E: POST /publication/relink/preview {index, terms→definitions}
+    E-->>R: per-section diff · glossary slot · tags to be added
+    R->>E: POST /publication/relink {sign_as: user}
+    E->>E: new §2 (same d) · new index (same d, + a → glossary)
+    E-->>R: signed, local-until-broadcast
+    R->>N: broadcast (the separate step, Confirm-gated)
+
+    Note over R,O: B. Someone else's publication
+    R->>E: POST /publication/relink/preview {index (theirs)}
+    E-->>R: "derivative": minted d's, E/p back-pointers, 818 draft
+    R->>E: POST /publication/relink {sign_as: user}
+    E->>E: derivative §2' + index' (fork_index) + kind 818 {a: their 30040, e: base, e: index' source, p: owner}
+    R->>N: broadcast derivative + 818 to the owner's outbox relays
+    N-->>O: 818 shows as a merge-request card under their index
+    O->>N: kind 7 "+" on the 818 · republishes §2 + index under their own d
+    N-->>R: reader shows "merged" · the derivative stays as provenance
+#+end_src
+
+#+RESULTS:
+[[file:docs/vocabulary/merge.png]]
+
+Path A is the common case for a reader-writer and needs no request
+event at all. Path B reuses =fork_index= for the index and adds the same
+copy process for the relinked sections; the 818 is the only new event,
+and it is NIP-54's with the target kind widened to 30040/30041 (a stated
+extension in =nips/NKBIP-01-insertions.org=, since NIP-54 says the
+source MUST be a 30818).
+
+* What the reader shows
+
+#+begin_example
+┌─ §2 · Against Method ───────────────────────────────────────────────┐
+│ Feyerabend's [[epistemological anarchism]] holds that science …      │
+│                                                                      │
+│ ▌ ? request · answered      vocabulary · 2 terms · ✎ glossary style  │
+│ ▌   ↳ 2 definitions                                                  │
+│ ▌ def  Epistemological anarchism            you·agent · 12:40        │
+│ ▌      The view, after Feyerabend, that no fixed method …            │
+│ ▌      [open as section ▸] [promote → glossary]                      │
+│ ▌ def  Incommensurability                   you·agent · 12:41        │
+│ ▌      Two paradigms are incommensurable when …                      │
+│ ▌      [open as section ▸] [promote → glossary]                      │
+│                                                                      │
+│ [relink 2 terms into the text ▸]   ← armed button, diff gate first   │
+└──────────────────────────────────────────────────────────────────────┘
+
+Annotations table:  role = definition → "def" badge, term chip;
+                    counts exclude requests as today, include definitions.
+Foreign publication: the same card, the button reads
+                    [fork + merge request ▸] and previews the 818.
+#+end_example
+
+* Where each step lands
+
+| Step                              | Engine (Rust)                                                                   | Web (TS)                                                    |
+|-----------------------------------+---------------------------------------------------------------------------------+-------------------------------------------------------------|
+| =output: vocabulary= + =term= tags | =requests.rs= (record + 30041 template), =tools.rs::list_requests= hands terms | =AnnotationRequestModal=: third seg, term chips from selection |
+| Definition role                   | =insertion.rs::InsertionRole::Definition= (from =t definition=), load pass      | =InsertionCard= "def" badge, table =role= filter             |
+| Agent answers                     | =propose_insertion= gains =role: definition= (sets =t=, =T= from title)         | =/tendrl-requests= skill: vocabulary branch                 |
+| Glossary bundle                   | =propose_bundle= unchanged                                                      | bundle card as today                                        |
+| Relink transform                  | =nostrdown::link_terms(content, format, terms) -> (content, changed)=, pure     | diff gate (existing primitive)                              |
+| Relink publish                    | =POST /publication/relink= (+ =/preview=): own → same =d=; else derivative      | armed button on the request card                            |
+| Merge request                     | =publication/merge_request.rs=: 818 template + parse; card data in load pass    | =MergeRequestCard= under the target                         |
+| Accept                            | kind-7 on the 818 + republish (owner side)                                      | one armed button on the card                                |
+
+* Open questions (defaults stated)
+
+- *One definition per term per answer, or several?* Default one; the
+  agent may write a second with =t: background= if the term needs a
+  history, and that is an ordinary note.
+- *Relink every occurrence or the first per section?* Default first per
+  section. Every occurrence makes prose unreadable and the =w= tag is
+  the same either way.
+- *Global 30818 as well?* Not by default. A definition section can be
+  minted into a 30818 under the user's key later, as a separate act
+  with a separate scope.
+- *Merge-request status.* NIP-25 =+= / =-= only. An open 818 stays a
+  card until a reaction lands; no draft/closed states.
+- *Who may relink a foreign publication into a derivative?* Anyone, as
+  with any fork; the 818 is a request, not a claim.
+
+* Related
+- [[file:insertions-plan.org][Insertions plan]] — Phase 5c goes here
+- [[file:zettel/feat-insertions.org][Insertions]] · [[file:zettel/feat-annotations-table.org][Annotations table]]
+- [[file:zettel/decision-requests-are-events.org][Requests are records, never a harness]]
+- [[file:zettel/decision-wikilinks-30818-only.org][Wikilinks resolve to 30818 only]] — why definitions are 30041s, and why promotion is the findability step
+- [[file:../nips/NKBIP-01-insertions.org][NKBIP-01 insertions]] — bundles; the 818 extension clause goes here
+- =nips/34.md= — considered and set aside: patches are git bytes, PRs are commits on a clone URL; a publication's version is the signed event itself
