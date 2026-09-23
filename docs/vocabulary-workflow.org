@@ -312,6 +312,151 @@ Foreign publication: the same card, the button reads
 | Merge request                     | =publication/merge_request.rs=: 818 template + parse; card data in load pass    | =MergeRequestCard= under the target                         |
 | Accept                            | kind-7 on the 818 + republish (owner side)                                      | one armed button on the card                                |
 
+* Merge requests: the inbox, the review, the diff
+
+A kind-818 is addressed (=p= the owner) and it asks for a decision. That
+is the one shape of "notification" tendrl should have: not a stream of
+everything that mentions you, but *events of a kind that wants an act
+from you*, counted, never pushed. The mission's dial
+([[file:zettel/mission.org][orientation dials]]) and the resurfacing idea
+say the same thing: an entry point, a modeline count, never an
+interruption.
+
+** What counts as an ask
+
+| Kind | Addressed how              | You are   | The act                          |
+|------+----------------------------+-----------+----------------------------------|
+| 818  | =p= you, =a= your 30040/41 | owner     | review the diff, merge or decline |
+| 7    | =e= your 818               | requester | see the verdict, nothing to do   |
+| 30041 =t: annotation-request= | =A= your publication (signed, broadcast) | owner | optional: answer it yourself, or ignore |
+
+Comments (1111), highlights, reactions on notes: *not* asks. They stay
+where they are, under the section, found when you read. The inbox is
+kind-relevant by construction: the engine lists only kinds it has a
+verb for.
+
+** Where it lives
+
+#+begin_src dot :file vocabulary/inbox.png
+digraph inbox {
+  rankdir=LR; fontname="Helvetica"; node [fontname="Helvetica", fontsize=10, shape=box, style="rounded,filled", fillcolor="#f7f7f7", color="#888"];
+  edge [fontname="Helvetica", fontsize=9, color="#666"];
+
+  subgraph cluster_engine { label="Engine"; style="rounded"; color="#bbb"; fontsize=10;
+    store  [label="nostrdb\n818 · 7 · 30041 requests", fillcolor="#e2e3e5"];
+    asks   [label="GET /api/v1/asks\nkinds it has a verb for\n#p me · #a my coordinates\nstatus from kind-7 by the owner\n(newest wins, like git status)", fillcolor="#fff3cd"];
+    stream [label="store stream\nIngested{kind: 818}", fillcolor="#e2e3e5"];
+    fetch  [label="fetch (Confirm-gated)\nmy outbox relays · #p me", fillcolor="#e2e3e5"];
+    store -> asks; stream -> asks [style=dashed]; fetch -> store [style=dashed];
+  }
+
+  subgraph cluster_web { label="Web"; style="rounded"; color="#bbb"; fontsize=10;
+    pill   [label="modeline pill\n\"2 asks\" (desktop)\ndrawer row (phone)"];
+    buf    [label="asks buffer\nfor me | mine\nSPC b o i", fillcolor="#cfe2ff"];
+    review [label="merge-request review\n(diff + one armed button)", fillcolor="#cfe2ff"];
+    card   [label="card under the target\nin the reader / table\n(\"merge? · 2 sections\")"];
+    pill -> buf -> review;
+    card -> review;
+  }
+  asks -> pill; asks -> card;
+}
+#+end_src
+
+#+RESULTS:
+[[file:vocabulary/inbox.png]]
+
+- *One engine list*, =GET /api/v1/asks= (=?role=owner|requester&status=open|all=):
+  818s whose =p= is you or whose =a= is one of your coordinates, plus
+  your own outgoing 818s with the verdict folded on. Status is derived
+  on every read from the newest kind-7 by the target owner, exactly
+  the way =git.rs= resolves issue status; nothing is recorded. The store
+  stream already emits =Ingested= per kind, so an open inbox updates
+  without a refresh. Pulling new asks from relays is a fetch like any
+  other: Confirm-gated, =#p= you on your outbox relays.
+- *Two doors.* The count on the modeline (a pill next to agent
+  services, the drawer's status section on the phone) opens the asks
+  buffer; the same 818 also shows as a card under the section it
+  targets, so an owner reading their own text meets it in place.
+- *Never a push.* No OS notification, no badge that demands clearing.
+  An ignored 818 just stays open; the requester sees "open" on their
+  side and nothing more.
+
+** The review
+
+The diff is engine work (Rust derives structure from events; the web
+renders it). =GET /api/v1/asks/:id/diff= pairs the source with the base
+and returns a structured diff:
+
+- *Base* = the version the 818's =e= names, else the newest local
+  version of the target coordinate. If the target has moved on since
+  the base, the review says so ("based on a version 2 behind") and
+  diffs against both.
+- *30041 target* — a content diff (line-level hunks, word-level marks
+  inside a hunk; =similar= crate) plus a tag diff (added =a= refs, a
+  changed =title=). For a relink this is a handful of one-line hunks
+  each adding a ={{ref:…|term}}=.
+- *30040 target* — a structural diff of the =a= list: sections added
+  (the glossary, in its slot), removed, moved; and for each derivative
+  section, its own content diff against the original it points back
+  to (=E=). A derivative section needs that back-pointer, so the copy
+  process for sections mirrors =fork_index=: every tag verbatim, a
+  minted =d=, =E= to the copied version, =p= to its author.
+- *What the merge will produce*: the review is not the source event, it
+  is the owner's *next version* (same =d=, own key) computed from base +
+  source. That is what the diff shows and what the armed button signs.
+
+#+begin_example
+┌─ merge request · from npub1q…9x · 2 h ago ────────────────────────────┐
+│ target  Against Method (your 30040)        base v3 · your current v3    │
+│ asks    "relink 2 terms to their definitions, add a glossary"           │
+│                                                                         │
+│ index   + a → Glossary (30040, theirs → becomes yours on merge)  [slot 4]│
+│         · §1 unchanged · §2 changed · §3 unchanged                       │
+│                                                                         │
+│ §2 · Against Method                                        1 hunk       │
+│  - Feyerabend's epistemological anarchism holds that science advances   │
+│  + Feyerabend's {{ref:30041:q…9x:z2k7…|epistemological anarchism}}      │
+│  +   holds that science advances                                        │
+│  - by breaking its own rules; the incommensurability of paradigms is   │
+│  + by breaking its own rules; the {{ref:30041:q…9x:b9w1…|incommensur…  │
+│    tags  + a 30041:q…9x:z2k7…   + a 30041:q…9x:b9w1…                    │
+│                                                                         │
+│ glossary (new)  Epistemological anarchism · Incommensurability  [open ▸]│
+│                                                                         │
+│ [decline −]        [open merged result in composer]      [merge + ▸]    │
+│                    ^ edit before signing                  ^ armed:      │
+│                                                             sign §2 + index (same d)
+│                                                             react + on the 818
+│                                                             broadcast (Confirm)
+└─────────────────────────────────────────────────────────────────────────┘
+#+end_example
+
+- *Merge* = one armed button, three acts the engine sequences: sign
+  the owner's new versions (same =d=), react =+= on the 818, broadcast
+  (Confirm-gated as any publish). Local-until-broadcast as everywhere.
+- *Decline* = react =-=, optional one-line reason as the reaction's
+  content. The derivative stays on relays as the requester's fork;
+  nothing is deleted.
+- *Partial* is not a third verb: "open merged result in composer" hands
+  the computed next version to the composer, the owner edits, signs,
+  and the engine still reacts =+= (merged, with changes). Keeps the
+  verdict binary and the edit ordinary.
+- *Glossary ownership*: on merge the owner's index points at the
+  requester's definition sections as they are (their key, their =d=).
+  Adopting them under the owner's key is a separate act — the same
+  choice promotion already presents.
+
+** Touch points
+
+| Step              | Engine                                                                  | Web                                                     |
+|-------------------+-------------------------------------------------------------------------+---------------------------------------------------------|
+| 818 parse + build | =publication/merge_request.rs=: template, parse, status from kind-7     | —                                                       |
+| The list          | =GET /api/v1/asks= (+ store-stream kind filter, Confirm-gated fetch)    | modeline pill, drawer row, =asks= buffer (=SPC b o i=)  |
+| The diff          | =GET /asks/:id/diff=: base pairing, content hunks, index structure diff | =MergeRequestReview.svelte= on the diff-gate primitive  |
+| Merge / decline   | =POST /asks/:id/merge= (sign next versions + react + broadcast), =/decline= | armed button; "open in composer" hand-off               |
+| In place          | 818s folded into =insertions/load= as =role: merge_request=             | card under the target section / index                   |
+
+
 * Open questions (defaults stated)
 
 - *One definition per term per answer, or several?* Default one; the
@@ -333,6 +478,12 @@ Foreign publication: the same card, the button reads
   card until a reaction lands; no draft/closed states.
 - *Who may relink a foreign publication into a derivative?* Anyone, as
   with any fork; the 818 is a request, not a claim.
+- *Is the asks list a buffer or a profile tab?* Default a buffer: it
+  spans publications and has its own verb, unlike Repositories / Spells
+  which list what you own.
+- *Do signed annotation requests on your publication count as asks?*
+  Default yes, low in the list, with no verb but "read"; the owner may
+  answer with their own agent or ignore.
 
 * Related
 - [[file:insertions-plan.org][Insertions plan]] — Phase 5c goes here
@@ -341,4 +492,7 @@ Foreign publication: the same card, the button reads
 - [[file:zettel/decision-wikilinks-30818-only.org][Wikilinks resolve to 30818 only]] — the ambiguity a coordinate ref avoids
 - [[file:zettel/feat-nostrdown.org][Nostrdown]] — ={{ref:}}= entity scope: sibling-first, then a direct pointer (2026-09-15)
 - [[file:../nips/NKBIP-01-insertions.org][NKBIP-01 insertions]] — bundles; the 818 extension clause goes here
+- [[file:zettel/idea-resurfacing.org][Resurfacing]] — "a modeline count, never a notification"
+- [[file:zettel/feat-ui-patterns.org][UI patterns]] — the diff gate and armed button the review is built from
+- =src/git.rs= — status resolution by newest event from the right key: the model for 818 status
 - =nips/34.md= — considered and set aside: patches are git bytes, PRs are commits on a clone URL; a publication's version is the signed event itself
