@@ -259,7 +259,7 @@ sequenceDiagram
     E-->>R: "derivative": minted d's, E/p back-pointers, 818 draft
     R->>E: POST /publication/relink {sign_as: user}
     E->>E: derivative §2' + index' (fork_index) + kind 818 {a: their 30040, e: base, e: index' source, p: owner}
-    R->>N: derivative → my write relays · 818 → the OWNER's read (inbox) relays ∪ my write relays
+    R->>N: derivative → my write relays · 818 → owner's inbox ∪ where their event was found ∪ hints ∪ mine
     N-->>O: 818 shows as a merge-request card under their index
     O->>N: kind 7 "+" on the 818 · republishes §2 + index under their own d
     N-->>R: reader shows "merged" · the derivative stays as provenance
@@ -331,16 +331,16 @@ and stay silent for the one who does not. Comments, highlights and
 reactions are not asks by default; they become *activity* when opted
 in, listed below the asks, with no verb but "read".
 
-| Kind  | Addressed how (the engine's rule)                  | You are   | Verb                              | Default |
-|-------+----------------------------------------------------+-----------+-----------------------------------+---------|
-| 818   | =p= you, or =a= one of your 30040/30041            | owner     | review the diff, merge or decline | on      |
-| 7     | =e= an 818 you sent                                 | requester | see the verdict                   | on      |
-| 30041 =t: annotation-request= | =A= your publication (signed) | owner  | answer it yourself, or ignore     | on      |
-| 1111  | =A=/=a= your coordinates, or =P=/=p= you            | author    | read, reply in place              | off     |
-| 9802  | =a= your coordinate, or =p= you                     | author    | read ("N highlighted §2")         | off     |
-| 7     | =e=/=a= any event of yours (not an 818)             | author    | read                              | off     |
-| 9735  | =p= you (zap receipt)                               | author    | read                              | off     |
-| any   | =p= you                                              | —         | read                              | off     |
+|                        Kind | Addressed how (the engine's rule)     | You are   | Verb                              | Default |
+|-----------------------------+---------------------------------------+-----------+-----------------------------------+---------|
+|                         818 | =p= you, or =a= one of your 30040/30041   | owner     | review the diff, merge or decline | on      |
+|                           7 | =e= an 818 you sent                     | requester | see the verdict                   | on      |
+| 30041 =t: annotation-request= | =A= your publication (signed)           | owner     | answer it yourself, or ignore     | on      |
+|                        1111 | =A=/=a= your coordinates, or =P=/=p= you  | author    | read, reply in place              | off     |
+|                        9802 | =a= your coordinate, or =p= you           | author    | read ("N highlighted §2")         | off     |
+|                           7 | =e=/=a= any event of yours (not an 818) | author    | read                              | off     |
+|                        9735 | =p= you (zap receipt)                   | author    | read                              | off     |
+|                         any | =p= you                                 | —         | read                              | off     |
 
 The rule column is the point: for each kind the *engine* knows what
 "addressed to me" means (a tag, not a search), so adding a kind is a
@@ -432,27 +432,54 @@ digraph inbox {
   An ignored 818 just stays open; the requester sees "open" on their
   side and nothing more.
 
-** Relay routing (NIP-65)
+** Relay routing (NIP-65 + provenance)
 
-Asks travel the inbox/outbox way round, not the publish way round:
+Asks travel the inbox/outbox way round, not the publish way round. The
+engine builds the *destination set* for anything addressed to another
+pubkey — a signed annotation request on their publication, an 818
+against their index or section — from two sources it already has, and
+refuses rather than guess when both are empty:
 
-| Event                        | Goes to                                                        | Read back from                     |
-|------------------------------+----------------------------------------------------------------+------------------------------------|
-| my derivative (30040/30041s) | my *write* relays (the publish set)                            | anyone, via my write relays        |
-| my 818 to an owner           | the *owner's read relays* ∪ my write relays                     | the owner, from their read relays  |
-| the owner's kind-7 verdict   | *my* read relays ∪ their write relays                          | me, from my read relays            |
-| a signed request on their publication | their read relays ∪ my write relays                    | them                               |
+1. *Their inbox*: the =read= entries of the owner's kind 10002
+   (=RelayList::read_relays()=). Local store first; if not cached,
+   resolve it through the indexer composition the way =pull-user-data=
+   does for your own — one Confirm-gated fetch, named as such.
+2. *Where the annotated event was found*: nostrdb's per-note provenance
+   (=note.relays()=, the same set the feed's relay badge reads) for the
+   target section *and* its index — the relays that actually served
+   the event to you, so the owner is reading there too.
+3. *Relay hints* on the index's =a= tag for that section, if any.
+4. *Your write relays*, so the ask is findable from your side as well.
 
-What exists: =user_data.rs= parses kind 10002 into read/write entries
-(=RelayList::read_relays()=), and =pull-user-data= fetches *my own*
-10002 through the indexer composition. What is missing is one engine
-helper — resolve /another/ pubkey's 10002 through the same composition
-and take its read entries — and the union into the broadcast set, which
-=union_relays= already does for a NIP-34 repository's =relays= on issue
-comments. With no 10002 found, fall back to the target's relay hints
-(the =a= tag's, the index's) and the publish set, and say so in the
-Confirm modal. =fetch_asks= is the mirror: =#p me= on my read relays,
-falling back to the general set.
+Set = 1 ∪ 2 ∪ 3 ∪ 4. The Confirm modal lists every relay with its
+reason — /inbox/, /found on/, /hint/, /yours/ — so the user sees why
+each is there and can drop one. If 1 and 2 are both empty the ask does
+not go out on the general publish set silently: the modal says "no
+inbox known for npub… and no provenance for this event" and offers the
+10002 fetch. After acceptance =record_event_relay= stamps the ask with
+its provenance like any broadcast.
+
+| Event                                 | Destination set                                          | Read back from                                 |
+|---------------------------------------+----------------------------------------------------------+------------------------------------------------|
+| my derivative (30040/30041s)          | my write relays                                          | anyone, via my write relays                    |
+| my 818 to an owner                    | owner's inbox ∪ where their target was found ∪ hints ∪ mine | the owner, from their read relays or where they published |
+| a signed request on their publication | same set as the 818                                      | them                                           |
+| my definitions answering their request | my write relays ∪ where their request was found          | them, on the relay they asked from             |
+| the owner's kind-7 verdict            | my inbox ∪ where my 818 was found ∪ theirs               | me                                             |
+
+The mirror holds for =fetch_asks=: =#p me= (and =#a=/=#A= on my
+coordinates) on *my* read relays ∪ the relays my own events carry as
+provenance — someone answers on the relay they found me on, and that
+relay may not be in my 10002 at all.
+
+What exists: =user_data.rs= parses 10002 into read/write entries;
+=pull-user-data= fetches *my own* 10002 through the indexer
+composition; =record_event_relay= / =note.relays()= keep provenance per
+event; =union_relays= already folds a NIP-34 repository's =relays= into
+the broadcast set for issue comments. Missing: one helper —
+=engine.inbox_relays_for(pubkey)= (10002 via the composition → read
+entries) — and =destination_set(target_coord, owner)= that composes
+the four sources with their reasons.
 
 ** The review
 
@@ -526,7 +553,7 @@ and returns a structured diff:
 | 818 parse + build | =publication/merge_request.rs=: template, parse, status from kind-7     | —                                                       |
 | The list          | =GET /api/v1/asks= (+ store-stream kind filter, Confirm-gated fetch)    | modeline pill, drawer row, =asks= buffer (=SPC b o i=)  |
 | Preference        | =asks.rs=: =AskRule= per kind (tag → mine), =AsksPrefs= in =<data_dir>/asks.json=, =GET/PUT /api/v1/asks/prefs= | Settings › Asks; modeline splits act count / activity count |
-| Routing           | =engine.inbox_relays_for(pubkey)= (10002 via the indexer composition → =read_relays()=), =union_relays= into the broadcast set | Confirm modal names the owner's inbox relays          |
+| Routing           | =engine.inbox_relays_for(pubkey)= (10002 via the composition → =read_relays()=) + =destination_set= (inbox ∪ provenance =note.relays()= ∪ hints ∪ mine, each with a reason) | Confirm modal lists each relay with its reason; refuses when inbox and provenance are both unknown |
 | The diff          | =GET /asks/:id/diff=: base pairing, content hunks, index structure diff | =MergeRequestReview.svelte= on the diff-gate primitive  |
 | Merge / decline   | =POST /asks/:id/merge= (sign next versions + react + broadcast), =/decline= | armed button; "open in composer" hand-off               |
 | In place          | 818s folded into =insertions/load= as =role: merge_request=             | card under the target section / index                   |
