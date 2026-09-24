@@ -67,6 +67,14 @@
 		!!app.identityStatus?.pubkey && anchor.root_pubkey === app.identityStatus.pubkey
 	);
 	const isDefinition = $derived(insertion.role === 'definition');
+	// A kind-818 merge request targeting this publication (or a section of
+	// it): an ask, drawn as an ordinary card in the ask colour; the owner
+	// reviews the diff, anyone else just sees it.
+	const isAsk = $derived(insertion.role === 'ask');
+	const askStatus = $derived(insertion.merge_request?.status ?? 'open');
+	const askBadge = $derived(
+		askStatus === 'merged' ? '✓ merge request · merged' : askStatus === 'declined' ? '− merge request · declined' : '? merge request'
+	);
 	const term = $derived(insertion.term ?? title);
 	const inGlossary = $derived(isDefinition && !!insertion.promoted);
 
@@ -104,6 +112,9 @@
 		};
 	});
 
+	function dOfCoord(c: string): string {
+		return c.split(':').slice(2).join(':');
+	}
 	function relTime(ts: number): string {
 		const s = Math.max(0, Math.floor(Date.now() / 1000 - ts));
 		if (s < 60) return 'now';
@@ -285,8 +296,10 @@
 	class="icard icard--{reading.notes}"
 	class:icard--open={isOpen}
 	class:icard--insert={anchor.placement !== 'annotation'}
+	class:icard--ask={isAsk}
 	data-insertion={insertion.coordinate}
-	style="--au: {pubkeyToColor(ev.pubkey)}"
+	data-role={insertion.role}
+	style="--au: {isAsk ? 'var(--orange)' : pubkeyToColor(ev.pubkey)}"
 >
 	<!-- Narrow-layout fold row: one 44 px line under the anchor. -->
 	<button class="icard__fold" onclick={toggle} aria-expanded={isOpen}>
@@ -301,11 +314,14 @@
 			<span class="icard__tape" aria-hidden="true"></span>
 		{/if}
 		<div class="icard__who">
-			<span class="icard__cap">{placementLabel}</span>
+			<span class="icard__cap">{isAsk ? '⑂ asks to merge' : placementLabel}</span>
+			{#if isAsk}
+				<span class="icard__badge icard__badge--ask" class:icard__badge--ok={askStatus === 'merged'} class:icard__badge--bad={askStatus === 'declined'} title="A kind-818 merge request on this publication">{askBadge}</span>
+			{/if}
 			{#if isDefinition}
 				<span class="icard__badge icard__badge--def" title="A definition — one event for this term, anchored here">def</span>
 			{/if}
-			<span class="icard__by"><span class="icard__dot" aria-hidden="true"></span>{who} · {ago} · {inGlossary ? 'in glossary' : 'pending'}</span>
+			<span class="icard__by"><span class="icard__dot" aria-hidden="true"></span>{who} · {ago} · {isAsk ? askStatus : inGlossary ? 'in glossary' : 'pending'}</span>
 		</div>
 		{#if title}
 			<h4 class="icard__title">{title}</h4>
@@ -333,7 +349,7 @@
 				<button class="icard__pill icard__pill--term" onclick={() => app.handleSearch(`T:"${term}" t:definition`, { scopeToMe: false })} title="Every definition of this term ({term})">{term}</button>
 			{/if}
 			<span class="icard__pill icard__pill--att">
-				{inGlossary ? (ownsRoot ? 'in glossary' : 'in your glossary (not in this index)') : anchor.placement === 'annotation' ? 'attached' : 'inserted · pending'}
+				{isAsk ? `kind 818 · ${dOfCoord(anchor.parent)}` : inGlossary ? (ownsRoot ? 'in glossary' : 'in your glossary (not in this index)') : anchor.placement === 'annotation' ? 'attached' : 'inserted · pending'}
 			</span>
 			{#if insertion.request}
 				<button class="icard__act icard__act--answers" onclick={openRequest} title="Written for this request — {insertion.request}">↳ answers {requestTitle ?? 'a request'}</button>
@@ -357,7 +373,13 @@
 				title="Event menu — JSON, comment, broadcast, pool"
 			>menu</button>
 			<span class="icard__spacer"></span>
-			{#if isDefinition}
+			{#if isAsk}
+				{#if ownsRoot && askStatus === 'open'}
+					<button class="icard__act icard__act--review" onclick={() => app.openMergeRequestReview(insertion.merge_request?.id ?? ev.id)} title="Review the diff — the engine computes your next version; merge or decline there">review the diff ▸</button>
+				{:else}
+					<button class="icard__act" onclick={() => app.openMergeRequestReview(insertion.merge_request?.id ?? ev.id)} title="Open the review (read-only)">review</button>
+				{/if}
+			{:else if isDefinition}
 				{#if inGlossary}
 					<button
 						class="icard__act icard__act--promote"
@@ -793,5 +815,24 @@
 		.icard--sticky {
 			transform: none;
 		}
+	}
+	.icard--ask {
+		border-left-color: var(--orange);
+	}
+	.icard__badge--ask {
+		color: var(--orange);
+		border-color: rgba(226, 164, 120, 0.5);
+	}
+	.icard__badge--ok {
+		color: var(--green);
+		border-color: rgba(180, 190, 130, 0.5);
+	}
+	.icard__badge--bad {
+		color: var(--red);
+		border-color: rgba(226, 120, 120, 0.5);
+	}
+	.icard__act--review {
+		color: var(--orange);
+		border-color: rgba(226, 164, 120, 0.5);
 	}
 </style>

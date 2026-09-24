@@ -14,6 +14,8 @@ export type NotificationsState = {
 	acts: api.NotificationRow[];
 	activity: api.NotificationRow[];
 	mine: api.NotificationRow[];
+	/** Settled asks for me (merged / declined) — the engine's `done` group. */
+	done: api.NotificationRow[];
 	counts: api.NotificationCounts;
 	rules: api.NotificationRule[];
 	loading: boolean;
@@ -28,6 +30,7 @@ let state = $state<NotificationsState>({
 	acts: [],
 	activity: [],
 	mine: [],
+	done: [],
 	counts: EMPTY_COUNTS,
 	rules: [],
 	loading: false,
@@ -64,6 +67,7 @@ export function refresh(status: 'open' | 'all' = 'open'): Promise<void> {
 			state.acts = list.acts ?? [];
 			state.activity = list.activity ?? [];
 			state.mine = list.mine ?? [];
+			state.done = list.done ?? [];
 			state.counts = list.counts ?? EMPTY_COUNTS;
 			if (prefs) state.rules = prefs.rules ?? [];
 			state.error = null;

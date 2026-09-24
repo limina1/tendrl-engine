@@ -58,6 +58,7 @@ export const BUFFER_KIND_META: BufferKindMeta[] = [
 	{ kind: 'repository', className: 'work', defaultLabel: 'repo' },
 	{ kind: 'annotations', className: 'work', defaultLabel: 'annotations' },
 	{ kind: 'notifications', className: 'work', defaultLabel: 'notifications' },
+	{ kind: 'review', className: 'work', defaultLabel: 'review' },
 	{ kind: 'search', className: 'research', defaultLabel: 'search', tour: 'search-tour-intro' }
 ];
 

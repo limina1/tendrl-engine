@@ -4446,6 +4446,8 @@ function _createAppState() {
 		onProfile?: (pubkey: string) => void;
 		onCompose?: () => void;
 		onDiscussion?: (event_id: string, kind: number) => void;
+		/** Open the merge-request review buffer (`review:<818 id>`). */
+		onMergeRequestReview?: (id: string) => void;
 		/** Open an arbitrary reader buffer by its id. Used when the id
 		 *  needs to carry a marker (`?focus_comment=`, `?highlight=`)
 		 *  that the structured handlers above can't express. */
@@ -4460,6 +4462,14 @@ function _createAppState() {
 		onHome?: () => void;
 	};
 	let navHandlers: NavigationHandlers | null = null;
+
+	/** The merge-request review — a work buffer per 818 (`review:<id>`);
+	 *  the page owns the buffer store, so it goes through the nav handlers
+	 *  like a publication does. */
+	function openMergeRequestReview(id: string) {
+		if (navHandlers?.onMergeRequestReview) navHandlers.onMergeRequestReview(id);
+		else pushToast('Open the workbench to review a merge request', 'info');
+	}
 
 	function setNavigationHandlers(h: NavigationHandlers | null) {
 		navHandlers = h;
@@ -5570,6 +5580,7 @@ function _createAppState() {
 		handleSearchViaRelays,
 		searchFor,
 		openSearchFor,
+		openMergeRequestReview,
 		get searchSeed() { return searchSeed; },
 		get searchLastQuery() { return searchLastQuery; },
 		pushHistoryEntry,

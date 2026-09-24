@@ -2689,9 +2689,12 @@ export interface LoadedInsertion {
 	 *  notes (`t: annotation-request`), a bundle (a kind-30040 kasten), or a
 	 *  definition (`t: definition` — one event per term, the answer to a
 	 *  vocabulary request). Derived engine-side. */
-	role: 'note' | 'request' | 'bundle' | 'definition';
+	role: 'note' | 'request' | 'bundle' | 'definition' | 'ask';
 	/** The request coordinate this note answers (`request` tag), when any. */
 	request?: string;
+	/** `role: 'ask'` — a kind-818 merge request whose target is this root
+	 *  or one of its sections; `anchor` is the target. */
+	merge_request?: { id: string; status: MergeStatus; content: string; pubkey: string };
 	/** A bundle's children (its `a` coordinates, in order) — a kind-30040
 	 *  insertion is a whole kasten attached to the publication. */
 	children?: string[];
@@ -3096,6 +3099,79 @@ export interface MergeRequest {
 	event: NostrEvent;
 }
 
+/** One line of a section diff: context, a removed line, or an added one. */
+export interface DiffHunk {
+	kind: 'context' | 'removed' | 'added';
+	line: string;
+	n_before?: number;
+	n_after?: number;
+}
+
+export interface MergeRequestDiffSection {
+	/** The owner's section (base) and the requester's derivative. */
+	original: string;
+	derivative: string;
+	title: string;
+	format?: string;
+	/** Hunks, each a run of lines. */
+	hunks: DiffHunk[][];
+	tags_added: string[][];
+	tags_removed: string[][];
+	/** The owner's NEXT version of this section (same `d`) — what merge signs. */
+	next: UnsignedTemplate;
+}
+
+export interface MergeRequestIndexDiff {
+	added: { coordinate: string; slot: number }[];
+	removed: string[];
+	moved: { coordinate: string; from: number; to: number }[];
+	unchanged: string[];
+	replaced: { original: string; derivative: string }[];
+}
+
+/** `GET /api/v1/merge-requests/:id/diff` — the engine pairs the source with
+ *  the base and computes the owner's next versions; the review renders it. */
+export interface MergeRequestDiff {
+	merge_request: MergeRequest;
+	status: MergeStatus;
+	role: 'owner' | 'requester' | 'both';
+	base: { coordinate: string; base_id?: string | null; current_id?: string | null; moved_on: boolean };
+	source: { coordinate: string; id: string };
+	sections: MergeRequestDiffSection[];
+	index: { diff: MergeRequestIndexDiff; next: UnsignedTemplate } | null;
+	definitions: { coordinate: string; term: string; promoted_in_source: boolean }[];
+	note?: string;
+}
+
+export function getMergeRequestDiff(id: string) {
+	return fetchJson<MergeRequestDiff>(`/api/v1/merge-requests/${encodeURIComponent(id)}/diff`);
+}
+
+export interface MergeRequestMergeResponse extends Partial<PublishResponse> {
+	merged: boolean;
+	sections: { coordinate: string; event: NostrEvent }[];
+	index?: NostrEvent | null;
+	reaction: NostrEvent;
+	status: MergeStatus;
+}
+
+/** Merge = sign the owner's next versions (same `d`), react `+` on the 818,
+ *  optionally broadcast. Owner only. */
+export function mergeMergeRequest(id: string, body: { broadcast?: boolean } = {}) {
+	return fetchJson<MergeRequestMergeResponse>(`/api/v1/merge-requests/${encodeURIComponent(id)}/merge`, {
+		method: 'POST',
+		body: JSON.stringify(body)
+	});
+}
+
+/** Decline = react `-` on the 818 with an optional reason. Owner only. */
+export function declineMergeRequest(id: string, body: { reason?: string; broadcast?: boolean } = {}) {
+	return fetchJson<{ status: MergeStatus; reaction: NostrEvent } & Partial<PublishResponse>>(
+		`/api/v1/merge-requests/${encodeURIComponent(id)}/decline`,
+		{ method: 'POST', body: JSON.stringify(body) }
+	);
+}
+
 export interface MergeRequestList {
 	pubkey: string;
 	open: number;
@@ -3305,6 +3381,8 @@ export interface NotificationsResponse {
 	activity: NotificationRow[];
 	/** My own asks (the 818s I sent) with their verdicts. */
 	mine: NotificationRow[];
+	/** Asks for me that are settled (merged / declined) — only with `status=open`. */
+	done?: NotificationRow[];
 	counts: NotificationCounts;
 }
 

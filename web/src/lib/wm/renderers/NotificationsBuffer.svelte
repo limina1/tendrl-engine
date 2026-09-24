@@ -51,13 +51,20 @@
 	const askGroups = $derived(byRoot(st.acts));
 	const activityGroups = $derived(byRoot(st.activity));
 	const mineGroups = $derived(byRoot(st.mine));
+	const doneGroups = $derived(byRoot(st.done ?? []));
+	const isMergeRequest = (r: NotificationRow) => r.key === '818' || r.key === 'mine-818' || r.kind === 818;
+	function review(r: NotificationRow) {
+		app.openMergeRequestReview(r.id);
+	}
 	const activityOn = $derived(st.rules.some((r) => !r.fixed && r.on));
 
 	function badge(r: NotificationRow): { text: string; cls: string } {
 		const done = r.status && r.status !== 'open';
 		switch (r.key) {
 			case '818':
-				return { text: `${done ? '✓' : '?'} merge request${done ? ' · ' + r.status : ''}`, cls: 'ask' };
+				return done
+					? { text: `${r.status === 'declined' ? '−' : '✓'} merge request · ${r.status}`, cls: r.status === 'declined' ? 'bad' : 'ok' }
+					: { text: '? merge request', cls: 'ask' };
 			case 'request-on-mine':
 				return { text: `${done ? '✓' : '?'} annotation request${done ? ' · ' + r.status : ''}`, cls: 'ask' };
 			case '7-on-my-818':
@@ -168,11 +175,17 @@
 				<div class="grp grp--sub">{g.label}</div>
 				{#each g.rows as r (r.id)}
 					{@const b = badge(r)}
-					<div class="acard ask" data-id={r.id} style={au(r.pubkey)} role="listitem">
-						<button type="button" class="acard__body" onclick={() => open(r)} title="Open the target">
+					<div class="acard ask" data-id={r.id} data-key={r.key} style={au(r.pubkey)} role="listitem">
+						<button type="button" class="acard__body" onclick={() => (isMergeRequest(r) ? review(r) : open(r))} title={isMergeRequest(r) ? 'Review the diff' : 'Open the target'}>
 							<span class="acard__t"><span class="badge {b.cls}">{b.text}</span>{r.summary}</span>
 							<span class="acard__by"><span class="acard__dot"></span>{authorFallback(r.pubkey)} · {relTime(r.created_at)}</span>
 						</button>
+						{#if isMergeRequest(r)}
+							<div class="acard__acts">
+								<button type="button" class="acard__go" onclick={() => review(r)}>review the diff ▸</button>
+								<button type="button" class="acard__mini" onclick={() => open(r)}>open target</button>
+							</div>
+						{/if}
 					</div>
 				{/each}
 			{/each}
@@ -201,6 +214,22 @@
 			{/each}
 		{/if}
 
+		{#if (st.done ?? []).length}
+			<div class="grp">done <span class="grp__n">{(st.done ?? []).length}</span><span class="grp__hint">— asks you settled</span></div>
+			{#each doneGroups as g (g.key)}
+				<div class="grp grp--sub">{g.label}</div>
+				{#each g.rows as r (r.id)}
+					{@const b = badge(r)}
+					<div class="acard" data-id={r.id} data-key={r.key} style={au(r.pubkey)} role="listitem">
+						<button type="button" class="acard__body" onclick={() => (isMergeRequest(r) ? review(r) : open(r))} title={isMergeRequest(r) ? 'Open the review' : 'Open the target'}>
+							<span class="acard__t"><span class="badge {b.cls}">{b.text}</span>{r.summary}</span>
+							<span class="acard__by"><span class="acard__dot"></span>{authorFallback(r.pubkey)} · {relTime(r.created_at)}</span>
+						</button>
+					</div>
+				{/each}
+			{/each}
+		{/if}
+
 		<div class="grp">mine <span class="grp__n">{st.mine.length}</span><span class="grp__hint">— merge requests you sent</span></div>
 		{#if !st.mine.length}
 			<div class="alist__empty">you have sent no merge requests</div>
@@ -209,8 +238,8 @@
 				<div class="grp grp--sub">{g.label}</div>
 				{#each g.rows as r (r.id)}
 					{@const b = mineBadge(r)}
-					<div class="acard" class:ask={b.cls === 'ask'} data-id={r.id} style={au(r.pubkey)} role="listitem">
-						<button type="button" class="acard__body" onclick={() => open(r)} title="Open the target">
+					<div class="acard" class:ask={b.cls === 'ask'} data-id={r.id} data-key={r.key} style={au(r.pubkey)} role="listitem">
+						<button type="button" class="acard__body" onclick={() => review(r)} title="Open the review (read-only — you sent this)">
 							<span class="acard__t"><span class="badge {b.cls}">{b.text}</span>{r.summary || r.event?.content || 'merge request'}</span>
 							<span class="acard__by"><span class="acard__dot"></span>{relTime(r.created_at)}</span>
 						</button>
@@ -367,6 +396,35 @@
 		gap: 5px;
 		font: var(--t-3xs) / 1.2 var(--font-mono);
 		color: var(--base5);
+	}
+	.acard__acts {
+		display: flex;
+		gap: var(--s-2);
+		align-items: center;
+		padding: 0 var(--s-3) var(--s-2);
+	}
+	.acard__go {
+		font: var(--t-3xs) / 1.2 var(--font-mono);
+		min-height: 24px;
+		padding: 2px var(--s-2);
+		border: 1px solid rgba(226, 164, 120, 0.5);
+		border-radius: 3px;
+		background: transparent;
+		color: var(--orange);
+		cursor: pointer;
+	}
+	.acard__go:hover {
+		background: rgba(226, 164, 120, 0.12);
+	}
+	.acard__mini {
+		font: var(--t-3xs) / 1.2 var(--font-mono);
+		min-height: 24px;
+		padding: 2px var(--s-2);
+		border: 1px solid var(--panel-border);
+		border-radius: 3px;
+		background: transparent;
+		color: var(--base6);
+		cursor: pointer;
 	}
 	.acard__dot {
 		width: 7px;
