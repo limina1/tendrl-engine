@@ -2480,6 +2480,25 @@ curl -s -X POST $B/insertions/glossary -H "$J" -d "{\"root\":\"$ROOT\",\"remove\
 curl -s -X POST $B/insertions/glossary/preview -H "$J" -d "{\"root\":\"$ROOT\",\"add\":[\"$S1\"]}" | jq -r .error
 #+end_src
 
+* Merge requests (plan Phase 5c step 4, pure + routing; branch =feat/merge-requests=)
+
+Kind-818 merge requests on publications (=src/publication/merge_request.rs=:
+template · parse · status from the owner's newest kind-7 · =fork_section= ·
+=destination_set=) and the two read endpoints (=src/api/merge_requests.rs=).
+Publishing a derivative + 818 and the owner's merge / decline come with the
+relink work; nothing here signs.
+
+#+begin_src bash
+cargo test --lib -- --test-threads=4 merge_request      # 6: round-trip, 30818 fidelity, status newest-wins, fork_section, destination set, the list + destinations handlers
+B=localhost:3131/api/v1; J='Content-Type: application/json'
+# where an ask to the owner of $ROOT goes — inbox (their kind-10002 read relays) ∪ found-on (nostrdb provenance) ∪ hints ∪ my write relays, each with reasons
+curl -s -X POST $B/merge-requests/destinations -H "$J" -d "{\"target\":\"$ROOT\",\"policy\":\"local_only\"}" | jq -c '{deliverable, inbox_known, provenance_known, note, d:[.destinations[]|[.url, (.reasons|join("+"))]]}'
+# NOTE: an event ingested through POST /ingest carries no provenance — only a relay fetch or a broadcast (record_event_relay) does — so a
+# seeded scratch publication reports provenance_known: false; policy local_first would pull the owner's 10002 through the indexer composition (Confirm-gated).
+# the local 818s that concern me (owner: p = me or target mine · requester: authored by me), status from the owner's newest + / -
+curl -s "$B/merge-requests?role=all&status=all" | jq -c '.requests[]|{id:(.id|.[0:8]), role, status, target, source:(.source|.[0:8]?)}'
+#+end_src
+
 * Kasten bundle delivery (answer a request whose output is kasten)
 
 One insertion for the whole kasten: the root 30040, anchored to the
