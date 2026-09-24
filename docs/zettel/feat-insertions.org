@@ -134,9 +134,9 @@ histograms computed before the author filter, requests excluded) — the
 engine still owns which notes belong to the root and who wrote them; the
 web only arranges them.
 
-* Next: vocabulary requests, definitions, merge requests (Phase 5c)
+* Vocabulary requests, definitions, relink, merge requests (Phase 5c — built 2026-09-24)
 
-Approved 2026-09-24 ([[file:idea-vocabulary-requests.org][idea]], [[file:../vocabulary-workflow.org][design]]):
+Built ([[file:idea-vocabulary-requests.org][idea]], [[file:../vocabulary-workflow.org][design]]):
 a third =output: vocabulary= whose answers are *definition* insertions
 (=t: definition=, one 30041 per term, opaque =d=), relinked into the
 text as ={{ref:<coord>|term}}= (engine-side =link_terms=), promoted per

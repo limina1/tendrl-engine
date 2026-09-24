@@ -1,6 +1,6 @@
 #+TITLE: Notifications — what is for you, chosen by kind, never pushed
 #+TYPE: feature
-#+STATUS: plan (approved 2026-09-24; building as plan Phase 5c)
+#+STATUS: implemented 2026-09-24 (plan Phase 5c step 5; live API 7/7 + GUI 7/7; review API 14/14 + GUI 11/11)
 #+DATE: 2026-09-24
 
 Not a social stream. tendrl lists *events of a kind that wants
@@ -18,6 +18,21 @@ kinds you chose to hear about. Two surfaces, kept apart:
   opens the list: *asks* first (the fixed rows, which always show and
   need an act), then *activity* (the kinds you chose), then *mine* (the
   verdicts on merge requests you sent).
+
+* What exists
+
+=src/notifications.rs= (the =RULES= table, =addressed_to_me=, =Prefs= in
+=<data_dir>/notifications.json=, =filters_for=), =src/api/notifications.rs=
+(=GET /api/v1/notifications?status=open|all= → =acts · activity · mine ·
+done · counts=; =GET/PUT /notifications/prefs=; =POST /notifications/fetch=,
+Confirm-gated, on my read relays ∪ my provenance). Web: the 🔔 pill on the
+desktop modeline and the ☰ drawer row (=web/src/lib/notifications.svelte.ts=,
+refreshed from the store stream), the =notifications= work buffer
+(=SPC b o n=; asks · activity · mine · done, cards coloured per author, asks
+in the ask colour), Settings › Notifications (checkable kinds, count | list).
+An 818 row opens the *review* buffer (=review:<id>=,
+[[file:decision-merge-requests-818.org][decision]]); the same 818 is an ask
+card under its target in the reader (=role: ask= in the load pass).
 
 * The rule is the engine's, per kind
 

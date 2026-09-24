@@ -45,6 +45,19 @@ and 818 exists to fold it back. A 30041 has an opaque =d=; two versions
 by two people are two events, and an 818 between them says exactly
 which one the owner is asked to take.
 
+* Built (2026-09-24)
+
+=src/publication/merge_request.rs= (818 template/parse, status from the
+newest kind-7 by the owner, =fork_section=, =derivative_index=,
+=destination_set=, =line_diff= / =index_diff=), =src/api/merge_requests.rs=
+(=GET /merge-requests=, =POST /merge-requests/destinations=, =/react=,
+=GET /:id/diff= — the owner's *next versions* computed against their current
+version — =POST /:id/merge=, =/:id/decline=, =GET /:id/review=). A foreign
+relink (=POST /publication/relink=) signs the derivative sections and index
+and the 818 (source = index′). Web: the relink modal's fork path (the 818
+preview, destination chips with reasons, the armed send) and the review
+buffer (diff, event preview, decline − / merge + armed, verdict badges).
+
 * Consequences
 
 - The review is engine work: pair source with base (the 818's =e=, else

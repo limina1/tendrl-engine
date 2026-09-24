@@ -520,8 +520,11 @@ Design approved 2026-09-24 in [[file:vocabulary-workflow.org][vocabulary-workflo
 [[file:zettel/idea-vocabulary-requests.org][idea-vocabulary-requests]],
 [[file:zettel/decision-merge-requests-818.org][decision-merge-requests-818]],
 [[file:zettel/feat-notifications.org][feat-notifications]],
-[[file:zettel/decision-asks-routing.org][decision-asks-routing]]. Built in
-order on branches off =feat/annotations-table=; each step is shippable alone.
+[[file:zettel/decision-asks-routing.org][decision-asks-routing]]. Built 2026-09-24 in
+order on a chain of branches (=feat/vocab-request= → =feat/vocab-definitions= →
+=feat/vocab-relink= (+ =feat/merge-requests=) → =feat/notifications=), each
+live-verified with the =scripts/verify/= harnesses listed in =docs/commands.org=;
+the chain merges back onto =feat/annotations-table=.
 
 *Step 1 — the ask* (=feat/vocab-request=, built 2026-09-24: engine =4a75507=, web =a21ec5e=, harness =scripts/verify/vocab-request.mjs= 15/15 live)
 - [X] =requests.rs=: =output: vocabulary= + =terms: Vec<String>= on the record
@@ -603,12 +606,12 @@ order on branches off =feat/annotations-table=; each step is shippable alone.
       =MergeRequestReview= on the diff-gate primitive: decline − · open
       merged result in composer · merge + (armed)
 
-*Step 6 — the agent* (=feat/vocab-agent=)
-- [ ] tools: =list_asks= · =get_ask_diff= · =review_ask= (a structured
+*Step 6 — the agent* (on =feat/notifications= =3fc4a6c=, 2026-09-24)
+- [X] tools: =list_asks= · =get_ask_diff= · =review_ask= (a structured
       RESULT kept as a local record — not an event) · =prepare_merge=
       (the owner's next version as an unsigned draft) · =fetch_asks=
       (Network); no =merge_ask= / =decline_ask=
-- [ ] =/tendrl-requests= skill: vocabulary branch; merge-request branch
+- [X] =/tendrl-requests= skill: vocabulary branch; merge-request branch
       (=get_ask_diff= → =review_ask=; =prepare_merge= only when asked);
       verdicts reported; ends with what still needs the user's key
 

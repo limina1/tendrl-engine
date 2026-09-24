@@ -40,14 +40,19 @@ put the ask where the owner never looks. Provenance is the second
 source because a 10002 may be missing or stale, while the relay that
 served the event to you is one the owner demonstrably published to.
 
-* What exists, what is missing
+* What exists (built 2026-09-24)
 
 Exists: 10002 parsing into read/write (=user_data.rs=), the own-10002
 pull through the indexer composition, per-event provenance
 (=record_event_relay= / =note.relays()=), and =union_relays= folding a
 NIP-34 repository's relays into a broadcast set for issue comments.
-Missing: =engine.inbox_relays_for(pubkey)= and
-=destination_set(target_coord, owner) -> Vec<(url, reason)>=.
+Added: =Engine::inbox_relays_for(pubkey, policy, mode_confirm)= (newest local
+10002, else one Confirm-gated indexer pull), =Engine::provenance_for=,
+=merge_request::destination_set= / =is_deliverable=, and
+=POST /api/v1/merge-requests/destinations= (each relay with its reasons;
+=deliverable= / =inbox_known= / =provenance_known= / =note=). A preview never
+pulls a 10002 silently: the modal's "fetch their kind 10002 ▸" is the
+Confirm-gated call.
 
 * Related
 - [[file:index.org][Index]]
