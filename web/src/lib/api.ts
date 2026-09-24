@@ -2685,14 +2685,23 @@ export interface LoadedInsertion {
 	event: NostrEvent;
 	coordinate: string;
 	anchor: InsertionAnchor;
-	/** What the 30041 is: a note, or a signed annotation request asking
-	 *  for notes (`t: annotation-request`). Derived engine-side. */
-	role: 'note' | 'request' | 'bundle';
+	/** What the 30041 is: a note, a signed annotation request asking for
+	 *  notes (`t: annotation-request`), a bundle (a kind-30040 kasten), or a
+	 *  definition (`t: definition` — one event per term, the answer to a
+	 *  vocabulary request). Derived engine-side. */
+	role: 'note' | 'request' | 'bundle' | 'definition';
 	/** The request coordinate this note answers (`request` tag), when any. */
 	request?: string;
 	/** A bundle's children (its `a` coordinates, in order) — a kind-30040
 	 *  insertion is a whole kasten attached to the publication. */
 	children?: string[];
+	/** Definitions: the term as written (the `title`). */
+	term?: string;
+	/** Definitions: listed by the user's glossary bundle for this root. */
+	promoted?: boolean;
+	/** Definitions: the glossary bundle coordinate (`30040:pk:d`) that
+	 *  lists it, when `promoted`. */
+	glossary?: string;
 }
 
 /** Histograms over the whole root, computed engine-side BEFORE the author
@@ -2760,6 +2769,9 @@ export interface InsertionRequest {
 	tags?: string[][];
 	/** Coordinate of the annotation request (30041:pk:d) this note answers. */
 	request?: string;
+	/** `definition` stamps `t: definition` (+ `T` from the title): one
+	 *  event per term, the answer to a vocabulary request. */
+	role?: 'note' | 'definition';
 	sign_as?: 'user' | 'assistant';
 	broadcast?: boolean;
 	relays?: string[];
@@ -2841,6 +2853,70 @@ export interface ForkPublishResponse extends PublishResponse {
  *  new version; anyone else's → derivative). The insertion is untouched. */
 export function forkPublication(req: ForkRequest) {
 	return fetchJson<ForkPublishResponse>('/api/v1/publication/fork', {
+		method: 'POST',
+		body: JSON.stringify(req)
+	});
+}
+
+// --- Glossary: per-event promotion of definitions -------------------------
+// A definition is promoted one event at a time into the user's *glossary
+// bundle* for the root — a kind-30040 in the appendix slot whose `a` tags
+// are the promoted definitions. Adding or removing a coordinate republishes
+// the bundle (same d) and, when the index is the user's own, the index with
+// `a → glossary` present exactly while the bundle is non-empty. The
+// definition events themselves are untouched. Engine-owned end to end.
+
+export interface UnsignedTemplate {
+	kind: number;
+	created_at: number;
+	tags: string[][];
+	content: string;
+	pubkey?: string;
+}
+
+export interface GlossaryRequest {
+	/** The publication: `30040:pubkey:d`. */
+	root: string;
+	/** Definition coordinates (`30041:pk:d`) to list in the glossary. */
+	add?: string[];
+	/** Definition coordinates to drop from it. */
+	remove?: string[];
+	sign_as?: 'user' | 'assistant';
+	broadcast?: boolean;
+	relays?: string[];
+}
+
+export interface GlossaryPreview {
+	/** The unsigned glossary bundle the publish would sign. */
+	glossary: UnsignedTemplate;
+	/** The unsigned new version of the index, or `null` when the index is
+	 *  not the signer's (the glossary then exists only under their key). */
+	index: UnsignedTemplate | null;
+	/** Definition coordinates the glossary lists after this change. */
+	promoted: string[];
+	note?: string;
+}
+
+export interface GlossaryPublishResponse extends PublishResponse {
+	glossary: NostrEvent;
+	/** The republished index, when it was the signer's own. */
+	index?: NostrEvent | null;
+	promoted: string[];
+	signed_as: 'user' | 'assistant';
+}
+
+/** Either promotion outcome the reader may need to react to. */
+export type PromotionResponse = ForkPublishResponse | GlossaryPublishResponse;
+
+export function previewGlossary(req: GlossaryRequest) {
+	return fetchJson<GlossaryPreview>('/api/v1/insertions/glossary/preview', {
+		method: 'POST',
+		body: JSON.stringify(req)
+	});
+}
+
+export function publishGlossary(req: GlossaryRequest) {
+	return fetchJson<GlossaryPublishResponse>('/api/v1/insertions/glossary', {
 		method: 'POST',
 		body: JSON.stringify(req)
 	});

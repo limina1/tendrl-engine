@@ -23,13 +23,15 @@
 		/** The notes written for this request: they fold with the card. */
 		answers?: api.LoadedInsertion[];
 		onopen?: ((ins: api.LoadedInsertion) => void) | undefined;
-		onpromoted?: ((resp: api.ForkPublishResponse) => void) | undefined;
+		onpromoted?: ((resp: api.PromotionResponse) => void) | undefined;
 	} = $props();
 
 	const app = getAppState();
 	const r = $derived(request);
 	const notes = $derived(answers ?? []);
 	const answered = $derived(r.status === 'answered');
+	/** The definition events written for a vocabulary request, by term. */
+	const definitions = $derived(notes.filter((n) => n.role === 'definition'));
 	/** A local record (`rq_…`) can be deleted or reopened; a request read
 	 *  off its signed event alone (`ev_…`) has no record to change. */
 	const isRecord = $derived(r.id.startsWith('rq_'));
@@ -153,6 +155,13 @@
 				<div class="rcard__line"><span class="rcard__k">scope</span> {r.scope.join(' · ')} · {r.output}</div>
 				{#if r.output === 'vocabulary'}
 					<div class="rcard__line"><span class="rcard__k">terms</span> {r.terms?.length ? r.terms.join(', ') : 'find them'}</div>
+					{#if definitions.length > 0}
+						<div class="rcard__line rcard__defs"><span class="rcard__k">defined</span>
+							{#each definitions as d (d.coordinate)}
+								<button class="rcard__mini rcard__mini--def" onclick={() => openCoordinate(d.coordinate)} title={d.coordinate}>{d.term ?? d.event.tags.find((t) => t[0] === 'title')?.[1] ?? d.coordinate.split(':').slice(2).join(':')}{d.promoted ? ' · in glossary' : ''}</button>
+							{/each}
+						</div>
+					{/if}
 				{/if}
 			{/if}
 			{#if r.style}
@@ -354,6 +363,16 @@
 		border-radius: 3px;
 		padding: 0 6px;
 		white-space: nowrap;
+	}
+	.rcard__defs {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 4px;
+		align-items: center;
+	}
+	.rcard__mini--def {
+		color: var(--green);
+		border-color: color-mix(in srgb, var(--green) 50%, transparent);
 	}
 	.rcard__answers {
 		display: flex;

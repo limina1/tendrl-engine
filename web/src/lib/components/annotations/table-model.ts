@@ -49,6 +49,11 @@ export interface Section {
 export interface TableCard {
 	id: string;
 	kind: 'note' | 'request';
+	/** Notes: what the 30041 is — a definition (one event per term) is a
+	 *  note for counting and colour, with a "def" badge. */
+	role?: 'note' | 'definition' | 'bundle';
+	/** Definitions: the term as written. */
+	term?: string;
 	/** Hex pubkey of the signer; `''` for an unsigned local request. */
 	author: string;
 	/** Parent coordinate (section or root) the card anchors to. */
@@ -177,6 +182,8 @@ export function buildCards(
 		out.push({
 			id: ins.coordinate,
 			kind: 'note',
+			role: ins.role === 'definition' || ins.role === 'bundle' ? ins.role : 'note',
+			term: ins.term,
 			author: ev.pubkey,
 			parent: ins.anchor.parent,
 			placement: ins.anchor.placement,

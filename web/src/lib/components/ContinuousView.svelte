@@ -65,7 +65,7 @@
 		/** Insertions anchored to the index itself: front matter / appendix. */
 		rootInsertions?: { before: api.LoadedInsertion[]; after: api.LoadedInsertion[] } | null;
 		onopeninsertion?: ((ins: api.LoadedInsertion) => void) | undefined;
-		oninsertionpromoted?: ((resp: api.ForkPublishResponse) => void) | undefined;
+		oninsertionpromoted?: ((resp: api.PromotionResponse) => void) | undefined;
 		/** Lookup: section addr → annotation requests asked on it (the question
 		 *  sitting where the answer lands). Null = none. */
 		requestsFor?: ((addr: { kind: number; pubkey: string; d_tag: string }) => api.AnnotationRequest[]) | null;
