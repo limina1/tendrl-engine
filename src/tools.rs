@@ -642,6 +642,7 @@ fn schema_propose_insertion() -> Value {
             "context": { "type": "string", "description": "Optional excerpt of the parent this note responds to." },
             "replace": { "type": "string", "description": "Coordinate (30041:pk:d) of YOUR earlier note to replace — the new event reuses its d-tag, so it is a new version, not a second note." },
             "request": { "type": "string", "description": "The `coordinate` of the annotation request this note answers (30041:pk:d, from list_requests). Pass it on every note written for a request — it is what marks the request answered and lets the reader thread the note under it." },
+            "reply_to": { "type": "string", "description": "A note in reply to another annotation (its coordinate, 30041:pk:d or a 30040 bundle, from list_insertions): the note anchors to the same place and carries a NIP-18 `q` tag naming what it answers, so the reader threads it under that annotation. Not for answering a request — use `request` for that." },
             "role": { "type": "string", "enum": ["note", "definition"], "description": "note (default), or definition: ONE term's entry — `title` = the term exactly as written in the text, `content` = everything about it as used there (the sense here first, then the background a reader needs, then where the word comes from). Tagged `t: definition`; the reader shows it as a definition card and can promote it, per event, into the publication's glossary. For a vocabulary request write one propose_insertion per term with role: definition." },
             "style": { "type": "string", "description": "Coordinate of the style event (30078:pk:d) this note follows — copy it from the request's `style`. Stamped as a `style` tag so everything written in that style is one search." },
             "links": { "type": "array", "items": { "type": "string" }, "description": "Web URLs the note cites, one `r` tag each — the note's outbound links live in its tags, so a tag-walking reader lists them without parsing the prose." },
@@ -1517,6 +1518,7 @@ async fn propose_insertion(cx: &ToolCx, input: Value) -> Result<Value> {
         replace: input.get("replace").and_then(Value::as_str).map(String::from),
         request: input.get("request").and_then(Value::as_str).map(String::from),
         role: input.get("role").and_then(Value::as_str).map(String::from),
+        reply_to: input.get("reply_to").and_then(Value::as_str).map(String::from),
     };
     let (mut template, resolved) =
         crate::api::insertions::insertion_template(&cx.engine, &anchor, &body).await?;
@@ -1539,6 +1541,7 @@ async fn propose_insertion(cx: &ToolCx, input: Value) -> Result<Value> {
         "anchor": resolved,
         "role": body.role.as_deref().unwrap_or("note"),
         "request": body.request,
+        "reply_to": body.reply_to,
         "ingested": v["ingested"],
         "note": "Attached and stored locally — not in the index. `publish` broadcasts it; promote_insertion (or the reader's promote) folds it into the structure.",
     }))

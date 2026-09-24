@@ -10080,6 +10080,82 @@ mod chat_api_tests {
             index_children(&new_index),
             vec![first.clone(), ins_coord.clone(), children[1].clone()]
         );
+
+        // A note in reply (the ledger's "note in reply ▸"): `reply_to` names
+        // the note it answers → a NIP-18 `q` tag; the load pass resolves it
+        // back to `reply_to`, and `replies: true` counts kind-1111 comments
+        // threaded under each annotation.
+        let reply = crate::tools::dispatch(
+            &cx,
+            "propose_insertion",
+            json!({ "root": root, "parent": first, "title": "Re: A modern reading",
+                    "content": "The point stands, but it is about the domain.",
+                    "reply_to": ins_coord }),
+        )
+        .await
+        .unwrap();
+        assert_eq!(reply["reply_to"], ins_coord);
+        let reply_ev = crate::query::query_by_id(engine.ndb(), reply["id"].as_str().unwrap())
+            .unwrap()
+            .unwrap();
+        let rtags = crate::publication::insertion::event_tags(&reply_ev);
+        let q = rtags.iter().find(|t| t[0] == "q").expect("a q tag");
+        assert_eq!(q[1], ins_coord);
+        assert_eq!(q[3], asst_pk, "the q row carries the replied note's pubkey");
+        // A reply_to outside this publication is refused before signing.
+        let foreign = crate::tools::dispatch(
+            &cx,
+            "propose_insertion",
+            json!({ "root": root, "parent": first, "title": "x", "content": "y",
+                    "reply_to": format!("30041:{asst_pk}:not-here") }),
+        )
+        .await;
+        assert!(foreign.is_err(), "a reply must stay inside the publication it answers");
+        let reply_coord = reply["coordinate"].as_str().unwrap().to_string();
+        // One kind-1111 comment threaded under the original note.
+        let comment = crate::tools::dispatch(
+            &cx,
+            "list_insertions",
+            json!({ "root": root, "policy": "local_only" }),
+        )
+        .await
+        .unwrap();
+        assert_eq!(comment["count"], 2);
+        let signed_comment = {
+            use crate::signing::Signer as _;
+            let t = crate::signing::EventTemplate {
+                kind: 1111,
+                content: "agreed".into(),
+                tags: vec![
+                    vec!["A".into(), ins_coord.clone()],
+                    vec!["K".into(), "30041".into()],
+                    vec!["P".into(), asst_pk.clone()],
+                    vec!["a".into(), ins_coord.clone()],
+                    vec!["k".into(), "30041".into()],
+                    vec!["p".into(), asst_pk.clone()],
+                ],
+                created_at: super::unix_now_i64(),
+                pubkey: Some(user_pk.clone()),
+            };
+            crate::signing::InProcessSigner::new(user_pk.clone(), USER_SEC.to_string())
+                .sign(t)
+                .await
+                .unwrap()
+        };
+        engine.ingest_event(&signed_comment.to_string()).unwrap();
+        let loaded = insertions::load_insertions(
+            &engine,
+            serde_json::from_value(json!({ "root": root, "policy": "local_only", "replies": true })).unwrap(),
+        )
+        .await
+        .unwrap();
+        let reply_row = loaded.insertions.iter().find(|i| i.coordinate == reply_coord).expect("the reply row");
+        assert_eq!(reply_row.reply_to.as_deref(), Some(ins_coord.as_str()));
+        let orig_row = loaded.insertions.iter().find(|i| i.coordinate == ins_coord).unwrap();
+        assert_eq!(orig_row.reply_to, None);
+        let replies = loaded.replies.as_ref().expect("replies requested");
+        assert_eq!(replies.get(&ins_coord), Some(&1));
+        assert_eq!(replies.get(&reply_coord), None);
     }
 
     /// Definitions and the glossary (plan Phase 5c step 2): the assistant

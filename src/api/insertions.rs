@@ -63,6 +63,10 @@ pub struct InsertionBody {
     /// entry (`title` = the term), tagged `t: definition`, the answer shape
     /// of a vocabulary request.
     pub role: Option<String>,
+    /// A note in reply: the coordinate of another annotation of the same
+    /// root (a 30041 note / definition / request, or a 30040 bundle) this
+    /// note answers — a NIP-18 `["q", <coordinate>, <relay>, <pubkey>]` tag.
+    pub reply_to: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -152,6 +156,9 @@ pub(crate) async fn insertion_template(
         extra.push(vec!["context".to_string(), ctx.to_string()]);
     }
     if let Some(t) = request_tag(body.request.as_deref())? {
+        extra.push(t);
+    }
+    if let Some(t) = reply_tag(engine, &resolved.root, body.reply_to.as_deref()).await? {
         extra.push(t);
     }
     match body.role.as_deref().map(str::trim).filter(|r| !r.is_empty()) {
@@ -302,6 +309,42 @@ pub(crate) fn request_tag(request: Option<&str>) -> Result<Option<Vec<String>>, 
             "request must be the 30041 coordinate of a signed annotation request, got `{req}`"
         ))),
     }
+}
+
+/// The NIP-18 `["q", <coordinate>, <relay hint>, <pubkey>]` row for a note
+/// in reply to another annotation, validated: the coordinate must name a
+/// 30041 or 30040 held locally whose anchor root is this note's root.
+pub(crate) async fn reply_tag(
+    engine: &AppState,
+    root: &str,
+    reply_to: Option<&str>,
+) -> Result<Option<Vec<String>>, EngineError> {
+    let Some(coord) = reply_to.map(str::trim).filter(|r| !r.is_empty()) else {
+        return Ok(None);
+    };
+    let Some((kind, pk, d)) = coord_parts(coord) else {
+        return Err(EngineError::BadRequest(format!(
+            "reply_to must be the coordinate of an annotation on this publication, got `{coord}`"
+        )));
+    };
+    if !(kind == 30041 || kind == 30040) || d.is_empty() {
+        return Err(EngineError::BadRequest(format!(
+            "reply_to must name a 30041 note or a 30040 bundle, got `{coord}`"
+        )));
+    }
+    let Some(target) = engine.get_addressable(kind as u64, pk, d, FetchPolicy::LocalOnly).await? else {
+        return Err(EngineError::BadRequest(format!(
+            "reply_to `{coord}` is not in the local store — load the publication's annotations first"
+        )));
+    };
+    let anchored_here = InsertionAnchor::from_event(&target).is_some_and(|a| a.root == root);
+    if !anchored_here {
+        return Err(EngineError::BadRequest(format!(
+            "reply_to `{coord}` is not an annotation of `{root}` — a reply stays inside the publication it answers"
+        )));
+    }
+    let relay_hint = super::discussion_relay_hint(engine);
+    Ok(Some(vec!["q".to_string(), coord.to_string(), relay_hint, pk.to_string()]))
 }
 
 // ---------------------------------------------------------------------------
@@ -507,6 +550,9 @@ pub struct InsertionsLoadRequest {
     /// root, and only then are `insertions` narrowed to `authors` — so the
     /// table's facets show what the filter hides.
     pub counts: bool,
+    /// Per-annotation kind-1111 reply counts (`replies` on the response):
+    /// one local `#A` query over every loaded coordinate.
+    pub replies: bool,
 }
 
 /// What a loaded 30041 is to the reader: a note, or a signed annotation
@@ -568,6 +614,10 @@ pub struct LoadedInsertion {
     /// A `role: ask` row's merge request.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub merge_request: Option<AskSummary>,
+    /// A note in reply: the coordinate of the annotation it answers (its
+    /// `q` tag), when that annotation is in this root's loaded set.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reply_to: Option<String>,
 }
 
 /// The kind-818s whose target is `root` or one of its sections, as
@@ -617,6 +667,7 @@ async fn load_asks(engine: &AppState, root: &str, ignored_pubkeys: &[String]) ->
             promoted: false,
             glossary: None,
             merge_request: Some(AskSummary { id: mr.id.clone(), status, content: mr.content.clone(), pubkey: mr.pubkey.clone(), source: mr.source.clone() }),
+            reply_to: None,
         });
     }
     Ok(out)
@@ -646,6 +697,11 @@ pub struct InsertionsLoadResponse {
     /// Present iff the request asked for `counts`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub counts: Option<InsertionCounts>,
+    /// Present iff the request asked for `replies`: coordinate → number of
+    /// kind-1111 comments threaded under that annotation (`A` = it). Only
+    /// coordinates with at least one reply appear.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub replies: Option<std::collections::HashMap<String, usize>>,
 }
 
 /// The search-DSL spelling of a load request.
@@ -913,6 +969,7 @@ pub(crate) async fn load_insertions(
                 promoted: false,
                 glossary: None,
                 merge_request: None,
+                reply_to: None,
             })
         })
         .collect();
@@ -922,6 +979,32 @@ pub(crate) async fn load_insertions(
     // Spec: clients SHOULD order same-position insertions by created_at.
     insertions.sort_by_key(|i| i.event.get("created_at").and_then(Value::as_i64).unwrap_or(0));
     mark_promoted(&mut insertions);
+    mark_replies(&mut insertions);
+
+    // Kind-1111 replies threaded under each annotation: one local query
+    // over every loaded coordinate (`A` = the annotation), never a relay.
+    let replies = if req.replies {
+        let coords: Vec<String> = insertions
+            .iter()
+            .filter(|i| i.role != InsertionRole::Ask)
+            .map(|i| i.coordinate.clone())
+            .collect();
+        let comments = if coords.is_empty() {
+            Vec::new()
+        } else {
+            engine
+                .get_events(
+                    vec![json!({ "kinds": [1111], "#A": coords, "limit": 2000 })],
+                    FetchPolicy::LocalOnly,
+                    None,
+                )
+                .await?
+                .events
+        };
+        Some(reply_counts(&insertions, &comments))
+    } else {
+        None
+    };
 
     if let Some(o) = op {
         o.complete(insertions.len());
@@ -950,7 +1033,64 @@ pub(crate) async fn load_insertions(
         refreshed_at: now,
         query: insertions_query_dsl(&root, &authors, req.since),
         counts,
+        replies,
     })
+}
+
+/// Resolve each note's `q` tag to `reply_to` when it names another
+/// annotation of the same loaded set (a 30041 or 30040 coordinate); any
+/// other `q` (a quoted event id, a coordinate elsewhere) is left alone.
+pub(crate) fn mark_replies(insertions: &mut [LoadedInsertion]) {
+    let coords: std::collections::HashSet<String> =
+        insertions.iter().map(|i| i.coordinate.clone()).collect();
+    for ins in insertions.iter_mut() {
+        if ins.role == InsertionRole::Ask {
+            continue;
+        }
+        ins.reply_to = event_tags(&ins.event)
+            .into_iter()
+            .filter(|t| t.first().map(String::as_str) == Some("q"))
+            .filter_map(|t| t.get(1).cloned())
+            .find(|v| coords.contains(v));
+    }
+}
+
+/// Count kind-1111 comments per annotation: a comment belongs to the
+/// annotation named by its `A` (root scope) tag. Pure; a comment naming
+/// several loaded coordinates counts once for each, one naming none of
+/// them counts nowhere. Only coordinates with a reply appear.
+pub(crate) fn reply_counts(
+    insertions: &[LoadedInsertion],
+    comments: &[Value],
+) -> std::collections::HashMap<String, usize> {
+    let coords: std::collections::HashSet<&str> =
+        insertions.iter().map(|i| i.coordinate.as_str()).collect();
+    let mut out: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+    let mut seen_ids: std::collections::HashSet<String> = std::collections::HashSet::new();
+    for c in comments {
+        if c.get("kind").and_then(Value::as_u64) != Some(1111) {
+            continue;
+        }
+        if let Some(id) = c.get("id").and_then(Value::as_str) {
+            if !seen_ids.insert(id.to_string()) {
+                continue;
+            }
+        }
+        let mut hit: std::collections::HashSet<String> = std::collections::HashSet::new();
+        for t in event_tags(c) {
+            if t.first().map(String::as_str) == Some("A") {
+                if let Some(v) = t.get(1) {
+                    if coords.contains(v.as_str()) {
+                        hit.insert(v.clone());
+                    }
+                }
+            }
+        }
+        for v in hit {
+            *out.entry(v).or_insert(0) += 1;
+        }
+    }
+    out
 }
 
 /// POST /api/v1/insertions/load
@@ -2037,7 +2177,51 @@ mod tests {
             promoted: false,
             glossary: None,
             merge_request: None,
+            reply_to: None,
         }
+    }
+
+    #[test]
+    fn reply_counts_by_root_scope_tag_dedup_by_id() {
+        let root = "30040:rr:book";
+        let pk = "a".repeat(64);
+        let rows = vec![
+            loaded("n1", &pk, root, "30041:rr:s1", InsertionRole::Note),
+            loaded("n2", &pk, root, "30041:rr:s1", InsertionRole::Note),
+        ];
+        let c1 = rows[0].coordinate.clone();
+        let c2 = rows[1].coordinate.clone();
+        let comments = vec![
+            json!({ "id": "c1", "kind": 1111, "tags": [["A", c1], ["a", c1], ["K", "30041"]] }),
+            json!({ "id": "c2", "kind": 1111, "tags": [["A", c1], ["a", "someparent"]] }),
+            json!({ "id": "c2", "kind": 1111, "tags": [["A", c1]] }), // a duplicate id counts once
+            json!({ "id": "c3", "kind": 1111, "tags": [["A", "30041:zz:elsewhere"]] }),
+            json!({ "id": "c4", "kind": 1, "tags": [["A", c2]] }), // not a comment
+        ];
+        let counts = reply_counts(&rows, &comments);
+        assert_eq!(counts.get(&c1), Some(&2));
+        assert_eq!(counts.get(&c2), None, "no replies → no entry");
+        assert_eq!(counts.len(), 1);
+    }
+
+    #[test]
+    fn mark_replies_resolves_q_to_loaded_annotations_only() {
+        let root = "30040:rr:book";
+        let pk = "a".repeat(64);
+        let mut rows = vec![
+            loaded("n1", &pk, root, "30041:rr:s1", InsertionRole::Note),
+            loaded("n2", &pk, root, "30041:rr:s1", InsertionRole::Note),
+            loaded("n3", &pk, root, "30041:rr:s1", InsertionRole::Note),
+        ];
+        let c1 = rows[0].coordinate.clone();
+        rows[1].event = json!({ "id": "n2", "pubkey": pk, "kind": 30041, "created_at": 1,
+            "tags": [["q", c1, "", pk]] });
+        rows[2].event = json!({ "id": "n3", "pubkey": pk, "kind": 30041, "created_at": 1,
+            "tags": [["q", "30041:zz:elsewhere"], ["q", "0".repeat(64)]] });
+        mark_replies(&mut rows);
+        assert_eq!(rows[0].reply_to, None);
+        assert_eq!(rows[1].reply_to.as_deref(), Some(c1.as_str()));
+        assert_eq!(rows[2].reply_to, None, "a q outside the loaded set is not a reply");
     }
 
     #[test]
