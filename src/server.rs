@@ -927,6 +927,18 @@ pub async fn start(opts: ServeOptions) -> anyhow::Result<RunningServer> {
             post(api::insertions::insertions_load_handler),
         )
         .route(
+            "/api/v1/notifications",
+            get(api::notifications::list_handler),
+        )
+        .route(
+            "/api/v1/notifications/prefs",
+            get(api::notifications::prefs_get_handler).put(api::notifications::prefs_put_handler),
+        )
+        .route(
+            "/api/v1/notifications/fetch",
+            post(api::notifications::fetch_handler),
+        )
+        .route(
             "/api/v1/insertions/glossary",
             post(api::insertions::glossary_publish_handler),
         )

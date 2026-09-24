@@ -320,6 +320,7 @@ fn git_branch() -> Option<String> {
 
 use crate::nip19;
 pub mod insertions;
+pub mod notifications;
 pub mod requests;
 pub mod styles;
 
@@ -10615,5 +10616,96 @@ mod chat_api_tests {
             .unwrap();
         assert_eq!(r["removed"], true);
         assert!(state.chat.lock().unwrap().context.is_empty());
+    }
+
+    /// Notifications: the rules run over the local store for the logged-in
+    /// user; asks are fixed, activity follows the preferences, counts split
+    /// by `how`, and nothing that names someone else ever appears.
+    #[tokio::test]
+    async fn test_notifications_list_follows_rules_and_prefs() {
+        use crate::identity::{encode_nsec, IdentitySession};
+        use crate::notifications::{How, Prefs};
+        const ME_SEC: &str = "0000000000000000000000000000000000000000000000000000000000000009";
+        const THEM_SEC: &str = "000000000000000000000000000000000000000000000000000000000000000b";
+
+        fn signed(sec: &str, kind: u64, content: &str, tags: Vec<Vec<&str>>, t: u64) -> Value {
+            use secp256k1::{PublicKey, Secp256k1, SecretKey};
+            use sha2::{Digest, Sha256};
+            let secp = Secp256k1::new();
+            let sk = SecretKey::from_slice(&hex::decode(sec).unwrap()).unwrap();
+            let pk = hex::encode(&PublicKey::from_secret_key(&secp, &sk).serialize()[1..33]);
+            let tags: Vec<Vec<String>> = tags.iter().map(|t| t.iter().map(|s| s.to_string()).collect()).collect();
+            let serial = serde_json::to_string(&json!([0, pk, t, kind, tags, content])).unwrap();
+            let id = hex::encode(Sha256::digest(serial.as_bytes()));
+            let sig = crate::identity::sign_event_hash(&id, sec).unwrap();
+            json!({ "id": id, "pubkey": pk, "created_at": t, "kind": kind, "tags": tags, "content": content, "sig": sig })
+        }
+
+        let dir = tempfile::tempdir().unwrap();
+        let mut engine = crate::engine::Engine::new(dir.path()).unwrap();
+        let user = Arc::new(Mutex::new(IdentitySession::new()));
+        let me = user.lock().unwrap().login_nsec(&encode_nsec(ME_SEC).unwrap()).unwrap();
+        engine.set_user_session(user.clone());
+        let engine = Arc::new(engine);
+        let data_dir = dir.path().to_path_buf();
+        std::mem::forget(dir);
+
+        // my publication: an index and one section, signed by me
+        let sec = signed(ME_SEC, 30041, "body", vec![vec!["d", "s1"], vec!["title", "Against method"]], 100);
+        let sec_coord = format!("30041:{me}:s1");
+        let idx = signed(ME_SEC, 30040, "", vec![vec!["d", "pub"], vec!["title", "On Method"], vec!["a", &sec_coord]], 101);
+        let root = format!("30040:{me}:pub");
+        // theirs: a highlight of my section, a comment on my root, an 818 to me, a reaction to nothing of mine,
+        // and a signed annotation request on my publication
+        let hl = signed(THEM_SEC, 9802, "the burden is on the newcomer", vec![vec!["a", &sec_coord], vec!["p", &me]], 200);
+        let cm = signed(THEM_SEC, 1111, "needs Mill", vec![vec!["A", &root], vec!["K", "30040"], vec!["P", &me]], 201);
+        let mr = signed(THEM_SEC, 818, "relink 2 terms", vec![vec!["a", &root], vec!["e", &"1".repeat(64)], vec!["p", &me]], 202);
+        let rx = signed(THEM_SEC, 7, "+", vec![vec!["e", &"9".repeat(64)], vec!["p", &"c".repeat(64)]], 203);
+        let rq = signed(THEM_SEC, 30041, "define these words in the context of these events: newcomer",
+            vec![vec!["d", "rq1"], vec!["title", "Define: newcomer"], vec!["t", "annotation-request"], vec!["A", &root], vec!["a", &sec_coord]], 204);
+        for ev in [&sec, &idx, &hl, &cm, &mr, &rx, &rq] {
+            engine.ingest_event(&serde_json::to_string(ev).unwrap()).unwrap();
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(400)).await;
+
+        // defaults: the asks only
+        let prefs = Prefs::load(&data_dir);
+        let r = notifications::list_notifications(&engine, &me, &prefs).await.unwrap();
+        let act_keys: Vec<&str> = r.acts.iter().map(|x| x.key.as_str()).collect();
+        assert!(act_keys.contains(&"818"), "the 818 is an ask: {act_keys:?}");
+        assert!(act_keys.contains(&"request-on-mine"), "the signed request is an ask: {act_keys:?}");
+        assert_eq!(r.acts.len(), 2);
+        assert!(r.activity.is_empty(), "9802 / 1111 are off by default");
+        assert_eq!(r.counts.acts, 2);
+        let mr_row = r.acts.iter().find(|x| x.key == "818").unwrap();
+        assert_eq!(mr_row.anchor.root.as_deref(), Some(root.as_str()));
+        assert!(mr_row.summary.contains("merge request on On Method"), "{}", mr_row.summary);
+        assert!(mr_row.status.is_none() && mr_row.verdict.is_none(), "818 status lands with merge_request.rs");
+        assert!(r.mine.is_empty());
+
+        // enable highlights (count) + comments (list): both show, the stray reaction never does
+        let mut prefs = Prefs::load(&data_dir);
+        prefs.set("9802", Some(true), Some(How::Count)).unwrap();
+        prefs.set("1111", Some(true), Some(How::List)).unwrap();
+        prefs.save(&data_dir).unwrap();
+        let r = notifications::list_notifications(&engine, &me, &Prefs::load(&data_dir)).await.unwrap();
+        let keys: Vec<&str> = r.activity.iter().map(|x| x.key.as_str()).collect();
+        assert_eq!(keys.len(), 2, "{keys:?}");
+        assert!(keys.contains(&"9802") && keys.contains(&"1111"));
+        assert!(!r.activity.iter().chain(r.acts.iter()).any(|x| x.kind == 7), "a reaction to nothing of mine never appears");
+        assert_eq!((r.counts.acts, r.counts.activity_count, r.counts.activity_list), (2, 1, 1));
+        let hl_row = r.activity.iter().find(|x| x.key == "9802").unwrap();
+        assert!(hl_row.summary.contains("highlighted §Against method of On Method"), "{}", hl_row.summary);
+        assert_eq!(hl_row.anchor.parent.as_deref(), Some(sec_coord.as_str()));
+
+        // turning on the generic reaction rule still keeps the unrelated 7 out
+        prefs.set("7", Some(true), None).unwrap();
+        let r = notifications::list_notifications(&engine, &me, &prefs).await.unwrap();
+        assert!(!r.activity.iter().any(|x| x.kind == 7));
+
+        // muted author → nothing from them
+        engine.ignore_list().write().await.pubkeys.insert(hl["pubkey"].as_str().unwrap().to_string());
+        let r = notifications::list_notifications(&engine, &me, &prefs).await.unwrap();
+        assert!(r.acts.is_empty() && r.activity.is_empty(), "the ignore list applies before counting");
     }
 }

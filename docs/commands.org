@@ -2517,6 +2517,35 @@ curl -s -X POST $B/publication/relink/preview -H "$J" -d "{\"root\":\"$ROOT\"}" 
 # a stranger: the diff, owner:false, and publish → 400
 #+end_src
 
+* Notifications (plan Phase 5c step 5, branch =feat/notifications=)
+
+What is for you, under the kinds you chose: the engine's rule table
+(=src/notifications.rs= =RULES=, one "addressed to me" tag rule per kind),
+preferences in =<data_dir>/notifications.json= (never an event), and
+=GET /api/v1/notifications= run over the local store. Asks (818 · 7 on
+my 818 · a signed request on my publication) are fixed; the rest is
+activity the user switches on, each either =count= (the modeline number)
+or =list=. Kind-818 =status= / =verdict= stay =null= until
+=publication::merge_request= (feat/merge-requests) is merged in.
+
+#+begin_src bash
+cargo test --lib -- --test-threads=4 notifications    # 7 unit (every rule + prefs round trip) + 1 handler-level
+B=localhost:3131/api/v1; J='Content-Type: application/json'
+# a logged-in user (see the vocabulary seed) is "me"; ME = its hex pubkey, S1 = one of my section coordinates
+curl -s $B/notifications/prefs | jq -c '.rules[]|{key, on, how, act, fixed}'          # acts on + fixed; 1111/9802/7/9735/30045/any-p off
+curl -s $B/notifications | jq -c '{acts:(.acts|length), activity:(.activity|length), mine:(.mine|length), counts}'
+# someone highlights my section (nak blocks on an open stdin — close it)
+OSEC=$(nak key generate)
+nak event -k 9802 -t a="$S1" -t p="$ME" -c "the burden is on the newcomer" --sec $OSEC < /dev/null > /tmp/hl.json
+curl -s -X POST $B/ingest -H 'Content-Type: application/x-ndjson' --data-binary @/tmp/hl.json
+curl -s $B/notifications | jq -c '.activity|length'                                    # 0 — 9802 is off
+curl -s -X PUT $B/notifications/prefs -H "$J" -d '{"entries":{"9802":{"on":true,"how":"count"},"1111":{"on":true,"how":"list"}}}' | jq -c '.rules[]|select(.key=="9802" or .key=="1111")|{key,on,how}'
+curl -s $B/notifications | jq -c '{activity:[.activity[]|{key, summary, anchor}], counts}'   # 1 · "npub1… highlighted §<title> of <root title>" · activity_count 1
+curl -s -X PUT $B/notifications/prefs -H "$J" -d '{"entries":{"818":{"on":false}}}' | jq -c '.rules[]|select(.key=="818")|{on,fixed}'   # still on: an ask is fixed (only `how` changes)
+# pull from relays: one Confirm-gated fetch, my kind-10002 read relays (else the general set) ∪ where my events were found
+curl -s -X POST $B/notifications/fetch -H "$J" -d '{"policy":"fetch_always"}' | jq -c '{relays, fetched, counts}'
+#+end_src
+
 * Kasten bundle delivery (answer a request whose output is kasten)
 
 One insertion for the whole kasten: the root 30040, anchored to the
