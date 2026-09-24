@@ -2932,6 +2932,96 @@ export function publishGlossary(req: GlossaryRequest) {
 	});
 }
 
+// --- Relink: wrap the terms of a publication's definitions as coordinate refs
+// The engine rewrites the FIRST occurrence of each term per section as
+// `{{ref:<definition coordinate>|term as written}}` (code, headings, native
+// links and existing tokens skipped — nostrdown::link_terms), previews the
+// hunks and the unsigned templates, and publishes new versions of the
+// changed sections and, when the glossary selection changes, of the
+// glossary bundle and the index — all under the signer's own `d` tags.
+// A publication that is not the signer's is previewed only (`owner: false`);
+// the derivative + kind-818 path is plan Phase 5c step 4.
+
+export interface RelinkRequest {
+	/** The publication: `30040:pubkey:d`. */
+	root: string;
+	/** Definition coordinates to relink (default: every definition anchored
+	 *  to the root). */
+	definitions?: string[];
+	/** Glossary edit to publish alongside (per-event promotion). */
+	glossary?: { add?: string[]; remove?: string[] };
+	sign_as?: 'user' | 'assistant';
+	broadcast?: boolean;
+	relays?: string[];
+}
+
+export interface RelinkHunk {
+	term: string;
+	/** The definition the occurrence now points at. */
+	coordinate: string;
+	/** The occurrence as written in the text. */
+	display: string;
+	/** Byte span in the original content. */
+	start: number;
+	end: number;
+	/** The line (paragraph) before and after the rewrite. */
+	line_before: string;
+	line_after: string;
+}
+
+export interface RelinkSection {
+	coordinate: string;
+	d: string;
+	title: string;
+	format?: string;
+	hunks: RelinkHunk[];
+	/** Tag rows the republish adds (`["a", <definition coordinate>]`). */
+	tags_added: string[][];
+	/** The unsigned new version (same `d`). */
+	template: UnsignedTemplate;
+}
+
+export interface RelinkPreview {
+	sections: RelinkSection[];
+	/** Section coordinates with no occurrence of any term. */
+	unchanged: string[];
+	skipped?: { coordinate: string; why: string }[];
+	/** Whether the signer owns the root index (and its sections). */
+	owner: boolean;
+	note?: string;
+	/** The index's next version, when the glossary selection changes it. */
+	index?: UnsignedTemplate | null;
+	/** The glossary bundle's next version, when a glossary edit was given. */
+	glossary?: UnsignedTemplate | null;
+	/** Definition coordinates the glossary lists after the edit. */
+	promoted?: string[];
+	sign_as?: 'user' | 'assistant';
+	signer_pubkey?: string | null;
+}
+
+export interface RelinkPublishResponse extends PublishResponse {
+	sections: { coordinate: string; event: NostrEvent }[];
+	index?: NostrEvent | null;
+	glossary?: NostrEvent | null;
+	hunk_count: number;
+	signed_as: 'user' | 'assistant';
+	promoted?: string[];
+}
+
+export function previewRelink(req: RelinkRequest) {
+	return fetchJson<RelinkPreview>('/api/v1/publication/relink/preview', {
+		method: 'POST',
+		body: JSON.stringify(req)
+	});
+}
+
+export function publishRelink(req: RelinkRequest) {
+	return fetchJson<RelinkPublishResponse>('/api/v1/publication/relink', {
+		method: 'POST',
+		body: JSON.stringify(req)
+	});
+}
+
 // ---------------------------------------------------------------------------
 // Annotation requests — "ask for notes about this place". Local records the
 // user's own agent reads over MCP (list_requests); optionally signed by the

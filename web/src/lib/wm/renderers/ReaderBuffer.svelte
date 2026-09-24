@@ -4,6 +4,9 @@
 	// reader that remounts after a buffer switch must not replay a jump it
 	// already made, and a jump is never state — nothing renders from it.
 	let appliedJumpNonce = 0;
+	// Nonce of the last relink this reader reloaded for (module-scope: not
+	// view state, and never a $state read inside the effect's async path).
+	let appliedRelinkNonce = 0;
 </script>
 
 <script lang="ts">
@@ -460,6 +463,20 @@
 		focusCache.delete(focusKey(publication.addr.pubkey, publication.addr.d_tag));
 		void load();
 	}
+	// A relink signed new versions of this publication's sections (and maybe
+	// its index / glossary): the modal is portaled, so it signals root +
+	// nonce and the reader showing that root evicts its focus cache and
+	// re-streams the tree (the readerJump idiom, applied once).
+	$effect(() => {
+		const done = app.relinkDone;
+		untrack(() => {
+			if (!done || !publication || done.nonce <= appliedRelinkNonce) return;
+			if (!tableRoot || done.root !== tableRoot) return;
+			appliedRelinkNonce = done.nonce;
+			focusCache.delete(focusKey(publication.addr.pubkey, publication.addr.d_tag));
+			void load();
+		});
+	});
 	// An insertion published from the composer lands in the local store;
 	// re-read if this reader is showing annotations.
 	$effect(() => {

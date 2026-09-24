@@ -341,6 +341,13 @@
 			{#if styleCoord}
 				<button class="icard__act" onclick={() => app.handleSearch(`style:${styleCoord}`, { scopeToMe: false })} title="Written in this style — click for everything in it ({styleCoord})">✎ {styleTitle(styleCoord) ?? 'style'}</button>
 			{/if}
+			{#if isDefinition}
+				<button
+					class="icard__act"
+					onclick={() => (app.relink = { root: anchor.root, definitions: [insertion.coordinate], promoted: insertion.promoted ? [insertion.coordinate] : [] })}
+					title="Wrap the first occurrence of “{term}” in each section as a {'{{ref}}'} to this definition — diff first, then one armed sign"
+				>relink</button>
+			{/if}
 			{#if onopen}
 				<button class="icard__act" onclick={() => onopen?.(insertion)} title="Open this section in its own reader buffer">open</button>
 			{/if}

@@ -131,6 +131,17 @@ export type AnnotationRequestOpen = {
 	content?: string;
 };
 
+/** Payload that opens the relink modal: the publication and the definition
+ *  coordinates whose terms get wrapped as `{{ref:…}}` in its sections. */
+export type RelinkOpen = {
+	root: string;
+	rootTitle?: string | null;
+	definitions: string[];
+	/** Coordinates already in the signer's glossary bundle (prefills the
+	 *  per-definition glossary checkboxes). */
+	promoted?: string[];
+};
+
 /** Payload that opens the insertion composer. */
 export type InsertionComposerOpen = {
 	/** Publication coordinate (30040:pk:d) — or a standalone note's own
@@ -603,6 +614,11 @@ function _createAppState() {
 	let annotateMode = $state(false);
 	let annotationRequest: AnnotationRequestOpen | null = $state(null);
 	let requestsVersion = $state(0);
+	// --- Relink (vocabulary definitions → `{{ref}}`s in the text) ---
+	// The modal is portaled (+layout), so a finished relink reaches the
+	// reader as a signal: root + nonce, applied once (the readerJump idiom).
+	let relink: RelinkOpen | null = $state(null);
+	let relinkDone: { root: string; nonce: number } | null = $state(null);
 
 	// Republish diff prompt: set when Publish detects a same-title
 	// publication. ComparePublishModal renders the diff and calls
@@ -5358,6 +5374,14 @@ function _createAppState() {
 		set annotationRequest(v: AnnotationRequestOpen | null) { annotationRequest = v; },
 		get requestsVersion() { return requestsVersion; },
 		bumpRequests() { requestsVersion += 1; },
+
+		// Relink
+		get relink() { return relink; },
+		set relink(v: RelinkOpen | null) { relink = v; },
+		get relinkDone() { return relinkDone; },
+		markRelinkDone(root: string) {
+			relinkDone = { root, nonce: (relinkDone?.nonce ?? 0) + 1 };
+		},
 
 		// Profile
 		get profilePubkey() { return profilePubkey; },
