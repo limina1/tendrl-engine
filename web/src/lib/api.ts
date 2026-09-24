@@ -2705,6 +2705,9 @@ export interface LoadedInsertion {
 	/** Definitions: the glossary bundle coordinate (`30040:pk:d`) that
 	 *  lists it, when `promoted`. */
 	glossary?: string;
+	/** A note in reply: the coordinate of the annotation it answers (the
+	 *  `q` tag, when it names another annotation of this root). */
+	reply_to?: string;
 }
 
 /** Histograms over the whole root, computed engine-side BEFORE the author
@@ -2726,6 +2729,9 @@ export interface InsertionsLoadResponse {
 	query: string;
 	/** Present when the request asked for `counts`. */
 	counts?: InsertionCounts;
+	/** Present when the request asked for `replies`: coordinate → number of
+	 *  kind-1111 comments threaded under that annotation (`A` = it). */
+	replies?: Record<string, number>;
 }
 
 /** The `#A` discovery pass — an explicit reader action, Confirm-gated when
@@ -2742,6 +2748,8 @@ export function loadInsertions(req: {
 	since?: number;
 	/** Ask for the root-wide histograms (`counts` on the response). */
 	counts?: boolean;
+	/** Ask for the per-annotation kind-1111 reply counts (`replies`). */
+	replies?: boolean;
 }) {
 	return fetchJson<InsertionsLoadResponse>('/api/v1/insertions/load', {
 		method: 'POST',
@@ -2772,6 +2780,9 @@ export interface InsertionRequest {
 	tags?: string[][];
 	/** Coordinate of the annotation request (30041:pk:d) this note answers. */
 	request?: string;
+	/** A note in reply: the coordinate of the annotation (same root) it
+	 *  answers → a NIP-18 `q` tag. */
+	reply_to?: string;
 	/** `definition` stamps `t: definition` (+ `T` from the title): one
 	 *  event per term, the answer to a vocabulary request. */
 	role?: 'note' | 'definition';

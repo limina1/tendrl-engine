@@ -1,0 +1,334 @@
+#+TITLE: Annotations ledger — the Track 0 contract
+#+DATE: 2026-09-24
+
+Frozen from the approved prototype (Artifact =8ZTGgiDa6RPZGpRdWCWRkn=,
+version 5; committed copy =docs/prototypes/annotations-ledger.html=, the
+screenshot stripped). The user's words on it: "this is a great design.
+really conform to it." Six tracks build against this in one worktree
+(=feat/annotations-ledger=) with disjoint files; anything here is settled,
+anything not here is the owning track's call, recorded in its commit.
+It *replaces* =docs/annotations-table-contract.org= (kept for history).
+
+* What ships (one paragraph)
+
+The annotations table stops being a canvas of fixed cards with five
+layouts and becomes a *ledger*: one row per annotation, grouped
+(§ · author · kind · time), each row opening in place — or in a detail
+pane when the buffer is wide — with the full text, its per-kind actions
+and its *thread* (kind-1111 replies). Two rows of chrome, every element
+in them a filter: the spell input, *+ annotate*, the group-by segment,
+rows|board, then the facets *who* (author bars) · *where* (§ counts) ·
+*what* (kind counts) · *when* (a 21-day sparkline + all·7d·30d). A
+request's answers nest under it (↳). Definitions carry their term and a
+"glossary" flag. Hover lights the reader section; the § cell scrolls it.
+*Board* keeps a card view (section columns, content-sized cards, no
+pins). The reader folds each section's notes to a *strip of stubs*; a
+stub opens the full card; the margin column is gone. The workflows hang
+off the rows: annotate → request; an open request's row → *answer it
+yourself* (one term at a time); a vocabulary request keeps *define a term
+yourself* after it is answered; vocabulary mode → *define them myself*
+(definitions with no request); a def row → relink / promote → glossary;
+the ⑂ row → the *review buffer*, which takes the reader's place in the
+split; every row → a reply (1111) or a *note in reply* (30041 with =q=).
+Buffer kind =annotations:<root>=, the =SPC b o t= chord, the reader's
+Tools *table N* and the WM split all stay.
+
+* Tracks and the files each owns
+
+| Track | Owns                                                                                                                      |
+|-------+---------------------------------------------------------------------------------------------------------------------------|
+| 0     | this file; =docs/prototypes/annotations-ledger.html=; =api.ts= types (=reply_to=, =replies=, =InsertionRequest.reply_to=); =state.svelte.ts= (=revealAnnotation=, =InsertionComposerOpen.replyTo=) |
+| A     | =src/api/insertions.rs=, =src/publication/insertion.rs=, =src/tools.rs= (=reply_to= on propose_insertion), tests           |
+| B     | =AnnotationsBuffer.svelte=; =components/annotations/*= (new: =ledger-model.ts=, =LedgerHeader=, =LedgerRows=, =LedgerRow=, =LedgerBody=, =LedgerBoard=, =AnnotationThread=; deleted: =AnnotationsTable=, =AnnotationCard=, =AnnotationsSpell=, =AnnotationsList=, =list-model.ts=, =table-model.ts=); =actions/draggable.ts= (delete) |
+| C     | =ContinuousView.svelte=, =PaginatedView.svelte=, =ReaderBuffer.svelte= (strip + "n annotate", margin layout removed), =theme/reading.svelte.ts= (=notesLayout= removed), =SettingsBuffer.svelte= (the notes-layout row removed), =InsertionCard.svelte= |
+| D     | =AnnotationRequestModal.svelte= (answer mode one term at a time, "define them myself"), =RequestCard.svelte=, =InsertionComposerModal.svelte= (=replyTo=)          |
+| E     | =MergeRequestReviewBuffer.svelte=, =DiffBlock.svelte=, =+page.svelte= (the review takes the reader's leaf in a split)      |
+| F     | =docs/zettel/feat-annotations-table.org= (→ the ledger), =docs/insertions-plan.org= (Phase 5d), =docs/commands.org=, =scripts/verify/annotations-ledger.mjs= (replaces =annotations-table.mjs=) |
+
+B owns =AnnotationThread.svelte=; C and D *consume* it with the props in
+"Shared components" below. Nothing else crosses tracks. Commit with an
+explicit pathspec and check =git show --stat=.
+
+* Engine API (Track A)
+
+- =POST /api/v1/insertions= body gains =reply_to: Option<String>= — the
+  coordinate of another annotation (a 30041 insertion, a definition, a
+  request) in the same root. Emits =["q", <coordinate>, <relay hint or
+  "">, <its pubkey>]= (NIP-18: a =q= value may be an address). The note is
+  otherwise an ordinary insertion at the same anchor (=placement=
+  attached). A =reply_to= outside the root is a 400.
+- =POST /api/v1/insertions/load= rows gain =reply_to?: String= (the =q=
+  coordinate when it names a 30041/30040 of this root's annotation set;
+  other =q= tags are ignored) and the response gains
+  =replies?: HashMap<String, usize>= — coordinate → number of kind-1111
+  comments whose =A= (root scope) is that annotation's coordinate — when
+  the body sets =replies: true=. One nostrdb query for the whole set
+  (=kinds:[1111]= + =#A= over the loaded coordinates), local only; a
+  =fetch_always= policy may add a relay pass but never blocks the load.
+- =InsertionCounts= is unchanged (the *who* bars still read =by_author=).
+- =propose_insertion= (MCP) accepts =reply_to= and documents it as "a note
+  in reply to another annotation".
+- Definitions without a request need nothing new (=role: definition=,
+  no =request=).
+
+Pure =reply_counts(&[LoadedInsertion], &[Note]) -> HashMap= with a unit
+test; one assertion added to =test_insertion_propose_load_and_promote=
+for =reply_to= round-tripping.
+
+* App state (Track 0, consumed by B, C, D)
+
+- =app.readerJump= / =app.hoverAnchor= as before (contract v1).
+- =app.revealAnnotation: { root, id, nonce } | null=;
+  =app.requestRevealAnnotation(root, id)=. =id= is a coordinate (a note,
+  a definition, a bundle, an 818's =818:<id>= coordinate from
+  =insertions/load=) or a request id. The ledger, when open on that root,
+  expands the row, moves the cursor there and scrolls it into view. A
+  reader card's *≡ row* calls it after making sure the ledger is open
+  (=app.openAnnotationsTable?.(root)= is registered by the page the way
+  =onMergeRequestReview= is — Track E adds the registration in
+  =+page.svelte=; Track 0 adds the hook).
+- =InsertionComposerOpen.replyTo?: string= + =replyToTitle?: string | null=
+  → the composer's "↩ in reply to …" chip and the =reply_to= field on
+  publish.
+
+* Web model (Track B, =ledger-model.ts=)
+
+#+begin_src typescript
+export type LedgerKind = 'note' | 'def' | 'request' | 'mr' | 'kasten';
+export type GroupBy = 'section' | 'author' | 'kind' | 'time';
+export interface LedgerRow {
+  id: string;               // coordinate, '818:<id>' or request id
+  kind: LedgerKind;
+  author: string;           // hex pubkey; '' for an unsigned request record
+  parent: string;           // section coordinate, or the root
+  sec: number;              // -1 = whole publication, else 0-based TOC ordinal
+  placement: 'annotation' | 'before' | 'after';
+  title: string;
+  body: string;             // plain text for the board excerpt
+  createdAt: number;
+  status?: 'open' | 'answered' | 'merged' | 'declined';
+  output?: 'notes' | 'kasten' | 'vocabulary' | 'ask';
+  term?: string; glossary?: boolean;
+  request?: string;         // the request this answers → nests under it
+  replyTo?: string;         // a note in reply → "↩ <title>" on the row
+  replies: number;          // kind-1111 count
+  note?: LoadedInsertion; req?: AnnotationRequest;
+}
+export interface LedgerView {
+  view: 'rows' | 'board'; group: GroupBy; sort: 'reading' | 'newest';
+  detail: 'inline' | 'pane';
+  by: string[]; secs: number[]; kinds: LedgerKind[];
+  sinceDays: number | null; day: number | null;   // day = N days ago (sparkline pick)
+  cursor: number; expanded: string | null; collapsed: string[];
+  scroll: number;
+}
+buildRows(notes, requests, sections) → LedgerRow[]
+groupRows(rows, sections, view) → { key, label, sec?, author?, rows }[]   // rules below
+flatOrder(groups, view) → LedgerRow[]      // the cursor's order: a request's answers right after it (section grouping only)
+facetCounts(rows) → { by, sec, kind, day[21] }   // over the rows the *other* facets admit
+buildSpell(root, view) / parseSpell(text, root)   // by:, a:<section>, t:definition | t:annotation-request | k:818 | -t:…, since:
+#+end_src
+
+Grouping rules: *section* = one group per TOC row in reading order plus a
+leading "whole publication" group; rows ordered requests, merge
+requests, before, attached, after, then by time; answers (=request= set)
+are not top-level rows but nest under their request. *author* = by
+descending count (bars order). *kind* = requests · merge requests ·
+definitions · kasten · notes. *time* = today · this week · this month ·
+earlier, newest first. Empty groups are dropped. In author/kind/time
+grouping every row is top-level (no nesting).
+
+* DOM contract
+
+Class names are the harness's selectors (Track F) and the walkthrough's
+anchors; keep them verbatim. Colour is per author with the highlight
+recipe (=pubkeyToColor=): the row rail, the dot, the bars, the thread
+rail. Kinds get one glyph each: =◂= note (▴ before · ▾ after) · =def= ·
+=?=/=✓= request · =⑂= merge · =⊞= kasten.
+
+** Ledger buffer (Track B)
+
+- =.abuf= root, =data-root=.
+- =.qrow=: =.spell__input= (the DSL; Enter applies via =parseSpell=, a
+  foreign root refused with a toast), =.spell__wand=, =.qrow__plus=
+  "+ annotate" (opens the annotate window on the single selected § or
+  the first section), =.seg--group button[data-group]= (=section= |
+  =author= | =kind= | =time=), =.seg--view button[data-view]= (=rows= |
+  =board=; hidden on mobile), =.qrow__n= "N" or "N of M".
+- =.facets=: =.facet--who .bar[data-pk]= (=.on=, inline =--au=, =i= fill =
+  share), =.facet--where .sec[data-sec]= (=-1= … n; =.on=; hover lights
+  the reader section), =.facet--what .kind[data-kind]= (=note def request
+  mr kasten=; =.on=), =.facet--when .spark b[data-day]= (21 bars, newest
+  right; =.on= when picked) and =.since= (click cycles all · 7d · 30d;
+  =.on= when narrowed). Every facet button carries =.zero= when its
+  count is 0.
+- =.rows= scroll container (=tabindex=0=). =.gh[data-group]= sticky group
+  header (=.gh__n= count, =.gh__ptr=, =.hot= when its section is the
+  hover anchor; click collapses). =.row[data-id][data-kind][data-cursor]=
+  grid =3px 38px 1fr auto auto 14px=: =.row__rail=, =.row__anc= (the §
+  cell; click = =app.requestReaderJump=), =.row__main= (=.badge= for
+  request/def/mr/kasten or =.row__placement= for a note, =.row__t=
+  title, =.flag.glossary=, =.flag.wait= "waiting" on an open request,
+  =.row__sub= "N ↳" answers / "↳ output" answering / "↩ title" reply /
+  =.row__sub--rep= "N ↩" replies), =.row__by= (=.dot= + name), =.row__age=,
+  =.row__ptr=. Modifiers =.cur= (cursor), =.x= (expanded), =.child=
+  (nested answer, "↳" prefix), =.new= (just landed). Hover = =app.setHoverAnchor=.
+- =.xb= expanded body directly under its row (inline mode) or inside
+  =.detail= (pane mode): =.xb__txt= (RichContent), =.meta= key/value
+  chips, =.acts= per kind (below), then =.thread=.
+- =.detail= (wide only, =view.detail === 'pane'=): =.detail__dh= header
+  (badge · title · author · age) + the same =.xb=; =.detail__empty=
+  otherwise. The legend's =.seg--detail= toggles inline|pane.
+- =.board=: =.bcol[data-sec]= per section (+ whole publication first),
+  =.bcol__bh= header (click = reader jump; =.hot=), =.bcard[data-id]=
+  content-sized (=.bcard__h= glyph · kind word · dot · author · age,
+  =.bcard__t=, =.bcard__e= two-line clamp, =.bcard__child= per answer,
+  =.acts= when expanded). No absolute positioning, no drag.
+- =.legend=: keys line, "colour = author, as in highlights", the detail
+  toggle on wide.
+- Mobile (=shell.mode === 'mobile'=): the same =.rows= with =.abuf.phone=:
+  =.row__anc= and =.row__by= hidden, =.row__sec= "· §n · dot name" folded
+  into =.row__main=, titles wrap to two lines, facets scroll sideways,
+  the spell collapses to a chip, no board, no legend.
+
+** Row actions (=.acts= buttons, Track B)
+
+| kind    | buttons                                                                                                      |
+|---------+--------------------------------------------------------------------------------------------------------------|
+| request | =.act--answer= "answer it yourself ▸" (open; label "define a term yourself ▸" on an answered vocabulary request); =.act--relink= "relink N terms ▸" when definitions answer it (owner) / "fork + merge request (N) ▸" (not owner); =.act--menu= |
+| def     | =.act--relink= "relink" / "fork + merge request"; =.act--glossary= "promote → glossary" / "remove from glossary"; =.act--request= "↳ answers <output>"; =.act--open=; =.act--menu= |
+| note    | =.act--promote=; =.act--request= when answering; =.act--reply-of= "↩ …" when a note in reply; =.act--open=; =.act--menu=            |
+| kasten  | =.act--open= "open kasten ▸"; =.act--request=; =.act--menu=                                                     |
+| mr      | =.act--review= "review the diff ▸" (owner, open) / "review (read-only)"; =.act--menu=; a settled one shows =.xb__verdict= |
+
+Actions reuse today's handlers: =app.relink=, the glossary preview +
+publish from =InsertionCard= (lift into a small shared helper if B needs
+it — B's call), =app.openMergeRequestReview=, =app.openAddressableInModal=,
+=app.annotationRequest = { …, answer }=. The =.coord= at the right of
+=.acts= shows the coordinate.
+
+** Thread (Track B owns =AnnotationThread.svelte=; C and D mount it)
+
+#+begin_src svelte
+<AnnotationThread root={string} coordinate={string} author={hex} title={string}
+                  compact={boolean} count={number | undefined}
+                  onreplied={() => void} />
+#+end_src
+
+- =.thread=: =.thread__h= "replies · N · kind 1111, threaded under this
+  event" + =.thread__note= "note in reply ▸" (hidden when =compact=;
+  opens =app.insertionComposer= with =replyTo= / =replyToTitle= and the
+  same anchor), =.reply[data-id]= rows (=.reply__rail= author colour,
+  =.reply__h= dot · name · age, =.reply__b= body), =.replybox=
+  (=textarea= + =.replybox__sign= "sign reply ▸"; Enter signs, Shift+Enter
+  newline) and =.replybox__wire= (the tags it signs, one line).
+- Loads its thread with =getDiscussionList= scoped to the annotation
+  (root =address= = the coordinate) on first expand; signs with
+  =publishComment({ root: { address }, content })=; the count comes from
+  the =replies= map until the thread loads.
+
+** Reader (Track C)
+
+- Each section (and the whole-publication head) renders =.strip= under
+  its text: one =.stub[data-id]= per request / insertion / 818 at that
+  anchor — =.stub__g= glyph (class =req ok def mr kasten note=),
+  =.stub__t= title (a vocabulary request shows its terms), =.stub__n=
+  "N↳" answers. Click toggles =.stub.on= and renders the full
+  =RequestCard= / =InsertionCard= right under the strip (one open card
+  per section). The old =.section__side= / =.notes-margin= grid and the
+  Reading "notes: margin | inline" preference are removed; the
+  =icard--card|sticky= skin stays.
+- The section title row gains =.section-annotate= "n annotate" (the
+  same door as the section menu's =n=: =app.annotationRequest= with the
+  section's content). =.section.anchor-hot= + =.anchor-tip= stay.
+- =InsertionCard= gains =.icard__row= "≡ row" (=requestRevealAnnotation=)
+  and mounts =AnnotationThread compact= under its actions.
+
+** Annotate window, answer mode (Track D)
+
+One term at a time, the window's own shape (=.rq-modal=):
+- header "● answer — <request title>" + the request badge + "by · age",
+  right: =.rq-count= "i of n · k to do"; the =×= closes.
+- anchor chips + =.rq-chip--request= "request 30041:…".
+- =.rq-term= row: =select.rq-term__pick= listing the request's terms
+  (with " · defined by <name>" / " · signed by you" / " · skipped") and a
+  last option "+ another term…" which swaps in =input.rq-term__new=;
+  =select.rq-term__fmt= (markdown · org · asciidoc · plain).
+- =.rq-warn= when the picked term already has a definition ("signing
+  writes a second definition under your key; relink will ask which").
+- =textarea.rq-def= the definition; style select; the event preview for
+  this one event (=.rq-preview__pre=).
+- footer: =.rq-btn--done= "cancel" (→ "done" once one was signed),
+  =.rq-btn--skip= "skip ▸" (n > 1), =.rq-btn--sign= "sign ▸" (green
+  =--green=): signs this one definition (=role: definition=, =request=
+  pointer when answering, =sign_as: user=, =broadcast: false=) and pages
+  to the next undone term; closes after the last. The request is closed
+  (=answerRequest=) the first time anything is signed for it, with a
+  summary naming what was signed and skipped.
+- ask → the same window with the question as a fixed =.rq-term__fixed=
+  title and "sign ▸" closing (a note with the pointer). notes/kasten →
+  the composer with =request= (as today).
+- vocabulary mode with ≥1 marked word gets =.rq-btn--define= "define
+  them myself ▸" in the footer → answer mode over the marked terms with
+  no request (=request= absent on the signed definitions).
+- =RequestCard=: "answer it yourself ▸" stays on open requests and a
+  vocabulary request keeps =.rcard__mini--answer= "define a term yourself ▸"
+  after it is answered; gains "≡ row" and mounts =AnnotationThread compact=.
+- =InsertionComposerModal=: =replyTo= → =.ic-chip--reply= "↩ in reply to
+  <title>", a quoted excerpt, and =reply_to= on publish.
+
+** Review buffer (Track E)
+
+=review:<id>= stays a work buffer. Opening it from the ledger while the
+ledger is split beside a reader in the focused slot *replaces the
+reader's leaf* (the mock: "the review takes the reader's place"); its
+pane head has =.pane-head__back= "← reader" restoring the reader buffer
+in that leaf. Elsewhere it opens as today.
+- =.mr[data-mr][data-status][data-role]= root; =.rv= scroll body:
+  =.rv__status= (badge · role · target · base "v3 · your current vN ·
+  applies cleanly | you have moved on — rebased" · sent-to), =.rv__ask=
+  (the 818 content with the requester's rail; source line), =.rv__sum=
+  tiles =.tile[data-tile]= (=sections= relinked · =hunks= · =index=
+  · =removed= · =untouched=; =.plus= / =.same=), =.rv__defs .dcard[data-coord]=
+  (the definitions being linked: badge, author, age, "→ glossary" flag,
+  first sentence, =≡=), =details.rv__sec[data-coord]= per section
+  (summary: title · d · hunks · +a tags; =DiffBlock= inside),
+  =details.rv__index=, =.mr-agent[data-slot=assistant-review]= (as
+  today), =.thread= (=AnnotationThread= on the 818: =coordinate= =
+  =818:<id>=, root =event_id=), and the sticky =.rvfoot=: =.mr__btn--decline=
+  / "open merged result in composer" / =.mr__btn--merge= (armed), the
+  =.rvfoot__steps= line; once settled =.rvfoot__verdict= replaces the
+  buttons and the buffer stays open. Requester/reader roles see the same
+  page read-only with "waiting for the owner" / "addressed to <name>".
+
+* Keys (desktop, ledger focused)
+
+=j=/=k= move the cursor over =flatOrder=; =Enter= toggles expand; =Esc=
+collapses; =g= cycles grouping; =n= opens the annotate window on the
+cursored row's section; =←=/=→= cycle grouping (the old mode keys). A
+=nav= handler as before.
+
+* View state
+
+=LedgerView= read once from =store.bufferState= on mount, written on
+teardown (scroll offsets kept off the reactive graph). Loaders keep the
+plain =book= discipline and depend on version counters only
+(=project_effect_async_state_loop=). Live updates through =onStoreEvent=
++ =concernsRoot=, debounced. New rows carry =.new= once.
+
+* Verification (Track F)
+
+=scripts/verify/annotations-ledger.mjs= on a scratch engine =:3131=
+seeded per the commands.org recipe (extended: a vocabulary request with
+two assistant definitions, an open ask, a kasten request + bundle, one
+818, two kind-1111 replies on a note): the split opens; group counts
+per grouping; a facet click filters and rewrites the spell; a row
+expands in place and shows the thread; "sign reply ▸" adds a reply and
+the row's "N ↩" grows; "answer it yourself" on the ask signs a note and
+the row nests; "define a term yourself" on the answered vocabulary
+request pages one term (sign → next → close); a def row's relink opens
+the diff; the ⑂ row opens the review in the reader's leaf and "← reader"
+restores it; the reader strip: stubs per section, a stub opens the card,
+"≡ row" reveals the row; hover lights the section; § scrolls the reader.
+Mobile 390×844: =.abuf.phone=, no board, facets scroll. Teardown by
+exact process name + port.

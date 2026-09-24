@@ -1,0 +1,1046 @@
+<title>Annotations Ledger</title>
+<style>
+  :root {
+    --bg: #161821; --bg-alt: #0f1117; --surface: #1c1e27; --rail: #12141c; --surface2: #222430;
+    --border: #282a36; --border-strong: #3d4455;
+    --base3: #3d4455; --base4: #485163; --base5: #6b7089; --base6: #9a9ca5; --base7: #c6c8d1;
+    --fg: #d2d4de; --fg-muted: #9a9ca5;
+    --blue: #84a0c6; --yellow: #e9b189; --violet: #b294bb; --cyan: #89b8c2; --green: #b4be82; --red: #e27878; --magenta: #a093c7; --orange: #e2a478;
+    --ask: var(--orange);
+    --mono: ui-monospace, "JetBrains Mono", "SF Mono", Menlo, Consolas, monospace;
+    --sans: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+    --serif: "Iowan Old Style", "Charter", "Source Serif Pro", Georgia, serif;
+    --t-3xs: 9px; --t-2xs: 10px; --t-xs: 11px; --t-sm: 12px; --t-base: 13px; --t-md: 14px; --t-lg: 16px;
+    --r: 3px;
+    color-scheme: dark;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg-alt); color: var(--fg); font: var(--t-base)/1.5 var(--sans); padding-inline: 16px; padding-block: 12px; }
+  button { font: inherit; color: inherit; background: transparent; border: 1px solid var(--border); border-radius: var(--r); padding: 3px 10px; cursor: pointer; min-height: 28px; }
+  button:hover { border-color: var(--base5); color: #fff; }
+  button:disabled { opacity: .45; cursor: default; }
+  button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-visible { outline: 2px solid var(--blue); outline-offset: 1px; }
+  button.on { background: var(--blue); color: var(--bg); border-color: var(--blue); }
+  input, textarea, select { font: var(--t-xs)/1.4 var(--mono); color: var(--fg); background: var(--surface); border: 1px solid var(--border); border-radius: var(--r); padding: 4px 8px; }
+  textarea { resize: vertical; font-family: var(--sans); }
+  code { font-family: var(--mono); font-size: .92em; }
+  .mono { font-family: var(--mono); }
+  .cap { font: 600 var(--t-3xs)/1.2 var(--mono); letter-spacing: .08em; text-transform: uppercase; }
+  .muted { color: var(--base5); }
+  .sp { flex: 1; }
+  @media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }
+
+  /* guide strip */
+  .guide { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; margin-bottom: 10px; font: var(--t-xs)/1.4 var(--mono); color: var(--base6); }
+  .guide b { color: var(--fg); font-weight: 600; }
+  .guide .hint { color: var(--base5); }
+  .frames { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+  .frames button { min-height: 26px; padding: 1px 9px; font-family: var(--mono); font-size: var(--t-2xs); }
+  .seg { display: inline-flex; border: 1px solid var(--border); border-radius: var(--r); overflow: hidden; }
+  .seg button { border: 0; border-radius: 0; border-right: 1px solid var(--border); min-height: 24px; padding: 1px 9px; font-family: var(--mono); font-size: var(--t-2xs); }
+  .seg button:last-child { border-right: 0; }
+  .seg button.on { background: var(--surface2); color: var(--fg); }
+  .seg.ask button.on { background: var(--ask); color: var(--bg); }
+  .flows { display: flex; flex-wrap: wrap; gap: 4px 10px; margin-bottom: 8px; font: var(--t-2xs)/1.4 var(--mono); color: var(--base5); }
+  .flows span b { color: var(--base7); font-weight: 600; }
+
+  /* workbench */
+  .wb { background: var(--bg); border: 1px solid var(--border); border-radius: 4px; overflow: hidden; height: 820px; display: flex; flex-direction: column; position: relative; margin-inline: auto; }
+  .wb.phone { width: 390px; height: 820px; }
+  .topbar { height: 32px; background: var(--rail); border-bottom: 1px solid var(--border); display: flex; align-items: center; gap: 14px; padding: 0 12px; font: var(--t-xs)/1 var(--mono); color: var(--base6); flex-shrink: 0; }
+  .topbar .brand { color: var(--fg); font-weight: 700; }
+  .topbar .id { color: var(--green); }
+  .body { flex: 1; display: flex; min-height: 0; }
+  .pane { flex: 1; min-width: 0; display: flex; flex-direction: column; border-right: 1px solid var(--border); position: relative; }
+  .pane:last-child { border-right: 0; }
+  .pane.reader { flex: 0 0 46%; }
+  .pane-head { height: 28px; background: var(--surface); border-bottom: 1px solid var(--border); display: flex; align-items: center; gap: 10px; padding: 0 10px; font: var(--t-2xs)/1 var(--mono); color: var(--base6); flex-shrink: 0; }
+  .pane-head .cls { color: var(--blue); font-weight: 700; letter-spacing: .08em; }
+  .pane-head .tab { color: var(--fg); font-weight: 700; }
+  .modeline { height: 24px; background: var(--surface); border-top: 1px solid var(--border); display: flex; align-items: center; gap: 12px; padding: 0 10px; font: var(--t-2xs)/1 var(--mono); color: var(--base5); flex-shrink: 0; }
+  .modeline .on { color: var(--green); }
+  .modeline .pill { border: 1px solid var(--border); border-radius: 999px; padding: 1px 9px; font-size: var(--t-2xs); color: var(--base6); }
+  .modeline .pill.asks { color: var(--ask); border-color: rgba(226,164,120,.5); }
+  .modeline .pill.asks.zero { color: var(--base5); border-color: var(--border); }
+
+  /* ---------- reader ---------- */
+  .rd-toolbar { display: flex; align-items: center; gap: 6px; padding: 6px 12px; border-bottom: 1px solid var(--border); font-family: var(--mono); font-size: var(--t-sm); flex-shrink: 0; flex-wrap: wrap; }
+  .rd-toolbar .tb { min-width: 34px; padding: 2px 8px; min-height: 26px; font-size: var(--t-xs); }
+  .rd-toolbar .letter { font-weight: 700; }
+  .rd-content { flex: 1; overflow: auto; padding: 14px 16px 60px; position: relative; scroll-behavior: smooth; }
+  .col { max-width: 640px; margin-inline: auto; font: 15px/1.55 var(--serif); }
+  .pubtitle { font: 600 var(--t-lg)/1.3 var(--sans); margin: 0 0 4px; display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; }
+  .pubtitle .by { font: var(--t-2xs)/1.2 var(--mono); color: var(--base5); }
+  .section { padding: 12px 0 14px; border-bottom: 1px solid var(--border); position: relative; scroll-margin-top: 12px; border-left: 3px solid transparent; margin-left: -12px; padding-left: 9px; transition: border-color .15s, background .15s; }
+  .section.anchor-hot { border-left-color: var(--au-hot, var(--blue)); background: rgba(132,160,198,.05); }
+  .section.anchor-hot .stitle .hot { display: inline; }
+  .stitle { font: 600 var(--t-md)/1.3 var(--sans); margin: 0 0 8px; display: flex; align-items: center; gap: 8px; }
+  .stitle .idx { color: var(--base6); font-family: var(--mono); font-weight: 400; font-size: var(--t-sm); }
+  .stitle .hot { display: none; font: var(--t-3xs)/1 var(--mono); color: var(--blue); }
+  .stitle .n { margin-left: auto; font: var(--t-2xs)/1 var(--mono); color: var(--base5); min-height: 22px; padding: 0 7px; border-color: transparent; }
+  .stitle .n b { color: var(--green); }
+  .section:hover .stitle .n, .stitle .n:focus-visible { border-color: var(--border); }
+  .section p { margin: 0 0 10px; }
+  .nref { color: var(--green); border-bottom: 1px dotted var(--green); text-decoration: none; cursor: pointer; position: relative; }
+  .nref:hover::after { content: attr(data-def); position: absolute; left: 0; top: 1.4em; z-index: 5; width: 300px; background: var(--surface); border: 1px solid var(--border-strong); border-left: 3px solid var(--green); border-radius: var(--r); padding: 6px 9px; font: 12px/1.45 var(--sans); color: var(--fg); box-shadow: 0 8px 24px rgba(0,0,0,.4); }
+  .strip { display: flex; flex-wrap: wrap; gap: 4px; margin: 6px 0 0; font: var(--t-2xs)/1.3 var(--mono); }
+  .stub { display: inline-flex; align-items: center; gap: 5px; border: 1px solid var(--border); border-left: 3px solid var(--au); border-radius: var(--r); padding: 2px 7px 2px 6px; min-height: 22px; color: var(--base6); background: var(--surface); font: var(--t-2xs)/1.3 var(--mono); max-width: 100%; }
+  .stub:hover { color: var(--fg); border-color: var(--base5); border-left-color: var(--au); }
+  .stub.on { color: var(--fg); background: var(--surface2); }
+  .stub .t { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 180px; font-family: var(--sans); font-size: var(--t-xs); }
+  .g { font-weight: 700; }
+  .g.note { color: var(--base6); } .g.def { color: var(--green); } .g.req { color: var(--ask); } .g.ok { color: var(--blue); } .g.mr { color: var(--ask); } .g.kasten { color: var(--violet); } .g.merged { color: var(--green); } .g.declined { color: var(--red); }
+  .rcard { margin: 6px 0 2px; background: var(--surface); border: 1px solid var(--border); border-left: 3px solid var(--au); border-radius: var(--r); padding: 8px 12px 9px; font: var(--t-xs)/1.45 var(--sans); }
+  .rcard .who { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 4px; font: var(--t-3xs)/1.3 var(--mono); color: var(--base5); }
+  .rcard h4 { margin: 0 0 4px; font: 600 var(--t-sm)/1.3 var(--sans); }
+  .rcard .txt { font: 14px/1.5 var(--serif); color: var(--fg); }
+  .rcard .txt p { margin: 0 0 6px; }
+  .acts { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 6px; align-items: center; }
+  .acts button { font: var(--t-3xs)/1.2 var(--mono); min-height: 22px; padding: 1px 8px; color: var(--base6); }
+  .acts button.go { color: var(--yellow); }
+  .acts button.go.ask { color: var(--ask); }
+  .acts button.go.def { color: var(--green); }
+  .acts button.demo { color: var(--base5); border-style: dashed; }
+  .acts .coord { margin-left: auto; font: var(--t-3xs)/1.2 var(--mono); color: var(--base4); }
+  .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--au); display: inline-block; flex: none; }
+
+  /* ---------- annotations pane ---------- */
+  .ab { display: flex; flex-direction: column; min-height: 0; flex: 1; }
+  .qrow { display: flex; align-items: center; gap: 6px; padding: 6px 10px 4px; flex-wrap: wrap; flex-shrink: 0; }
+  .qrow input { flex: 1 1 160px; min-width: 100px; }
+  .qrow .wand { min-height: 26px; padding: 0 7px; font-size: var(--t-sm); }
+  .qrow .plus { min-height: 26px; padding: 0 8px; font: var(--t-2xs)/1 var(--mono); color: var(--ask); border-color: rgba(226,164,120,.4); }
+  .qrow .n { font: var(--t-2xs)/1 var(--mono); color: var(--base5); white-space: nowrap; }
+  .facets { display: flex; flex-wrap: wrap; gap: 4px 10px; padding: 2px 10px 6px; border-bottom: 1px solid var(--border); font: var(--t-2xs)/1.3 var(--mono); flex-shrink: 0; align-items: center; }
+  .facets .lab { color: var(--base4); letter-spacing: .08em; text-transform: uppercase; font-size: var(--t-3xs); font-weight: 600; margin-right: 2px; }
+  .facets .grp { display: inline-flex; align-items: center; gap: 3px; flex-wrap: wrap; }
+  .facets button { white-space: nowrap; flex: none; min-height: 20px; padding: 0 6px; font: var(--t-2xs)/1 var(--mono); border-color: transparent; color: var(--base6); position: relative; overflow: hidden; }
+  .facets button:hover { border-color: var(--border-strong); color: var(--fg); }
+  .facets button.on { border-color: var(--au, var(--blue)); color: var(--fg); background: var(--au-soft, rgba(132,160,198,.14)); }
+  .facets button i { position: absolute; left: 0; top: 0; bottom: 0; background: var(--au-soft); z-index: -1; }
+  .facets button .dot { width: 6px; height: 6px; margin-right: 5px; }
+  .facets button .k { color: var(--base5); margin-left: 4px; }
+  .facets button.zero { color: var(--base4); }
+  .facets .sec { font-weight: 700; }
+  .spark { display: inline-flex; align-items: flex-end; gap: 1px; height: 14px; margin: 0 4px; }
+  .spark b { display: block; width: 5px; background: var(--base4); border-radius: 1px 1px 0 0; min-height: 1px; cursor: pointer; }
+  .spark b:hover, .spark b.on { background: var(--blue); }
+  .facets .kind .g { margin-right: 3px; }
+
+  /* rows */
+  .rows { flex: 1; overflow: auto; min-height: 0; outline: none; padding-bottom: 30px; }
+  .gh { position: sticky; top: 0; z-index: 2; display: flex; align-items: center; gap: 8px; padding: 6px 10px 3px; background: var(--bg); border-bottom: 1px solid var(--border); font: 600 var(--t-3xs)/1.2 var(--mono); letter-spacing: .08em; text-transform: uppercase; color: var(--base5); cursor: pointer; user-select: none; }
+  .gh:hover { color: var(--base7); }
+  .gh .n { color: var(--base4); font-weight: 400; letter-spacing: 0; }
+  .gh .dot { width: 6px; height: 6px; }
+  .gh .ptr { margin-left: auto; color: var(--base4); }
+  .gh.hot { color: var(--blue); }
+  .row { display: grid; grid-template-columns: 3px 38px minmax(0, 1fr) auto auto 14px; align-items: center; gap: 0 8px; min-height: 30px; padding: 0 8px 0 0; border-bottom: 1px solid var(--border); cursor: pointer; position: relative; }
+  .row:hover { background: var(--surface); }
+  .row.cur { background: var(--surface2); box-shadow: inset 2px 0 0 var(--blue); }
+  .row.x { background: var(--surface); }
+  .row.new { animation: fan .4s ease-out; }
+  @keyframes fan { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: none; } }
+  .row .rail { align-self: stretch; background: var(--au); }
+  .row .anc { font: var(--t-2xs)/1 var(--mono); color: var(--base5); text-align: center; border: 1px solid transparent; border-radius: var(--r); min-height: 20px; padding: 0 3px; }
+  .row .anc:hover { color: var(--blue); border-color: var(--border-strong); }
+  .row .main { display: flex; align-items: center; gap: 6px; min-width: 0; font: var(--t-sm)/1.3 var(--sans); }
+  .badge { white-space: nowrap; font: 600 var(--t-3xs)/1.2 var(--mono); letter-spacing: .06em; text-transform: uppercase; border: 1px solid; border-radius: 3px; padding: 1px 5px; flex: none; }
+  .badge.req { color: var(--ask); border-color: rgba(226,164,120,.5); }
+  .badge.ok { color: var(--blue); border-color: rgba(132,160,198,.5); }
+  .badge.def { color: var(--green); border-color: rgba(180,190,130,.5); }
+  .badge.mr { color: var(--ask); border-color: rgba(226,164,120,.5); }
+  .badge.kasten { color: var(--violet); border-color: rgba(178,148,187,.5); }
+  .badge.merged { color: var(--green); border-color: rgba(180,190,130,.5); }
+  .badge.declined { color: var(--red); border-color: rgba(226,120,120,.5); }
+  .row .main .t { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--fg); }
+  .row .main .sub { color: var(--base5); font: var(--t-2xs)/1.2 var(--mono); flex: none; }
+  .row .by { font: var(--t-2xs)/1 var(--mono); color: var(--base5); display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; }
+  .row .age { font: var(--t-2xs)/1 var(--mono); color: var(--base4); text-align: right; min-width: 24px; font-variant-numeric: tabular-nums; }
+  .row .ptr { color: var(--base4); font-size: var(--t-2xs); text-align: center; }
+  .row.child .anc { color: var(--base4); }
+  .row.child .main { padding-left: 14px; }
+  .row.child .main::before { content: '↳'; color: var(--base4); font-family: var(--mono); font-size: var(--t-2xs); margin-right: 2px; }
+  .placement { color: var(--base4); font: var(--t-2xs)/1 var(--mono); flex: none; white-space: nowrap; }
+  .flag { font: var(--t-3xs)/1 var(--mono); color: var(--green); border: 1px solid rgba(180,190,130,.4); border-radius: 3px; padding: 1px 4px; flex: none; }
+  .flag.wait { color: var(--base5); border-color: var(--border); }
+  .flag.wait::after { content: ''; animation: dots 1.2s steps(4) infinite; }
+  @keyframes dots { 0% { content: ''; } 25% { content: '.'; } 50% { content: '..'; } 75% { content: '...'; } }
+
+  /* expanded body */
+  .xb { border-bottom: 1px solid var(--border); background: var(--surface); padding: 8px 12px 10px 49px; border-left: 3px solid var(--au); font: var(--t-xs)/1.45 var(--sans); }
+  .xb .txt { font: 14px/1.5 var(--serif); color: var(--fg); max-width: 62ch; }
+  .xb .txt p { margin: 0 0 6px; }
+  .meta { display: flex; flex-wrap: wrap; gap: 4px 10px; margin: 2px 0 6px; font: var(--t-2xs)/1.4 var(--mono); color: var(--base6); }
+  .meta .k { color: var(--base5); letter-spacing: .08em; text-transform: uppercase; font-size: var(--t-3xs); font-weight: 600; margin-right: 3px; }
+  .chip { display: inline-block; font: var(--t-2xs)/1.3 var(--mono); color: var(--green); border: 1px solid rgba(180,190,130,.5); border-radius: 999px; padding: 0 8px; }
+  .xb blockquote, .rcard blockquote { margin: 4px 0 6px; padding: 2px 8px; border-left: 2px solid var(--border-strong); color: var(--fg-muted); font: italic 13px/1.45 var(--serif); }
+  .xb .answers { margin-top: 6px; font: var(--t-2xs)/1.4 var(--mono); color: var(--base5); }
+
+  /* detail pane (wide frame) */
+  .split2 { display: flex; flex: 1; min-height: 0; }
+  .split2 .rows { flex: 1; }
+  .detail { flex: 0 0 380px; border-left: 1px solid var(--border); overflow: auto; background: var(--surface); }
+  .detail .xb { border: 0; border-left: 3px solid var(--au); padding: 10px 12px 12px; background: transparent; }
+  .detail .dh { padding: 8px 12px 0; display: flex; gap: 8px; align-items: center; font: var(--t-2xs)/1 var(--mono); color: var(--base5); }
+  .detail .dh b { color: var(--fg); font: 600 var(--t-sm)/1.3 var(--sans); min-width: 0; }
+  .detail .dh > span:last-of-type { flex: none; white-space: nowrap; display: inline-flex; gap: 5px; align-items: center; }
+  .detail .empty { padding: 30px 14px; color: var(--base5); font: var(--t-xs)/1.4 var(--mono); text-align: center; }
+
+  /* board */
+  .board { flex: 1; overflow: auto; padding: 10px; display: grid; grid-auto-flow: column; grid-auto-columns: minmax(230px, 1fr); gap: 10px; align-items: start; }
+  .bcol { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+  .bcol .bh { font: 600 var(--t-3xs)/1.2 var(--mono); letter-spacing: .08em; text-transform: uppercase; color: var(--base5); padding: 2px 2px 4px; border-bottom: 1px solid var(--border); display: flex; gap: 6px; cursor: pointer; }
+  .bcol .bh .n { color: var(--base4); font-weight: 400; }
+  .bcol .bh.hot { color: var(--blue); }
+  .bcard { background: var(--surface); border: 1px solid var(--border); border-left: 3px solid var(--au); border-radius: var(--r); padding: 6px 9px 7px; cursor: pointer; font: var(--t-xs)/1.4 var(--sans); }
+  .bcard:hover { border-color: var(--base5); border-left-color: var(--au); }
+  .bcard.cur { box-shadow: 0 0 0 1px var(--blue); }
+  .bcard .h { display: flex; gap: 6px; align-items: center; font: var(--t-3xs)/1.2 var(--mono); color: var(--base5); margin-bottom: 3px; }
+  .bcard .t { font: 600 var(--t-sm)/1.3 var(--sans); color: var(--fg); }
+  .bcard .e { color: var(--fg-muted); display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; margin-top: 2px; }
+  .bcard.x .e { display: block; -webkit-line-clamp: unset; font: 13px/1.5 var(--serif); color: var(--fg); }
+  .bcard .child { margin-top: 4px; padding-left: 8px; border-left: 2px solid var(--border); color: var(--base6); font: var(--t-2xs)/1.3 var(--mono); }
+
+  .legend { padding: 3px 10px; border-top: 1px solid var(--border); font: var(--t-3xs)/1.4 var(--mono); color: var(--base5); flex-shrink: 0; display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+  .empty { padding: 30px 14px; color: var(--base5); font: var(--t-xs)/1.4 var(--mono); text-align: center; }
+
+  /* phone */
+  .phone .pane { border: 0; }
+  .phone .qrow { padding: 6px 8px 2px; }
+  .phone .facets { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; padding: 4px 8px 6px; }
+  .phone .facets::-webkit-scrollbar { display: none; }
+  .phone .facets .grp { flex-wrap: nowrap; }
+  .phone .row { grid-template-columns: 3px minmax(0, 1fr) auto 14px; min-height: 40px; }
+  .phone .row .anc { display: none; }
+  .phone .row .by { display: none; }
+  .phone .row .main { flex-wrap: wrap; row-gap: 1px; font-size: var(--t-base); }
+  .phone .row .main .t { white-space: normal; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+  .phone .row .main .sub { display: none; }
+  .phone .row .sec { font: var(--t-2xs)/1 var(--mono); color: var(--base5); }
+  .phone .xb { padding-left: 12px; }
+  .phone .bottombar { height: 44px; border-top: 1px solid var(--border); background: var(--surface); display: flex; align-items: center; justify-content: space-around; font: var(--t-sm)/1 var(--mono); color: var(--base6); flex-shrink: 0; }
+  .phone .bottombar .on { color: var(--fg); font-weight: 700; }
+  .phone .bottombar button { border: 0; }
+  .phone .modal { width: 96%; max-height: 94%; }
+
+  /* ---------- modals ---------- */
+  .scrim { position: absolute; inset: 0; z-index: 30; background: rgba(0,0,0,.5); display: flex; align-items: flex-start; justify-content: center; padding: 2% 12px; overflow: auto; }
+  .modal { width: min(660px, 96%); max-height: 96%; overflow: auto; background: var(--bg); border: 1px solid var(--border-strong); border-radius: var(--r); box-shadow: 0 12px 40px rgba(0,0,0,.5); padding: 12px; display: flex; flex-direction: column; gap: 5px; }
+  .modal.wide { width: min(860px, 98%); }
+  .modal > * { flex-shrink: 0; }
+  .modal h3 { margin: 0; font: var(--t-sm)/1.3 var(--mono); display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .modal h3 .d { color: var(--green); }
+  .modal h3 .on { color: var(--base5); font-weight: 400; }
+  .modal h3 .x { margin-left: auto; min-height: 22px; padding: 0 8px; font-size: var(--t-2xs); color: var(--base5); }
+  .modal h3 .sw { font: var(--t-2xs)/1 var(--mono); min-height: 22px; padding: 0 8px; color: var(--ask); border-color: rgba(226,164,120,.4); }
+  .modal .lbl { margin-top: 6px; }
+  .modal .lbl.cap { color: var(--base5); }
+  .modal .lbl .help { text-transform: none; letter-spacing: 0; }
+  .modal .chips { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+  .modal .achip { font: var(--t-2xs)/1.4 var(--mono); color: var(--fg-muted); background: var(--surface); border: 1px solid var(--border); border-radius: var(--r); padding: 2px 8px; }
+  .modal .achip b { color: var(--green); margin-right: 4px; }
+  .modal select.achip { padding: 1px 6px; min-height: 22px; }
+  .modal .scope { font: var(--t-2xs)/1.2 var(--mono); border-radius: 999px; padding: 2px 10px; min-height: 24px; color: var(--base6); }
+  .modal .scope.on { background: var(--cyan); color: var(--bg); border-color: var(--cyan); }
+  .modal .seg { align-self: flex-start; }
+  .modal .stylerow { display: flex; gap: 8px; align-items: center; }
+  .modal .stylerow select { flex: 1; }
+  .modal textarea { width: 100%; min-height: 44px; font: 13px/1.45 var(--sans); }
+  .modal .check { display: inline-flex; align-items: center; gap: 6px; font: var(--t-2xs)/1.2 var(--mono); color: var(--fg-muted); }
+  .modal .help { font: var(--t-3xs)/1.4 var(--mono); color: var(--base5); }
+  .modal .foot { display: flex; align-items: center; gap: 8px; margin-top: 6px; flex-wrap: wrap; }
+  .modal .foot .go { color: var(--ask); }
+  .modal .foot .go.armed { background: var(--ask); color: var(--bg); border-color: var(--ask); }
+  .modal .foot .go.def { color: var(--green); }
+  .modal .foot .go.def.armed { background: var(--green); color: var(--bg); border-color: var(--green); }
+  .modal .foot .neg { color: var(--red); }
+  .modal .foot .neg.on { background: var(--red); color: var(--bg); border-color: var(--red); }
+  .modal details summary { cursor: pointer; font: 600 var(--t-3xs)/1.2 var(--mono); letter-spacing: .08em; text-transform: uppercase; color: var(--base5); margin-top: 6px; }
+  .marktext { font: 14px/1.6 var(--serif); color: var(--fg); background: var(--surface); border: 1px solid var(--border); border-radius: var(--r); padding: 8px 12px; max-height: 200px; overflow: auto; user-select: none; cursor: crosshair; }
+  .marktext p { margin: 0 0 8px; }
+  .marktext .w { border-radius: 2px; padding: 0 1px; transition: background .08s; }
+  .marktext .w:hover { background: rgba(226,164,120,.28); }
+  .marktext .w.on { background: rgba(180,190,130,.32); color: #fff; box-shadow: 0 1px 0 var(--green); }
+  .marktext .w.on:hover { background: rgba(226,120,120,.3); box-shadow: 0 1px 0 var(--red); }
+  .marktext .w.drag { background: rgba(226,164,120,.28); }
+  .modal .gen { font: 14px/1.5 var(--serif); color: var(--fg); background: var(--surface); border: 1px solid var(--border); border-left: 3px solid var(--ask); border-radius: var(--r); padding: 6px 10px; }
+  .modal .gen .words { color: var(--green); }
+  .modal .gen .none { color: var(--base5); font-style: italic; }
+  .evbox { font: var(--t-2xs)/1.5 var(--mono); color: var(--base7); background: var(--surface); border: 1px solid var(--border); border-radius: var(--r); padding: 6px 10px; white-space: pre-wrap; word-break: break-word; max-height: 220px; overflow: auto; }
+  .evbox .k { color: var(--cyan); } .evbox .hg { color: var(--green); } .evbox .ho { color: var(--ask); } .evbox .hv { color: var(--violet); }
+  .termrow { display: flex; gap: 6px; align-items: center; }
+  .termrow .term { flex: 1; font: 600 var(--t-md)/1.3 var(--sans); color: var(--fg); background: var(--surface); border: 1px solid var(--border); border-left: 3px solid var(--au, var(--green)); border-radius: var(--r); padding: 5px 8px; min-height: 32px; cursor: pointer; }
+  .termrow select.term { appearance: auto; }
+  .termrow .fmt { min-height: 28px; font-size: var(--t-2xs); }
+  /* answer entries */
+  .entries { display: flex; flex-direction: column; gap: 6px; }
+  .entry { border: 1px solid var(--border); border-left: 3px solid var(--green); border-radius: var(--r); padding: 6px 8px; display: grid; grid-template-columns: minmax(0, 1fr) auto 22px; gap: 4px 8px; align-items: center; background: var(--surface); }
+  .entry input.term { font: 600 var(--t-sm)/1.3 var(--sans); }
+  .entry select { min-height: 24px; font-size: var(--t-2xs); }
+  .entry .rm { border: 0; min-height: 22px; padding: 0; color: var(--base5); }
+  .entry textarea { grid-column: 1 / -1; min-height: 52px; }
+  .entry .hint { grid-column: 1 / -1; font: var(--t-3xs)/1.3 var(--mono); color: var(--base5); }
+  .entry.note { border-left-color: var(--au, var(--yellow)); }
+  .add { align-self: flex-start; font: var(--t-2xs)/1 var(--mono); min-height: 24px; color: var(--green); }
+  /* diff */
+  .diff { border: 1px solid var(--border); border-radius: var(--r); overflow: hidden; font: var(--t-2xs)/1.5 var(--mono); }
+  .diff .dh { background: var(--surface); padding: 4px 10px; display: flex; gap: 10px; align-items: baseline; color: var(--base6); border-bottom: 1px solid var(--border); flex-wrap: wrap; }
+  .diff .dh b { color: var(--fg); font-weight: 600; }
+  .diff .dh .n { margin-left: auto; color: var(--base5); }
+  .diff .ln { padding: 1px 10px; white-space: pre-wrap; word-break: break-word; color: var(--base7); }
+  .diff .ln.del { background: rgba(226,120,120,.12); color: var(--red); }
+  .diff .ln.add { background: rgba(180,190,130,.12); color: var(--green); }
+  .diff .ln.add .ref { background: rgba(180,190,130,.2); border-radius: 2px; }
+  .diff .ln.tag { color: var(--cyan); background: rgba(137,184,194,.08); }
+  .diff .struct { padding: 3px 10px; display: flex; gap: 8px; align-items: baseline; border-top: 1px solid var(--border); color: var(--base6); flex-wrap: wrap; }
+  .diff .struct .plus { color: var(--green); }
+  .diff .struct .same { color: var(--base5); }
+  .relays { display: flex; flex-direction: column; gap: 3px; font: var(--t-2xs)/1.4 var(--mono); }
+  .relays .r { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  .relays .r .why { color: var(--base5); border: 1px solid var(--border); border-radius: 3px; padding: 0 5px; font-size: var(--t-3xs); }
+  .relays .r .why.inbox { color: var(--ask); border-color: rgba(226,164,120,.5); }
+  .relays .r .why.found { color: var(--cyan); border-color: rgba(137,184,194,.5); }
+  .relays .r .why.hint { color: var(--yellow); border-color: rgba(233,177,137,.5); }
+  .relays .r .why.mine { color: var(--blue); border-color: rgba(132,160,198,.5); }
+  .relays .r input { margin: 0; }
+  /* replies (NIP-22 comments under an annotation) */
+  .thread { margin-top: 8px; border-top: 1px dashed var(--border); padding-top: 6px; display: flex; flex-direction: column; gap: 4px; }
+  .thread .th { display: flex; gap: 8px; align-items: baseline; font: var(--t-3xs)/1.2 var(--mono); color: var(--base5); letter-spacing: .08em; text-transform: uppercase; font-weight: 600; }
+  .thread .th .n { color: var(--base4); letter-spacing: 0; font-weight: 400; text-transform: none; }
+  .reply { display: grid; grid-template-columns: 3px minmax(0, 1fr); gap: 0 8px; }
+  .reply .rail { background: var(--au); border-radius: 1px; }
+  .reply .rh { font: var(--t-2xs)/1.3 var(--mono); color: var(--base5); display: flex; gap: 6px; align-items: center; }
+  .reply .rb { font: 13px/1.45 var(--serif); color: var(--fg); max-width: 62ch; }
+  .replybox { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 6px; align-items: start; margin-top: 4px; }
+  .replybox textarea { min-height: 30px; font: 13px/1.4 var(--sans); padding: 5px 8px; resize: vertical; }
+  .replybox .col2 { display: flex; flex-direction: column; gap: 3px; align-items: flex-end; }
+  .replybox button { font: var(--t-3xs)/1.2 var(--mono); min-height: 22px; padding: 1px 8px; color: var(--cyan); border-color: rgba(137,184,194,.4); white-space: nowrap; }
+  .replybox .wire { font: var(--t-3xs)/1.3 var(--mono); color: var(--base4); grid-column: 1 / -1; }
+  .replybox .wire .k { color: var(--cyan); }
+  .row .sub.rep { color: var(--cyan); }
+  /* review buffer */
+  .rv { flex: 1; overflow: auto; padding: 10px 12px 60px; display: flex; flex-direction: column; gap: 8px; font: var(--t-xs)/1.45 var(--sans); }
+  .rv .status { display: flex; flex-wrap: wrap; gap: 6px 12px; align-items: center; font: var(--t-2xs)/1.3 var(--mono); color: var(--base6); }
+  .rv .status .k { color: var(--base5); letter-spacing: .08em; text-transform: uppercase; font-size: var(--t-3xs); font-weight: 600; margin-right: 4px; }
+  .rv .status .ok { color: var(--green); } .rv .status .warn { color: var(--yellow); }
+  .rv .ask { display: grid; grid-template-columns: 3px minmax(0, 1fr); gap: 0 10px; background: var(--surface); border-radius: var(--r); }
+  .rv .ask .rail { background: var(--au); }
+  .rv .ask .body { padding: 6px 10px 8px 0; }
+  .rv .ask .who { font: var(--t-2xs)/1.3 var(--mono); color: var(--base5); display: flex; gap: 6px; align-items: center; margin-bottom: 2px; }
+  .rv .ask .txt { font: 14px/1.5 var(--serif); color: var(--fg); }
+  .rv h4 { margin: 6px 0 0; font: 600 var(--t-3xs)/1.2 var(--mono); letter-spacing: .08em; text-transform: uppercase; color: var(--base5); display: flex; gap: 8px; align-items: baseline; }
+  .rv h4 .n { color: var(--base4); font-weight: 400; letter-spacing: 0; text-transform: none; }
+  .rv .sum { display: flex; flex-wrap: wrap; gap: 6px; }
+  .rv .sum .tile { border: 1px solid var(--border); border-radius: var(--r); padding: 4px 9px; font: var(--t-2xs)/1.3 var(--mono); color: var(--base6); display: flex; flex-direction: column; }
+  .rv .sum .tile b { font: 600 var(--t-md)/1.2 var(--sans); color: var(--fg); }
+  .rv .sum .tile.plus b { color: var(--green); } .rv .sum .tile.same b { color: var(--base5); }
+  .rv .defs { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 6px; }
+  .rv .dcard { border: 1px solid var(--border); border-left: 3px solid var(--au); border-radius: var(--r); padding: 5px 9px 6px; background: var(--surface); }
+  .rv .dcard .h { display: flex; gap: 6px; align-items: center; font: var(--t-3xs)/1.2 var(--mono); color: var(--base5); }
+  .rv .dcard .t { font: 600 var(--t-sm)/1.3 var(--sans); color: var(--fg); margin: 2px 0; }
+  .rv .dcard .e { font: 12px/1.4 var(--serif); color: var(--fg-muted); }
+  .rv details.sec > summary { cursor: pointer; list-style: none; display: flex; gap: 10px; align-items: baseline; background: var(--surface); border: 1px solid var(--border); border-radius: var(--r) var(--r) 0 0; padding: 4px 10px; font: var(--t-2xs)/1.4 var(--mono); color: var(--base6); }
+  .rv details.sec > summary b { color: var(--fg); }
+  .rv details.sec > summary .n { margin-left: auto; color: var(--base5); }
+  .rv details.sec[open] > summary { border-bottom: 0; }
+  .rv details.sec .diff { border-radius: 0 0 var(--r) var(--r); }
+  .rv details.sec:not([open]) > summary { border-radius: var(--r); }
+  .rv .agent { border: 1px dashed var(--border-strong); border-radius: var(--r); padding: 8px 10px; display: flex; flex-direction: column; gap: 4px; }
+  .rv .agent .h { display: flex; gap: 8px; align-items: center; font: var(--t-3xs)/1.2 var(--mono); color: var(--base5); letter-spacing: .08em; text-transform: uppercase; }
+  .rv .agent ul { margin: 2px 0 0 16px; padding: 0; }
+  .rv .agent .rec { color: var(--green); font-family: var(--mono); font-size: var(--t-2xs); }
+  .rvfoot { position: sticky; bottom: 0; background: var(--bg); border-top: 1px solid var(--border); padding: 6px 12px; display: flex; flex-direction: column; gap: 3px; }
+  .rvfoot .foot { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .rvfoot .foot button { font: var(--t-xs)/1.2 var(--mono); }
+  .rvfoot .neg { color: var(--red); } .rvfoot .neg.on { background: var(--red); color: var(--bg); border-color: var(--red); }
+  .rvfoot .merge { color: var(--green); } .rvfoot .merge.armed { background: var(--green); color: var(--bg); border-color: var(--green); }
+  .rvfoot .steps { font: var(--t-3xs)/1.5 var(--mono); color: var(--base5); }
+  .rvfoot .verdict { font: var(--t-xs)/1.4 var(--mono); }
+  .pane-head .back { min-height: 20px; padding: 0 7px; font: var(--t-2xs)/1 var(--mono); color: var(--base6); }
+  /* review (modal leftovers) */
+  .review .hdr { display: flex; gap: 10px; align-items: baseline; flex-wrap: wrap; font: var(--t-2xs)/1.3 var(--mono); color: var(--base6); }
+  .review .hdr b { color: var(--fg); font: 600 var(--t-sm)/1.3 var(--sans); }
+  .review .asksum { font: 14px/1.5 var(--serif); color: var(--fg); border-left: 3px solid var(--ask); padding: 4px 10px; background: var(--surface); }
+  .review .agent { border: 1px dashed var(--border-strong); border-radius: var(--r); padding: 8px 10px; display: flex; flex-direction: column; gap: 4px; font: var(--t-xs)/1.45 var(--sans); }
+  .review .agent .h { display: flex; gap: 8px; align-items: center; font: var(--t-3xs)/1.2 var(--mono); color: var(--base5); letter-spacing: .08em; text-transform: uppercase; }
+  .review .agent ul { margin: 2px 0 0 16px; padding: 0; }
+  .review .agent .rec { color: var(--green); font-family: var(--mono); font-size: var(--t-2xs); }
+  .review .foot .merge { color: var(--green); }
+  .review .foot .merge.armed { background: var(--green); color: var(--bg); border-color: var(--green); }
+  .review .steps { font: var(--t-3xs)/1.5 var(--mono); color: var(--base5); }
+
+  /* overlay: what I saw */
+  .saw { width: min(1040px, 100%); background: var(--bg); border: 1px solid var(--border-strong); border-radius: var(--r); box-shadow: 0 12px 40px rgba(0,0,0,.5); padding: 14px; display: grid; grid-template-columns: 426px 1fr; gap: 16px; }
+  .saw h3 { margin: 0 0 8px; font: var(--t-sm)/1.3 var(--mono); grid-column: 1 / -1; display: flex; gap: 10px; align-items: baseline; }
+  .saw h3 .x { margin-left: auto; min-height: 24px; padding: 0 8px; font-size: var(--t-2xs); }
+  .shot { position: relative; width: 426px; }
+  .shot img { display: block; width: 426px; border: 1px solid var(--border); }
+  .m { position: absolute; width: 20px; height: 20px; border-radius: 50%; background: var(--ask); color: var(--bg); font: 700 var(--t-2xs)/20px var(--mono); text-align: center; box-shadow: 0 0 0 2px var(--bg); cursor: default; }
+  .saw ol { margin: 0; padding-left: 0; list-style: none; display: flex; flex-direction: column; gap: 8px; font: var(--t-xs)/1.45 var(--sans); color: var(--fg-muted); }
+  .saw ol li { display: grid; grid-template-columns: 20px 1fr; gap: 8px; }
+  .saw ol li .m { position: static; }
+  .saw ol li b { color: var(--fg); font-weight: 600; }
+  .saw .then { grid-column: 1 / -1; border-top: 1px solid var(--border); padding-top: 10px; font: var(--t-xs)/1.5 var(--sans); color: var(--fg-muted); }
+  .saw .then b { color: var(--fg); font-weight: 600; }
+  .saw .then ul { margin: 4px 0 0 16px; padding: 0; }
+  @media (max-width: 900px) { .saw { grid-template-columns: 1fr; } .shot, .shot img { width: 100%; max-width: 426px; } }
+
+  /* toasts */
+  .toasts { position: absolute; right: 14px; bottom: 34px; z-index: 40; display: flex; flex-direction: column; gap: 6px; }
+  .toast { background: var(--surface); border: 1px solid var(--border-strong); border-radius: var(--r); padding: 6px 12px; font: var(--t-xs)/1.3 var(--mono); color: var(--fg); box-shadow: 0 8px 24px rgba(0,0,0,.35); display: flex; gap: 8px; align-items: center; max-width: 400px; }
+  .toast .d { width: 8px; height: 8px; border-radius: 50%; background: var(--blue); flex: none; }
+  .toast.ok .d { background: var(--green); } .toast.ask .d { background: var(--ask); }
+
+  @media (max-width: 760px) { .wb:not(.phone) { height: auto; min-height: 720px; } .body { flex-direction: column; } .pane.reader { flex: 0 0 auto; max-height: 320px; border-right: 0; border-bottom: 1px solid var(--border); } .detail { display: none; } }
+</style>
+
+<div class="guide" id="guide">
+  <b>Annotations ledger</b>
+  <span class="hint" id="guidehint"></span>
+  <span class="sp"></span>
+  <span class="frames">
+    <span class="seg" title="Whose publication is this? Decides whether relink signs your next version or a derivative + kind 818">
+      <button id="own-you" class="on" onclick="setOwned(true)">your publication</button>
+      <button id="own-them" onclick="setOwned(false)">someone else's</button>
+    </span>
+    <span class="seg" title="Where the table lives">
+      <button id="f-split" class="on" onclick="setFrame('split')">split · beside the reader</button>
+      <button id="f-wide" onclick="setFrame('wide')">wide · on its own</button>
+      <button id="f-phone" onclick="setFrame('phone')">phone</button>
+    </span>
+    <button onclick="toggleSaw()" title="The current table, annotated">what I saw</button>
+    <button onclick="resetAll()" title="Back to the start">reset</button>
+  </span>
+</div>
+<div class="flows">
+  <span><b>request</b> · “+ annotate” or a section's <b>n</b> → the annotate window (notes · kasten · vocabulary · ask) → sign → an open row</span>
+  <span><b>answer by hand</b> · an open request's “answer it yourself ▸” → answer mode: one term at a time (term dropdown · definition · sign pages to the next term, closes on the last · skip) → the rows nest under the request; an answered vocabulary request still takes your definitions</span>
+  <span><b>define by hand</b> · vocabulary mode, mark words → “define them myself ▸” — a definition with no request</span>
+  <span><b>vocabulary events</b> · a def row → relink (diff) · promote → glossary (per event) · the reader gets {{ref}} links</span>
+  <span><b>respond</b> · any row → its thread: a reply is a kind-1111 comment under the annotation · “note in reply ▸” writes a full note beside it</span>
+  <span><b>merge</b> · the ⑂ row → review the diff → merge + / decline − · someone else's publication → fork + 818 instead</span>
+</div>
+
+<div id="root"></div>
+
+<script>
+// ------------------------------------------------------------------ data
+// Same recipe as web/src/lib/discussions/colors.ts: hue = first 6 hex of the pubkey mod 360.
+const AUTHORS = { you: { name: 'you', pk: '5a0e7c' }, assistant: { name: '@assistant', pk: 'f1da0e' }, k3f: { name: 'npub1k3f…', pk: '4c9e21' }, owner: { name: 'npub1pkf…', pk: 'b3f2a1' } };
+const hueOf = (pk) => parseInt(pk.slice(0, 6), 16) % 360;
+const au = (a, alpha = 1) => `hsla(${hueOf(AUTHORS[a].pk)}, 65%, 55%, ${alpha})`;
+const auStyle = (a) => `--au:${au(a)};--au-soft:${au(a, .14)}`;
+const PUB = { d: 'on-method-9k2', title: 'On Method' };
+const STYLES = [{ id: 's1', title: 'Glossary voice' }, { id: 's2', title: 'Equations and code, built up' }];
+const SECTIONS = [
+  { d: 'q7f2k1', title: 'The consistency condition', paras: [
+    'A new theory, the textbook rule says, must agree with the theories already accepted in the same domain. Where it disagrees, the burden is on the newcomer.',
+    'This looks like caution. In practice it is a rule for preserving the older theory, not the better one: the first theory to arrive sets the terms on which every rival is judged.'] },
+  { d: 'm3x8pz', title: 'Against method', paras: [
+    'The history of science does not obey the rule. Every advance we now teach as progress broke a condition that the method of its day called binding. What the textbook calls epistemological anarchism is only the honest record of this.',
+    'The deeper trouble is that the rival theories often cannot be measured against each other at all. Their incommensurability is not a failure of care; the terms of one simply do not translate into the terms of the other.'] },
+  { d: 'p0c4vn', title: 'Consequences', paras: [
+    'If method is a record and not a rule, then teaching method is teaching history. The consistency condition becomes one move among many, useful when the old theory is good and harmful when it is merely old.',
+    'The case for pluralism follows: keep rivals alive long enough for their incommensurability to become a question rather than a verdict.'] },
+];
+const NOW = 1789700000; const H = 3600, D = 86400;
+// kind: note | def | request | mr | kasten.  sec: -1 = whole publication.
+function seedItems() { return [
+  { id: 'n1', kind: 'note', sec: -1, placement: 'before', title: 'Preface', body: 'Front matter for the whole publication: why the three sections are in this order and what the reader should have in hand before §1.', by: 'you', t: NOW - 12 * D, style: 's1' },
+  { id: 'n2', kind: 'note', sec: 0, placement: 'attached', title: 'On section one', body: 'A reader\'s note on the first section: the burden argument assumes the domain is fixed, which it never is. The newcomer often redraws the domain, and then "agreement" has no referent.', by: 'you', t: NOW - 9 * D, replies: [
+    { by: 'assistant', t: NOW - 8 * D, body: 'Agreed on the referent point; Feyerabend makes it explicitly in ch. 3 — the domain is what the winning theory says it is.' },
+    { by: 'k3f', t: NOW - 7 * D, body: 'Is that not just the incommensurability claim again, one section early?' } ] },
+  { id: 'r1', kind: 'request', output: 'ask', sec: 0, title: 'Who first stated the consistency condition in this form?', task: 'Who first stated the consistency condition in this form?', context: 'A new theory, the textbook rule says, must agree with the theories already accepted in the same domain.', by: 'you', t: NOW - 2 * H, status: 'open', signed: true },
+  { id: 'r2', kind: 'request', output: 'notes', sec: 1, title: 'history of the moral', task: 'history of the moral', context: 'a sufficient recompense', scope: ['section', 'siblings'], style: 's1', by: 'you', t: NOW - 6 * D, status: 'answered', signed: true },
+  { id: 'n3', kind: 'note', sec: 1, placement: 'attached', title: 'Gauss and Legendre', body: 'Legendre published least squares in 1805; Gauss claimed priority in 1809 and the dispute is the textbook case of the rule being applied to people rather than theories.', by: 'assistant', t: NOW - 6 * D + 2 * H, request: 'r2', style: 's1' },
+  { id: 'r3', kind: 'request', output: 'vocabulary', sec: 1, title: 'Define: epistemological anarchism, incommensurability', task: 'define these words in the context of these events: epistemological anarchism, incommensurability', terms: ['epistemological anarchism', 'incommensurability'], scope: ['section', 'siblings', 'web'], style: 's1', by: 'you', t: NOW - 3 * D, status: 'answered', signed: true },
+  { id: 'd1', kind: 'def', sec: 1, term: 'epistemological anarchism', title: 'Epistemological anarchism', body: 'The position, after Feyerabend, that no fixed set of methodological rules can account for how science has actually advanced. In this text it is not a call to abandon standards but the claim that every standard has been broken by some episode we now count as progress.', by: 'assistant', t: NOW - 3 * D + H, request: 'r3', style: 's1', coord: '30041:f1da0e…:z2k7ab' },
+  { id: 'd2', kind: 'def', sec: 1, term: 'incommensurability', title: 'Incommensurability', body: 'Two theories are incommensurable when the terms of one cannot be translated into the terms of the other, so no common observation statement can decide between them. Introduced independently by Kuhn and Feyerabend in 1962.', by: 'assistant', t: NOW - 3 * D + H + 60, request: 'r3', style: 's1', coord: '30041:f1da0e…:b9w1qe', glossary: true, replies: [ { by: 'you', t: NOW - 2 * D, body: 'Drop the 1962 date from the first sentence — the sense in this text comes first, the history second.' } ] },
+  { id: 'n4', kind: 'note', sec: 1, placement: 'after', title: 'A modern reading', body: 'Belongs in the reading order after two: Lakatos\'s research programmes are the attempt to keep a rule while conceding everything §2 says.', by: 'you', t: NOW - 5 * D, format: 'org' },
+  { id: 'n5', kind: 'note', sec: 2, placement: 'attached', title: 'Margin note', body: 'The assistant\'s aside on three: teaching history is not the same as teaching by example. A record can be read as a rule the moment it is taught.', by: 'assistant', t: NOW - 4 * D },
+  { id: 'n6', kind: 'note', sec: 2, placement: 'attached', title: 'Pluralism is not relativism', body: 'Keeping rivals alive is a claim about time, not about truth: the verdict is postponed, not abolished.', by: 'k3f', t: NOW - 20 * D },
+  { id: 'r4', kind: 'request', output: 'kasten', sec: -1, title: 'Kasten request', task: 'write a kasten of the whole argument: one note per move, linked in reading order', scope: ['publication'], style: 's1', by: 'you', t: NOW - 8 * D, status: 'answered', signed: true },
+  { id: 'b1', kind: 'kasten', sec: -1, title: 'Kasten: On Method', body: 'A kasten of 23 entries attached to the whole publication, one note per move in the argument, linked in reading order.', by: 'assistant', t: NOW - 8 * D + 5 * H, request: 'r4', entries: 23 },
+  { id: 'm1', kind: 'mr', sec: -1, title: 'Relink 2 terms to their definitions; add a glossary', body: 'Two words in §2 go undefined; my agent wrote a definition for each. This links the first use of each to its definition and adds the two as a glossary. Your wording is unchanged.', by: 'k3f', t: NOW - 1 * D, status: 'open', defs: ['d1', 'd2'], glossary: ['d1', 'd2'] },
+]; }
+let ITEMS = seedItems();
+const byId = (id) => ITEMS.find((i) => i.id === id);
+
+// ------------------------------------------------------------------ state
+let S, nextId = 100;
+function initial() {
+  return {
+    frame: 'split', view: 'rows', group: 'section', sort: 'reading', detail: 'inline', owned: true,
+    by: new Set(), secs: new Set(), kinds: new Set(), since: null, day: null,
+    cursor: 0, expanded: null, collapsed: new Set(), hot: null, hotSec: null, openStub: null,
+    ask: null, answer: null, composer: null, relink: null, review: null, armed: null, agentReview: null,
+    relinked: false, pubVer: 3, saw: false, toasts: [],
+  };
+}
+S = initial();
+
+// ------------------------------------------------------------------ helpers
+const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+function rel(t) { const s = Math.max(0, NOW - t); if (s < 60) return 'now'; if (s < H) return Math.floor(s / 60) + 'm'; if (s < D) return Math.floor(s / H) + 'h'; return Math.floor(s / D) + 'd'; }
+function toast(msg, kind = '') { S.toasts.push({ msg, kind, id: Math.random() }); render(); setTimeout(() => { S.toasts.shift(); render(); }, 3800); }
+function setFrame(f) { S.frame = f; if (f === 'phone' && S.view === 'board') S.view = 'rows'; S.detail = f === 'wide' ? 'pane' : 'inline'; render(); }
+function setOwned(v) { S.owned = v; S.relink = null; S.review = null; render(); toast(v ? 'this is your publication — relink signs your next version; the ⑂ row is addressed to you' : 'someone else\'s publication (npub1pkf…) — relink becomes fork + kind 818; the ⑂ row is theirs to merge', ''); }
+function resetAll() { ITEMS = seedItems(); S = initial(); render(); }
+function toggleSaw() { S.saw = !S.saw; render(); }
+function tog(set, v) { if (set.has(v)) set.delete(v); else set.add(v); S.cursor = 0; render(); }
+const ownerKey = () => S.owned ? 'you' : 'owner';
+const ROOT = () => `30040:${AUTHORS[ownerKey()].pk}…:${PUB.d}`;
+const styleTitle = (id) => (STYLES.find((s) => s.id === id) || {}).title || id;
+function glyph(i) {
+  if (i.kind === 'request') return i.status === 'open' ? { g: '?', cls: 'req' } : { g: '✓', cls: 'ok' };
+  if (i.kind === 'def') return { g: 'def', cls: 'def' };
+  if (i.kind === 'mr') return i.status === 'open' ? { g: '⑂', cls: 'mr' } : i.status === 'merged' ? { g: '⑂', cls: 'merged' } : { g: '⑂', cls: 'declined' };
+  if (i.kind === 'kasten') return { g: '⊞', cls: 'kasten' };
+  return { g: i.placement === 'before' ? '▴' : i.placement === 'after' ? '▾' : '◂', cls: 'note' };
+}
+function badge(i) {
+  if (i.kind === 'request') return `<span class="badge ${i.status === 'open' ? 'req' : 'ok'}">${i.status === 'open' ? '?' : '✓'} ${i.output}</span>`;
+  if (i.kind === 'def') return `<span class="badge def">def</span>`;
+  if (i.kind === 'mr') return `<span class="badge ${i.status === 'open' ? 'mr' : i.status}">⑂ merge · ${i.status}</span>`;
+  if (i.kind === 'kasten') return `<span class="badge kasten">kasten · ${i.entries}</span>`;
+  return `<span class="placement" title="${i.placement}">${i.placement === 'before' ? '▴ before' : i.placement === 'after' ? '▾ after' : '◂'}</span>`;
+}
+function secLabel(n) { return n < 0 ? '⌂' : `§${n + 1}`; }
+function secTitle(n) { return n < 0 ? 'whole publication' : `§${n + 1} · ${SECTIONS[n].title}`; }
+function answersOf(id) { return ITEMS.filter((x) => x.request === id); }
+const defs = () => ITEMS.filter((i) => i.kind === 'def');
+
+// filters --------------------------------------------------------
+function passes(i) {
+  if (S.by.size && !S.by.has(i.by)) return false;
+  if (S.secs.size && !S.secs.has(i.sec)) return false;
+  if (S.kinds.size && !S.kinds.has(i.kind)) return false;
+  if (S.since != null && i.t < NOW - S.since * D) return false;
+  if (S.day != null && Math.floor((NOW - i.t) / D) !== S.day) return false;
+  return true;
+}
+const visible = () => ITEMS.filter(passes);
+function spellText() {
+  let s = `A:${ROOT()} k:30041`;
+  for (const a of S.by) s += ` by:${AUTHORS[a].pk}…`;
+  for (const n of S.secs) s += n < 0 ? ` a:${ROOT()}` : ` a:30041:${AUTHORS[ownerKey()].pk}…:${SECTIONS[n].d}`;
+  for (const k of S.kinds) s += k === 'def' ? ' t:definition' : k === 'request' ? ' t:annotation-request' : k === 'mr' ? ' k:818' : k === 'kasten' ? ' k:30040 t:kasten' : ' -t:definition -t:annotation-request';
+  if (S.since != null) s += ` since:${S.since}d`;
+  if (S.day != null) s += ` since:${S.day + 1}d until:${S.day}d`;
+  return s + ' count:by count:a';
+}
+// grouping -------------------------------------------------------
+const rank = (i) => i.kind === 'request' ? 0 : i.kind === 'mr' ? 1 : i.placement === 'before' ? 2 : i.placement === 'after' ? 4 : 3;
+function groups() {
+  const vis = visible();
+  const top = S.group === 'section' ? vis.filter((i) => !i.request) : vis;
+  const sortFn = S.sort === 'newest' ? (a, b) => b.t - a.t : (a, b) => (a.sec - b.sec) || rank(a) - rank(b) || a.t - b.t;
+  let gs = [];
+  if (S.group === 'section') gs = [-1, 0, 1, 2].map((n) => ({ key: 's' + n, label: secTitle(n), sec: n, items: top.filter((i) => i.sec === n).sort(sortFn) }));
+  else if (S.group === 'author') { const c = {}; for (const i of top) c[i.by] = (c[i.by] || 0) + 1; gs = Object.keys(AUTHORS).filter((a) => c[a]).sort((a, b) => c[b] - c[a]).map((a) => ({ key: 'a' + a, label: AUTHORS[a].name, author: a, items: top.filter((i) => i.by === a).sort(sortFn) })); }
+  else if (S.group === 'kind') gs = [['request', 'requests'], ['mr', 'merge requests'], ['def', 'definitions'], ['kasten', 'kasten'], ['note', 'notes']].map(([k, label]) => ({ key: 'k' + k, label, items: top.filter((i) => i.kind === k).sort(sortFn) }));
+  else { const bucket = (i) => { const d = (NOW - i.t) / D; return d < 1 ? 0 : d < 7 ? 1 : d < 30 ? 2 : 3; }; gs = ['today', 'this week', 'this month', 'earlier'].map((label, b) => ({ key: 't' + b, label, items: top.filter((i) => bucket(i) === b).sort((a, c) => c.t - a.t) })); }
+  return gs.filter((g) => g.items.length);
+}
+function flatRows() { const out = []; for (const g of groups()) { if (S.collapsed.has(g.key)) continue; for (const i of g.items) { out.push(i); if (S.group === 'section' && i.kind === 'request') for (const c of answersOf(i.id)) if (passes(c)) out.push(c); } } return out; }
+function counts() {
+  const vis = visible(); const c = { by: {}, sec: {}, kind: {}, day: [] };
+  for (const i of vis) { c.by[i.by] = (c.by[i.by] || 0) + 1; c.sec[i.sec] = (c.sec[i.sec] || 0) + 1; c.kind[i.kind] = (c.kind[i.kind] || 0) + 1; }
+  for (let d = 0; d < 21; d++) c.day[d] = ITEMS.filter((i) => Math.floor((NOW - i.t) / D) === d && (!S.by.size || S.by.has(i.by)) && (!S.secs.size || S.secs.has(i.sec)) && (!S.kinds.size || S.kinds.has(i.kind))).length;
+  return c;
+}
+// view actions ---------------------------------------------------
+function setView(v) { S.view = v; render(); }
+function setGroup(g) { S.group = g; S.cursor = 0; render(); }
+function setDetail(d) { S.detail = d; render(); }
+function cycleSince() { S.since = S.since == null ? 7 : S.since === 7 ? 30 : null; S.day = null; render(); }
+function pickDay(d) { S.day = S.day === d ? null : d; S.since = null; render(); }
+function toggleGroup(key) { if (S.collapsed.has(key)) S.collapsed.delete(key); else S.collapsed.add(key); render(); }
+function select(id) { const rows = flatRows(); const i = rows.findIndex((r) => r.id === id); if (i >= 0) S.cursor = i; S.expanded = S.expanded === id ? null : id; render(); }
+function reveal(id) { S.expanded = id; const rows = flatRows(); const i = rows.findIndex((r) => r.id === id); if (i >= 0) S.cursor = i; render(); setTimeout(() => { const el = document.querySelector(`.row[data-id="${id}"]`); if (el) el.scrollIntoView({ block: 'center', behavior: 'smooth' }); }, 50); }
+function hover(id) { const i = id ? byId(id) : null; S.hot = id; S.hotSec = i ? i.sec : null; render(); }
+function jump(sec) { S.hotSec = sec; render(); const el = document.querySelector(`[data-sec="${sec}"]`); if (el) el.scrollIntoView({ block: 'start', behavior: 'smooth' }); setTimeout(() => { if (S.hotSec === sec && S.hot == null) { S.hotSec = null; render(); } }, 1500); if (S.frame !== 'split') toast(`→ ${secTitle(sec)} — the reader scrolls there (split frame shows it)`); }
+function openStub(id) { S.openStub = S.openStub === id ? null : id; render(); }
+function act(what, id) { const i = byId(id); const msgs = {
+  open: `“${i.title}” opens in its own reader buffer`, menu: `event menu on ${i.coord || '30041:…:' + id} — JSON, comment, broadcast`,
+  promote: `promote: republish your index with “${i.title}” in`, request: `opens the request this answers`, kasten: `opens the kasten as a publication` };
+  toast(msgs[what] || what); }
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') { if (S.saw || S.ask || S.answer || S.composer || S.relink || S.review) { S.saw = false; S.ask = S.answer = S.composer = S.relink = S.review = null; S.armed = null; render(); return; } S.expanded = null; render(); return; }
+  if (S.ask || S.answer || S.composer || S.relink) return;
+  if (e.target && /INPUT|TEXTAREA|SELECT/.test(e.target.tagName)) return;
+  const rows = flatRows(); if (!rows.length) return;
+  if (e.key === 'j') { S.cursor = Math.min(rows.length - 1, S.cursor + 1); render(); scrollCur(); }
+  else if (e.key === 'k') { S.cursor = Math.max(0, S.cursor - 1); render(); scrollCur(); }
+  else if (e.key === 'Enter') { const r = rows[S.cursor]; if (r) { S.expanded = S.expanded === r.id ? null : r.id; render(); } }
+  else if (e.key === 'g') { const gs = ['section', 'author', 'kind', 'time']; S.group = gs[(gs.indexOf(S.group) + 1) % gs.length]; S.cursor = 0; render(); }
+  else if (e.key === 'n') { const r = rows[S.cursor]; openAsk(r ? r.sec : 0); }
+});
+function scrollCur() { const el = document.querySelector('.row.cur, .bcard.cur'); if (el) el.scrollIntoView({ block: 'nearest' }); }
+
+// ------------------------------------------------------------------ the annotate window (request)
+const clean = (w) => w.replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$/gu, '');
+function wordsOf(sec) { const out = []; if (sec < 0) return out; SECTIONS[sec].paras.forEach((p, pi) => p.split(/\s+/).forEach((w) => out.push({ w, pi }))); return out; }
+function openAsk(sec, output = 'vocabulary') { S.answer = null; S.ask = { sec, words: wordsOf(sec), marks: [], output, task: '', scope: new Set(['section', 'siblings']), style: 's1', sign: true, broadcast: false, drag: null }; render(); }
+function askSec(n) { const a = S.ask; a.sec = n; a.words = wordsOf(n); a.marks = []; render(); }
+function askTerms(a) { return a.marks.slice().sort((x, y) => x.from - y.from).map((m) => a.words.slice(m.from, m.to + 1).map((x) => clean(x.w)).join(' ')).filter(Boolean); }
+function askContext(a) { if (a.sec < 0) return ''; const pis = new Set(a.marks.map((m) => a.words[m.from].pi)); if (!pis.size) return SECTIONS[a.sec].paras[0]; return [...pis].sort().map((pi) => SECTIONS[a.sec].paras[pi]).join(' '); }
+function genTask(a) { // mirrors requests::generated_task
+  const t = askTerms(a);
+  if (a.output === 'vocabulary') return t.length ? `define these words in the context of these events: ${t.join(', ')}` : 'find the words these events use but never define, and define them in their context';
+  if (a.output === 'notes') return 'write notes on these events: what they claim, what they assume, what they leave open';
+  if (a.output === 'kasten') return 'write a kasten of these events: one note per move, linked in reading order, with an index';
+  return '';
+}
+function askTitle(a) { const t = askTerms(a); return a.output === 'vocabulary' ? (t.length ? `Define: ${t.join(', ')}` : 'Define: the undefined words') : a.output === 'ask' ? (a.task.trim() || '(your question)') : a.output === 'notes' ? (a.task.trim() || 'Notes request') : (a.task.trim() || 'Kasten request'); }
+function markDown(i) { S.ask.drag = i; }
+function markUp(i) {
+  const a = S.ask; if (a.drag === null || a.drag === undefined) return;
+  const from = Math.min(a.drag, i), to = Math.max(a.drag, i); a.drag = null;
+  const hit = a.marks.findIndex((m) => !(to < m.from || from > m.to));
+  if (hit >= 0 && from === to) a.marks.splice(hit, 1); else { a.marks = a.marks.filter((m) => to < m.from || from > m.to); a.marks.push({ from, to }); }
+  render();
+}
+function markOver(i) { const a = S.ask; if (a && a.drag !== null && a.drag !== undefined) { const from = Math.min(a.drag, i), to = Math.max(a.drag, i); document.querySelectorAll('.marktext .w').forEach((el, k) => el.classList.toggle('drag', k >= from && k <= to)); } }
+function submitAsk() {
+  const a = S.ask; const terms = askTerms(a);
+  const req = { id: 'r' + (nextId++), kind: 'request', output: a.output, sec: a.sec, title: askTitle(a), task: a.task.trim() || genTask(a), terms: a.output === 'vocabulary' ? terms : undefined, context: askContext(a).slice(0, 140), scope: [...a.scope], style: a.style, by: 'you', t: NOW, status: 'open', signed: a.sign, fresh: true };
+  ITEMS.push(req); S.ask = null; S.kinds.clear(); S.since = null; S.day = null;
+  toast(a.sign ? `signed a kind-30041 annotation request (output: ${a.output}) — kept local${a.broadcast ? ', broadcast to the owner\'s inbox ∪ where this was found' : ''}` : 'request saved as a local record — say “check tendrl requests” in your agent', 'ask');
+  reveal(req.id);
+}
+function askModal() {
+  const a = S.ask; const terms = askTerms(a); const owner = AUTHORS[ownerKey()].pk; const sec = a.sec >= 0 ? SECTIONS[a.sec] : null;
+  const scopes = ['section', 'siblings', 'publication', 'neighbours', 'relays', 'web'];
+  let html = '', i = 0;
+  if (sec) sec.paras.forEach((p, pi) => { const ws = a.words.filter((w) => w.pi === pi); html += '<p>' + ws.map((w) => { const k = i++; const on = a.marks.some((m) => k >= m.from && k <= m.to); return `<span class="w ${on ? 'on' : ''}" onmousedown="markDown(${k})" onmouseup="markUp(${k})" onmouseover="markOver(${k})">${esc(w.w)}</span>`; }).join(' ') + '</p>'; });
+  const openReqs = ITEMS.filter((x) => x.kind === 'request' && x.status === 'open' && (x.sec === a.sec));
+  const content = a.task.trim() || genTask(a);
+  const canPost = a.output !== 'ask' || a.task.trim().length > 0;
+  const wire = `{ "kind": 30041, "pubkey": "${AUTHORS.you.pk}…",
+  "content": "${esc(content)}",
+  "tags": [ ["d", "&lt;nanoid&gt;"], ["title", "${esc(askTitle(a))}"], ["m", "text/plain"],
+    ["<span class="k">t</span>", "annotation-request"], ["<span class="k">output</span>", "${a.output}"],${a.output === 'vocabulary' ? terms.map((t) => `\n    ["<span class="k">term</span>", "${esc(t)}"],`).join('') : ''}
+${[...a.scope].map((x) => `    ["scope", "${x}"],`).join('\n')}
+    ["style", "30078:${AUTHORS.you.pk}…:${a.style === 's1' ? 'glossary-voice' : 'equations-and-code'}"],
+    ["<span class="k">A</span>", "30040:${owner}…:${PUB.d}"], ["K", "30040"], ["P", "${owner}…"]${sec ? `,
+    ["<span class="k">a</span>", "30041:${owner}…:${sec.d}"], ["k", "30041"], ["<span class="k">e</span>", "&lt;§${a.sec + 1} version id&gt;"]` : ''} ] }`;
+  return `<div class="scrim" onclick="if(event.target===this){S.ask=null;render()}"><div class="modal wide">
+    <h3><span class="d">●</span> annotate <span class="on">— on ${esc(secTitle(a.sec))}</span>${openReqs.length ? `<button class="sw" onclick="openAnswerPick(${a.sec})" title="Answer an open request at this anchor yourself">answer a request (${openReqs.length}) ▸</button>` : ''}<button class="x" onclick="S.ask=null;render()">× esc</button></h3>
+    <div class="lbl cap">anchor</div><div class="chips"><span class="achip"><b>A</b>30040:${owner}…:${PUB.d}</span><select class="achip" onchange="askSec(+this.value)" title="the section this request anchors to">${[-1, 0, 1, 2].map((n) => `<option value="${n}" ${a.sec === n ? 'selected' : ''}>${n < 0 ? 'A · whole publication' : `a · §${n + 1} ${SECTIONS[n].title}`}</option>`).join('')}</select>${sec ? '<span class="achip"><b>e</b>version pinned</span>' : ''}</div>
+    <div class="lbl cap">mode <span class="help">— what the agent answers with</span></div>
+    <div class="seg ask">${['notes', 'kasten', 'vocabulary', 'ask'].map((m) => `<button class="${a.output === m ? 'on' : ''}" onclick="S.ask.output='${m}';render()">${m}</button>`).join('')}</div>
+    ${a.output === 'vocabulary' && sec ? `<div class="lbl cap">words <span class="help">— the section's content; drag over a word or phrase to mark it, click a marked word to unmark · ${terms.length ? terms.length + ' marked' : 'none = find the vocabulary this section leaves undefined'}</span>${terms.length ? ` <button style="min-height:20px;padding:0 6px;font-size:var(--t-3xs);margin-left:6px" onclick="S.ask.marks=[];render()">clear</button>` : ''}</div>
+      <div class="marktext" onmouseleave="S.ask.drag=null;document.querySelectorAll('.marktext .w.drag').forEach(e=>e.classList.remove('drag'))">${html}</div>` : ''}
+    ${a.output === 'ask' ? `<div class="lbl cap">your question <span class="help">— required; this is what the agent (or you) answers</span></div><textarea id="q" placeholder="type the question…" oninput="S.ask.task=this.value;render()">${esc(a.task)}</textarea>`
+      : `<div class="lbl cap">task <span class="help">— optional; empty = the generated line below</span></div><textarea id="q" placeholder="type a task, or leave it empty — the generated line below is what gets signed" oninput="S.ask.task=this.value;render()">${esc(a.task)}</textarea>`}
+    ${a.output !== 'ask' ? `<div class="gen">${a.task.trim() ? esc(a.task) : a.output === 'vocabulary' && terms.length ? `define these words in the context of these events: <span class="words">${esc(terms.join(', '))}</span>` : `<span class="none">${esc(genTask(a))}</span>`}</div>` : ''}
+    <div class="lbl cap">scope</div><div class="chips">${scopes.map((s) => `<button class="scope ${a.scope.has(s) ? 'on' : ''}" onclick="S.ask.scope.has('${s}')?S.ask.scope.delete('${s}'):S.ask.scope.add('${s}');render()">${s}</button>`).join('')}</div>
+    <div class="lbl cap">style</div><div class="stylerow"><select onchange="S.ask.style=this.value;render()">${STYLES.map((s) => `<option value="${s.id}" ${s.id === a.style ? 'selected' : ''}>${esc(s.title)}</option>`).join('')}</select><button>new style…</button></div>
+    <div class="lbl"><label class="check"><input type="checkbox" ${a.sign ? 'checked' : ''} onchange="S.ask.sign=this.checked;render()"> sign as a kind-30041 annotation request</label> <label class="check" style="margin-left:12px"><input type="checkbox" ${a.broadcast ? 'checked' : ''} ${a.sign ? '' : 'disabled'} onchange="S.ask.broadcast=this.checked"> broadcast${!S.owned ? ' — to the owner\'s inbox ∪ where this was found' : ''}</label></div>
+    <details open><summary>event preview — what “sign” will sign</summary><div class="evbox">${wire}</div></details>
+    <div class="help">no model runs here: the row waits for your agent (“check tendrl requests”), or you answer it yourself from the row.</div>
+    <div class="foot"><button onclick="S.ask=null;render()">cancel</button>${a.output === 'vocabulary' && terms.length ? `<button class="go def" onclick="defineMyself()" title="Skip the agent: write the definitions yourself — one signed 30041 per term, no request event">define them myself ▸</button>` : ''}<span class="sp"></span><button class="go" ${canPost ? '' : 'disabled'} onclick="submitAsk()">${a.sign ? 'sign · keep local ▸' : 'save request ▸'}</button></div>
+  </div></div>`;
+}
+
+// ------------------------------------------------------------------ answer mode (by hand): one term at a time
+function openAnswerPick(sec) { const open = ITEMS.filter((x) => x.kind === 'request' && x.status === 'open' && x.sec === sec); if (open.length) return openAnswer(open[0].id); }
+function termsFor(r) { // the request's terms, each with what already answers it
+  const ans = answersOf(r.id).filter((a) => a.kind === 'def');
+  const list = (r.terms && r.terms.length ? r.terms : []).map((t) => { const d = ans.find((a) => a.term.toLowerCase() === t.toLowerCase()); return { term: t, body: '', format: 'markdown', status: d ? 'defined' : 'pending', by: d ? d.by : null }; });
+  for (const a of ans) if (!list.some((x) => x.term.toLowerCase() === a.term.toLowerCase())) list.push({ term: a.term, body: '', format: 'markdown', status: 'defined', by: a.by });
+  if (!list.length) list.push({ term: '', body: '', format: 'markdown', status: 'pending', by: null });
+  return list;
+}
+function openAnswer(reqId) {
+  const r = byId(reqId); S.ask = null;
+  if (r.output === 'notes' || r.output === 'kasten') { S.composer = { request: r.id, sec: r.sec, title: '', body: '', placement: 'attached' }; render(); return; }
+  const terms = r.output === 'vocabulary' ? termsFor(r) : [{ term: r.title, body: '', format: 'markdown', status: 'pending', by: null, fixed: true }];
+  const idx = Math.max(0, terms.findIndex((t) => t.status === 'pending'));
+  S.answer = { request: r.id, sec: r.sec, output: r.output, terms, idx, style: r.style || 's1', signed: 0, newTerm: false }; render();
+}
+function defineMyself() { const a = S.ask; const terms = askTerms(a).map((t) => ({ term: t, body: '', format: 'markdown', status: 'pending', by: null })); S.answer = { request: null, sec: a.sec, output: 'vocabulary', terms, idx: 0, style: a.style, signed: 0, newTerm: false }; S.ask = null; render(); }
+function pickTerm(v) { const a = S.answer; if (v === '+') { a.terms.push({ term: '', body: '', format: 'markdown', status: 'pending', by: null }); a.idx = a.terms.length - 1; a.newTerm = true; } else { a.idx = +v; a.newTerm = false; } render(); }
+function nextTerm(from) { const a = S.answer; const n = a.terms.length; for (let k = 1; k < n; k++) { const j = (from + k) % n; if (a.terms[j].status === 'pending') return j; } return -1; }
+function finishAnswer() { const a = S.answer; const r = a.request ? byId(a.request) : null; S.answer = null; S.kinds.clear(); S.since = null; S.day = null;
+  if (a.signed) { if (r && r.status === 'open') r.status = 'answered'; toast(`${a.signed} definition${a.signed === 1 ? '' : 's'} signed as you${r ? ', each pointing at the request' : ' — no request, just definitions anchored here'}${a.terms.some((t) => t.status === 'skipped') ? ' · skipped: ' + a.terms.filter((t) => t.status === 'skipped').map((t) => t.term).join(', ') : ''}`, 'ok'); reveal(r ? r.id : ITEMS[ITEMS.length - 1].id); }
+  else { toast('nothing signed'); render(); } }
+function skipTerm() { const a = S.answer; const t = a.terms[a.idx]; if (t.status === 'pending') t.status = 'skipped'; const j = nextTerm(a.idx); if (j < 0) return finishAnswer(); a.idx = j; render(); }
+function signTerm() {
+  const a = S.answer; const t = a.terms[a.idx]; const r = a.request ? byId(a.request) : null;
+  if (!t.term.trim() || !t.body.trim()) { toast('the term and its definition first — “fill” writes sample text'); return; }
+  const term = t.term.trim();
+  if (a.output === 'vocabulary') ITEMS.push({ id: 'd' + (nextId++), kind: 'def', sec: a.sec, term, title: term[0].toUpperCase() + term.slice(1), body: t.body.trim(), by: 'you', t: NOW + a.signed, request: r ? r.id : undefined, style: a.style, format: t.format, coord: `30041:${AUTHORS.you.pk}…:${Math.random().toString(36).slice(2, 8)}`, fresh: true });
+  else ITEMS.push({ id: 'n' + (nextId++), kind: 'note', sec: a.sec, placement: 'attached', title: 'Re: ' + (term.length > 48 ? term.slice(0, 48).replace(/\s+\S*$/, '') + '…' : term), body: t.body.trim(), by: 'you', t: NOW, request: r ? r.id : undefined, fresh: true });
+  t.status = 'signed'; t.by = 'you'; a.signed += 1;
+  if (r && r.status === 'open') r.status = 'answered';
+  const j = nextTerm(a.idx);
+  if (j < 0) return finishAnswer();
+  toast(`signed “${term}”`, 'ok'); a.idx = j; render();
+}
+function fillEntry() { const t = S.answer.terms[S.answer.idx]; const n = t.term.trim() || 'this term'; t.body = `${n[0].toUpperCase() + n.slice(1)}, as used here: the sense it carries in the argument, then the background a reader needs to follow it, and where the word comes from. (Sample text — the mock fills this so the flow can be signed.)`; render(); }
+function answerModal() {
+  const a = S.answer; const r = a.request ? byId(a.request) : null; const t = a.terms[a.idx]; const isDef = a.output === 'vocabulary';
+  const owner = AUTHORS[ownerKey()].pk; const pending = a.terms.filter((x) => x.status === 'pending').length; const pos = a.terms.filter((x, i) => i <= a.idx).length;
+  const stat = (x) => x.status === 'defined' ? ` · defined by ${AUTHORS[x.by].name}` : x.status === 'signed' ? ' · signed by you' : x.status === 'skipped' ? ' · skipped' : '';
+  const wire = `{ "kind": 30041, "pubkey": "${AUTHORS.you.pk}…", "content": "${esc(t.body.trim() || '…')}",
+  "tags": [ ["d", "&lt;nanoid&gt;"], ["title", "${esc(t.term.trim() || '…')}"], ["m", "text/${t.format}"],${isDef ? `
+    ["<span class="k">t</span>", "definition"], ["T", "${esc(t.term.trim().toLowerCase().replace(/\s+/g, '-'))}"],` : ''}${r ? `
+    ["<span class="k">request</span>", "30041:${AUTHORS[r.by].pk}…:${r.id}9k"],` : ''}
+    ["style", "30078:…:${a.style === 's1' ? 'glossary-voice' : 'equations-and-code'}"],
+    ["<span class="k">A</span>", "30040:${owner}…:${PUB.d}"], ["<span class="k">a</span>", "${a.sec < 0 ? `30040:${owner}…:${PUB.d}` : `30041:${owner}…:${SECTIONS[a.sec].d}`}"] ] }`;
+  return `<div class="scrim" onclick="if(event.target===this){finishAnswer()}"><div class="modal wide">
+    <h3><span class="d">●</span> ${r ? 'answer' : 'define'} <span class="on">— ${r ? esc(r.title) : 'on ' + esc(secTitle(a.sec))}</span>${r ? `<span class="badge ${r.status === 'open' ? 'req' : 'ok'}">${r.status === 'open' ? '?' : '✓'} ${r.output}</span><span class="on">by ${AUTHORS[r.by].name} · ${rel(r.t)}</span>` : ''}<span class="sp"></span>${isDef ? `<span class="on" title="terms in this request">${pos} of ${a.terms.length} · ${pending} to do</span>` : ''}<button class="x" onclick="finishAnswer()">× esc</button></h3>
+    <div class="lbl cap">anchor</div><div class="chips"><span class="achip"><b>A</b>30040:${owner}…:${PUB.d}</span><span class="achip"><b>a</b>${a.sec < 0 ? 'whole publication' : '§' + (a.sec + 1) + ' ' + esc(SECTIONS[a.sec].title)}</span>${r ? `<span class="achip"><b>request</b>30041:…:${r.id}9k</span>` : ''}</div>
+    ${r && r.output !== 'vocabulary' ? `<blockquote style="margin:2px 0 4px;padding:2px 8px;border-left:2px solid var(--ask);color:var(--fg);font:13px/1.45 var(--serif)">${esc(r.task)}</blockquote>` : ''}
+    ${isDef ? `<div class="lbl cap">term <span class="help">— one definition per term; pick from the request or add one</span></div>
+    <div class="termrow" style="${auStyle('you')}">${t.fixed || a.newTerm || !t.term ? `<input class="term" value="${esc(t.term)}" placeholder="new term" oninput="S.answer.terms[${a.idx}].term=this.value">` : `<select class="term" onchange="pickTerm(this.value)" title="which term this entry defines">${a.terms.map((x, i) => `<option value="${i}" ${i === a.idx ? 'selected' : ''}>${esc(x.term || '(new term)')}${stat(x)}</option>`).join('')}<option value="+">+ another term…</option></select>`}${a.newTerm ? `<button style="min-height:24px;font:var(--t-2xs)/1 var(--mono)" onclick="S.answer.newTerm=false;render()">list ▾</button>` : ''}<select class="fmt" onchange="S.answer.terms[${a.idx}].format=this.value">${['markdown', 'org', 'asciidoc', 'plain'].map((f) => `<option ${t.format === f ? 'selected' : ''}>${f}</option>`).join('')}</select></div>
+    ${t.status === 'defined' ? `<div class="help" style="color:var(--yellow)">already defined by ${AUTHORS[t.by].name} — signing writes a second definition of “${esc(t.term)}” under your key; the relink will ask which one to point at</div>` : ''}` : `<div class="lbl cap">title</div><div class="termrow"><input class="term" value="${esc(t.term)}" oninput="S.answer.terms[${a.idx}].term=this.value"><select class="fmt" onchange="S.answer.terms[${a.idx}].format=this.value">${['markdown', 'org', 'asciidoc', 'plain'].map((f) => `<option ${t.format === f ? 'selected' : ''}>${f}</option>`).join('')}</select></div>`}
+    <div class="lbl cap">${isDef ? 'definition' : 'answer'} <span class="help">— ${isDef ? 'the sense in this text first; that sentence becomes the hover summary of every {{ref}} to it' : 'a signed note pointing at the request'}</span> · <a href="#" onclick="event.preventDefault();fillEntry()" style="color:var(--base6);text-transform:none;letter-spacing:0;font-weight:400">fill with sample text</a></div>
+    <textarea id="defbody" style="min-height:96px" placeholder="${isDef ? 'write the definition…' : 'write the answer…'}" oninput="S.answer.terms[${a.idx}].body=this.value">${esc(t.body)}</textarea>
+    <div class="lbl cap">style</div><div class="stylerow"><select onchange="S.answer.style=this.value">${STYLES.map((x) => `<option value="${x.id}" ${x.id === a.style ? 'selected' : ''}>${esc(x.title)}</option>`).join('')}</select></div>
+    <details><summary>event preview — what “sign” will sign</summary><div class="evbox">${wire}</div></details>
+    ${a.signed ? `<div class="help" style="color:var(--green)">${a.signed} signed so far${isDef ? ' — the rows are already in the ledger' : ''}</div>` : ''}
+    <div class="foot"><button onclick="finishAnswer()">${a.signed ? 'done' : 'cancel'}</button><span class="sp"></span>${isDef && a.terms.length > 1 ? `<button onclick="skipTerm()" title="leave this term for the agent or for later; move on">skip ▸</button>` : ''}<button class="go def" onclick="signTerm()" title="${isDef && nextTerm(a.idx) >= 0 ? 'signs this definition and pages to the next term' : 'signs and closes'}">sign ▸</button></div>
+  </div></div>`;
+}
+// notes / kasten answers go to the composer
+function composerModal() {
+  const c = S.composer; const r = c.request ? byId(c.request) : null; const to = c.replyTo ? byId(c.replyTo) : null;
+  if (to) return `<div class="scrim" onclick="if(event.target===this){S.composer=null;render()}"><div class="modal">
+    <h3><span class="d">●</span> write a note <span class="on">— on ${esc(secTitle(c.sec))}</span><span class="badge ok">↩ in reply to ${esc(to.title.slice(0, 28))}</span><button class="x" onclick="S.composer=null;render()">× esc</button></h3>
+    <div class="help">the composer, as today; the note anchors to the same section and carries a reference to the annotation it answers (<code>q</code> + <code>a</code>), so the ledger shows “↩” on the row and the reader stacks them.</div>
+    <blockquote style="margin:2px 0;padding:2px 8px;border-left:2px solid var(--au);color:var(--fg-muted);font:italic 13px/1.45 var(--serif)">${esc((to.body || to.task || '').slice(0, 160))}…</blockquote>
+    <div class="lbl cap">title</div><input value="${esc(c.title)}" oninput="S.composer.title=this.value" placeholder="title">
+    <div class="lbl cap">content</div><textarea style="min-height:90px" oninput="S.composer.body=this.value" placeholder="write…">${esc(c.body)}</textarea>
+    <div class="foot"><button onclick="S.composer=null;render()">cancel</button><a href="#" onclick="event.preventDefault();S.composer.title=S.composer.title||'Re: ${esc(to.title.slice(0, 30)).replace(/'/g, '’')}';S.composer.body=S.composer.body||'Sample text so the flow can be signed: the point stands, but it is a point about the domain, not about the rule.';render()" class="help">fill with sample text</a><span class="sp"></span><button class="go" onclick="signComposer()">sign · keep local ▸</button></div>
+  </div></div>`;
+  return `<div class="scrim" onclick="if(event.target===this){S.composer=null;render()}"><div class="modal">
+    <h3><span class="d">●</span> write a note <span class="on">— on ${esc(secTitle(c.sec))}</span><span class="badge ok">↳ answers ${esc(r.output)}</span><button class="x" onclick="S.composer=null;render()">× esc</button></h3>
+    <div class="help">the composer, as today, with the request pointer carried in. ${r.output === 'kasten' ? 'A kasten is several notes plus an index — the composer\'s multi-section mode does that; this mock signs one note.' : ''}</div>
+    <blockquote style="margin:2px 0;padding:2px 8px;border-left:2px solid var(--ask);color:var(--fg);font:13px/1.45 var(--serif)">${esc(r.task)}</blockquote>
+    <div class="lbl cap">title</div><input value="${esc(c.title)}" oninput="S.composer.title=this.value" placeholder="title">
+    <div class="lbl cap">content</div><textarea style="min-height:90px" oninput="S.composer.body=this.value" placeholder="write…">${esc(c.body)}</textarea>
+    <div class="lbl cap">placement</div><div class="seg">${['attached', 'before', 'after'].map((p) => `<button class="${c.placement === p ? 'on' : ''}" onclick="S.composer.placement='${p}';render()">${p}</button>`).join('')}</div>
+    <div class="foot"><button onclick="S.composer=null;render()">cancel</button><a href="#" onclick="event.preventDefault();S.composer.title=S.composer.title||'A note for the request';S.composer.body=S.composer.body||'Sample text so the flow can be signed: the moral of the story is a later addition; the first tellings end on the recompense itself.';render()" class="help">fill with sample text</a><span class="sp"></span><button class="go" onclick="signComposer()">sign · keep local ▸</button></div>
+  </div></div>`;
+}
+function signComposer() { const c = S.composer; if (!c.title.trim() || !c.body.trim()) { toast('title and content first — “fill with sample text”'); return; }
+  if (c.replyTo) { const n = { id: 'n' + (nextId++), kind: 'note', sec: c.sec, placement: 'attached', title: c.title.trim(), body: c.body.trim(), by: 'you', t: NOW, replyTo: c.replyTo, fresh: true }; ITEMS.push(n); S.composer = null; toast(`signed a note in reply to “${byId(c.replyTo).title}” (q + a tags) — anchored to the same section`, 'ok'); reveal(n.id); return; }
+  const r = byId(c.request); ITEMS.push({ id: 'n' + (nextId++), kind: 'note', sec: c.sec, placement: c.placement, title: c.title.trim(), body: c.body.trim(), by: 'you', t: NOW, request: r.id, fresh: true }); r.status = 'answered'; S.composer = null; toast('signed a note pointing at the request → answered', 'ok'); reveal(r.id); }
+// the demo agent
+function agentAnswers(reqId) {
+  const r = byId(reqId); let t = NOW;
+  if (r.output === 'vocabulary') { const terms = r.terms && r.terms.length ? r.terms : ['binding', 'progress']; for (const term of terms) ITEMS.push({ id: 'd' + (nextId++), kind: 'def', sec: r.sec, term, title: term[0].toUpperCase() + term.slice(1), body: `“${term}”, as used in ${secTitle(r.sec)}: the sense it carries in the argument, the background a reader needs, and where the word comes from — one event, in the ${styleTitle(r.style).toLowerCase()}.`, by: 'assistant', t: t++, request: r.id, style: r.style, coord: `30041:f1da0e…:${Math.random().toString(36).slice(2, 8)}`, fresh: true }); }
+  else if (r.output === 'kasten') ITEMS.push({ id: 'b' + (nextId++), kind: 'kasten', sec: r.sec, title: 'Kasten: ' + (r.sec < 0 ? PUB.title : SECTIONS[r.sec].title), body: 'A kasten of 9 entries, one note per move, linked in reading order.', by: 'assistant', t: t++, request: r.id, entries: 9, fresh: true });
+  else ITEMS.push({ id: 'n' + (nextId++), kind: 'note', sec: r.sec, placement: 'attached', title: r.output === 'ask' ? 'Re: ' + (r.title.length > 48 ? r.title.slice(0, 48).replace(/\s+\S*$/, '') + '…' : r.title) : 'Notes on ' + secTitle(r.sec), body: r.output === 'ask' ? 'The form is Feyerabend\'s (Against Method, 1975, ch. 3), paraphrasing a condition he attributes to the logical empiricists; the textbook phrasing is his, the rule is older.' : 'What it claims, what it assumes, what it leaves open — the agent\'s notes in the requested style.', by: 'assistant', t: t++, request: r.id, style: r.style, fresh: true });
+  r.status = 'answered'; toast(`the agent answered “${r.title}” (${answersOf(r.id).length} events, each with the request pointer)`, 'ok'); reveal(r.id);
+}
+
+// ------------------------------------------------------------------ vocabulary events: relink, glossary, 818
+function relinkPlan(defList) {
+  const plan = [];
+  SECTIONS.forEach((s, si) => {
+    const seen = new Set(); const hunks = [];
+    s.paras.forEach((p) => {
+      let after = p; const refs = [];
+      for (const d of defList) { if (seen.has(d.id)) continue; const re = new RegExp('(' + d.term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/\s+/g, '\\s+') + ')', 'i'); if (!re.test(after)) continue; after = after.replace(re, (m) => `{{ref:${d.coord}|${m}}}`); refs.push(d); seen.add(d.id); }
+      if (refs.length) hunks.push({ before: p, after, refs });
+    });
+    if (hunks.length) plan.push({ si, d: s.d, title: s.title, hunks, tags: [...new Set(hunks.flatMap((h) => h.refs.map((r) => r.coord)))] });
+  });
+  return plan;
+}
+function openRelink(defIds) { const list = defIds ? defIds.map(byId) : defs(); S.relink = { defs: list, plan: relinkPlan(list), glossary: list.filter((d) => d.glossary).map((d) => d.id), armed: false, relays: S.owned ? null : destinationSet() }; S.expanded = null; render(); }
+function relinkToggleDef(id) { const g = S.relink.glossary; S.relink.glossary = g.includes(id) ? g.filter((x) => x !== id) : [...g, id]; render(); }
+function destinationSet() { return [
+  { url: 'wss://relay.pkf.example', why: 'inbox', on: true, note: 'read relay from npub1pkf…\'s kind 10002' },
+  { url: 'wss://nos.lol', why: 'found', on: true, note: '“On Method” §2 was fetched from here' },
+  { url: 'wss://theforest.nostr1.com', why: 'found', on: true, note: 'the index was fetched from here' },
+  { url: 'wss://relay.damus.io', why: 'hint', on: true, note: 'relay hint on the index\'s a tag' },
+  { url: 'wss://relay.you.example', why: 'mine', on: true, note: 'your write relay — findable from your side' } ]; }
+function toggleRelay(i) { S.relink.relays[i].on = !S.relink.relays[i].on; render(); }
+function armRelink() {
+  const r = S.relink; if (!r.armed) { r.armed = true; render(); return; }
+  S.relink = null;
+  for (const d of r.defs) d.glossary = r.glossary.includes(d.id);
+  if (S.owned) { S.relinked = true; S.pubVer += 1; toast(`signed ${r.plan.length} section${r.plan.length === 1 ? '' : 's'} + index (same d) — v${S.pubVer}${r.glossary.length ? `, glossary (${r.glossary.length}) in slot 4` : ''}. Broadcast is the separate step.`, 'ok'); }
+  else { const mr = { id: 'm' + (nextId++), kind: 'mr', sec: -1, title: `Relink ${r.defs.length} term${r.defs.length === 1 ? '' : 's'} to their definitions${r.glossary.length ? '; add a glossary' : ''}`, body: `${r.defs.length} words go undefined; this links the first use of each to its definition${r.glossary.length ? ' and adds them as a glossary' : ''}. The owner's wording is unchanged.`, by: 'you', t: NOW, status: 'open', defs: r.defs.map((d) => d.id), glossary: r.glossary, relays: r.relays.filter((x) => x.on).map((x) => x.url), fresh: true }; ITEMS.push(mr); toast(`derivative signed (index′ + ${r.plan.length} section${r.plan.length === 1 ? '' : 's'}, E/p back-pointers) · kind 818 sent to ${mr.relays.length} relays`, 'ask'); reveal(mr.id); return; }
+  render();
+}
+function toggleGlossary(id) { const d = byId(id); d.glossary = !d.glossary; toast(d.glossary ? `“${d.title}” promoted into your glossary (a → ${d.coord}) — index republished v${++S.pubVer}` : `“${d.title}” taken out of your glossary — index republished v${++S.pubVer}`, 'ok'); }
+function diffHtml(plan, opts) {
+  let html = '';
+  for (const sec of plan) {
+    html += `<div class="diff"><div class="dh"><b>§${sec.si + 1} · ${esc(sec.title)}</b><span>30041 · d:${sec.d} ${opts.derivative ? '→ d:' + sec.d.slice(0, 3) + '′…' : '(same d, new version)'}</span><span class="n">${sec.hunks.length} hunk${sec.hunks.length === 1 ? '' : 's'}</span></div>`;
+    for (const h of sec.hunks) html += `<div class="ln del">- ${esc(h.before)}</div><div class="ln add">+ ${esc(h.after).replace(/\{\{ref:[^}]+\}\}/g, (m) => `<span class="ref">${m}</span>`)}</div>`;
+    html += sec.tags.map((t) => `<div class="ln tag">  tags  + ["a", "${t}"]</div>`).join('') + '</div>';
+  }
+  const unchanged = SECTIONS.map((s, i) => plan.some((p) => p.si === i) ? null : `§${i + 1}`).filter(Boolean).join(', ') || 'none';
+  const gl = (opts.glossary || []).map(byId).filter(Boolean);
+  html += `<div class="diff"><div class="dh"><b>index · ${esc(PUB.title)}</b><span>30040 · ${opts.derivative ? 'derivative (minted d, E → v3, p → owner)' : 'same d, new version'}</span></div>
+    ${gl.length ? `<div class="struct"><span class="plus">+ a → Glossary</span><span>30040 bundle · ${gl.length} definition${gl.length === 1 ? '' : 's'}: ${gl.map((d) => esc(d.title)).join(', ')}</span><span class="n muted">slot 4 (appendix)</span></div>` : ''}
+    <div class="struct"><span class="same">· unchanged</span><span>${unchanged}</span></div></div>`;
+  return html;
+}
+function relinkModal() {
+  const r = S.relink; const own = S.owned;
+  return `<div class="scrim" onclick="if(event.target===this){S.relink=null;render()}"><div class="modal wide">
+    <h3><span class="d" style="color:${own ? 'var(--green)' : 'var(--ask)'}">${own ? '⇄' : '⑂'}</span> ${own ? 'relink into your text' : 'fork + merge request'} <span class="on">${own ? 'new versions under your own d' : 'a derivative under your key + a kind 818 to the owner'}</span><button class="x" onclick="S.relink=null;render()">× esc</button></h3>
+    <div class="help">the engine computed this (link_terms: first occurrence per section; code and existing links skipped). It shows the ${own ? 'next version' : 'derivative'} the button signs.</div>
+    ${r.plan.length ? diffHtml(r.plan, { derivative: !own, glossary: r.glossary }) : '<div class="help">none of these terms occur in the text as written — nothing to relink</div>'}
+    <div class="lbl cap">glossary <span class="help">— optional, per event; the refs resolve without it</span></div>
+    <div class="chips">${r.defs.map((d) => `<label class="check"><input type="checkbox" ${r.glossary.includes(d.id) ? 'checked' : ''} onchange="relinkToggleDef('${d.id}')"> promote “${esc(d.title)}”</label>`).join('')}</div>
+    ${!own ? `<div class="lbl cap">the 818</div><div class="evbox">{ "kind": <span class="ho">818</span>, "content": "Relink ${r.defs.length} terms to their definitions${r.glossary.length ? '; add a glossary' : ''}",
+  "tags": [ ["<span class="k">a</span>", "30040:${AUTHORS.owner.pk}…:${PUB.d}", "wss://nos.lol"],   <span class="muted">← target (their index)</span>
+           ["<span class="k">e</span>", "&lt;their v3 id&gt;"],                    <span class="muted">← base</span>
+           ["<span class="k">e</span>", "&lt;index′ id&gt;", "", "<span class="hg">source</span>"],      <span class="muted">← the derivative to merge</span>
+           ["<span class="k">p</span>", "${AUTHORS.owner.pk}…"] ] }</div>
+    <div class="lbl cap">destination set <span class="help">— inbox ∪ found on ∪ hints ∪ yours; the derivative itself goes to your write relays</span></div>
+    <div class="relays">${r.relays.map((x, i) => `<label class="r"><input type="checkbox" ${x.on ? 'checked' : ''} onchange="toggleRelay(${i})"><span>${x.url}</span><span class="why ${x.why}">${x.why === 'found' ? 'found on' : x.why}</span><span class="muted">${esc(x.note)}</span></label>`).join('')}</div>` : ''}
+    <div class="foot"><button onclick="S.relink=null;render()">cancel</button>${own ? '<button title="Edit before signing">open in composer</button>' : ''}<span class="sp"></span>
+      <button class="go ${own ? 'def' : ''} ${r.armed ? 'armed' : ''}" ${r.plan.length ? '' : 'disabled'} onclick="armRelink()">${r.armed ? (own ? `sure? sign ${r.plan.length} section${r.plan.length === 1 ? '' : 's'} + index${r.glossary.length ? ' + glossary' : ''}` : `sure? sign derivative + send 818 to ${r.relays.filter((x) => x.on).length} relays`) : (own ? 'sign · keep local ▸' : 'sign + send merge request ▸')}</button></div>
+  </div></div>`;
+}
+// ---- the merge request review (owner side)
+function openReview(id) { const m = byId(id); S.review = { id, plan: relinkPlan(m.defs.map(byId)) }; S.armed = null; S.agentReview = null; S.expanded = null; render(); }
+function askAssistant() { S.agentReview = 'pending'; render(); setTimeout(() => { const m = byId(S.review.id); S.agentReview = { findings: [`${S.review.plan.length} section${S.review.plan.length === 1 ? '' : 's'} touched; the others untouched.`, 'Each hunk wraps the first occurrence of a term in a {{ref:…}} to a 30041; display text unchanged.', m.glossary.length ? `Index′ adds one a → “Glossary” (30040, ${m.glossary.length} definitions) at slot 4; nothing removed or moved.` : 'Index′ changes only the relinked sections; no glossary proposed.', 'Base is your v3; you have not published since, so the merge applies cleanly.'], rec: 'merge · the definitions read as glosses, not as claims; nothing in your own wording changes' }; render(); }, 1600); }
+function armMerge() { if (S.armed !== 'merge') { S.armed = 'merge'; render(); return; } const m = byId(S.review.id); m.status = 'merged'; m.verdict = NOW; for (const id of m.glossary) byId(id).glossary = true; S.relinked = true; S.pubVer += 1; S.armed = null; toast(`merged — signed ${S.review ? '' : ''}§2 + index v${S.pubVer}${m.glossary.length ? ' (+ glossary)' : ''} under your d · reacted + on the 818 · broadcast (Confirm)`, 'ok'); reveal(m.id); }
+function decline() { if (S.armed !== 'decline') { S.armed = 'decline'; render(); return; } const m = byId(S.review.id); m.status = 'declined'; m.verdict = NOW; m.reason = 'Thanks — I\'d rather keep the glosses as annotations for now.'; S.armed = null; toast('declined — reacted − on the 818 with your reason. The derivative stays as their fork.'); reveal(m.id); }
+function ownerVerdict(id, v) { const m = byId(id); m.status = v; m.verdict = NOW; if (v === 'merged') { S.relinked = true; for (const d of m.defs.map(byId)) if (m.glossary.includes(d.id)) d.glossary = true; } toast(v === 'merged' ? 'npub1pkf… reacted + on your 818 and republished v4 — the verdict shows on your row and in the bell' : 'npub1pkf… reacted − on your 818: “I\'d rather keep the glosses as annotations for now.”', v === 'merged' ? 'ok' : ''); reveal(id); }
+function reviewPane() {
+  const m = byId(S.review.id); const plan = S.review.plan; const mine = m.by === 'you'; const canMerge = S.owned && !mine && m.status === 'open';
+  const dl = m.defs.map(byId); const gl = m.glossary.map(byId);
+  const touched = plan.map((p) => `§${p.si + 1}`).join(', ') || 'none'; const untouched = SECTIONS.map((x, i) => plan.some((p) => p.si === i) ? null : `§${i + 1}`).filter(Boolean).join(', ') || 'none';
+  const from = m.status === 'merged' ? S.pubVer - 1 : S.pubVer, to = from + 1;
+  const base = m.status === 'merged' ? `<span class="ok">merged as v${S.pubVer}</span>` : m.status === 'declined' ? '<span class="muted">declined · nothing signed</span>' : S.pubVer === 3 ? '<span class="ok">applies cleanly</span>' : `<span class="warn">you have moved on — rebased onto v${S.pubVer}</span>`;
+  const foot = m.status !== 'open' ? `<div class="verdict"><span class="g ${m.status}">${m.status === 'merged' ? '+' : '−'}</span> ${m.status} ${rel(m.verdict)} ago${m.reason ? ' — “' + esc(m.reason) + '”' : ''} · kind 7 on the 818${m.status === 'merged' ? ` · v${S.pubVer} republished under ${mine ? 'their' : 'your'} d` : ' · the derivative stays as a fork'}</div>`
+    : canMerge ? `<div class="foot"><button class="neg ${S.armed === 'decline' ? 'on' : ''}" onclick="decline()">${S.armed === 'decline' ? 'sure? react − with a reason' : 'decline −'}</button><button onclick="toast('merged result handed to the composer as a draft — edit, then sign')" title="Edit the merged result before signing">open merged result in composer</button><span class="sp"></span><button class="merge ${S.armed === 'merge' ? 'armed' : ''}" onclick="armMerge()">${S.armed === 'merge' ? `sure? sign v${to} + react + · broadcast` : 'merge + ▸'}</button></div><div class="steps">merge = sign ${touched} + index (same d, your key) → kind 7 “+” on the 818 → broadcast (Confirm-gated) · the definitions stay their author's events, referenced by coordinate</div>`
+    : `<div class="verdict muted">${mine ? 'waiting for npub1pkf… — you can read the diff; only the owner merges' : 'read-only — addressed to npub1pkf…, not to you'}</div>`;
+  return `<div class="pane ${S.frame === 'split' ? 'reader' : ''}"><div class="pane-head"><span class="cls">WORK</span><span class="tab">REVIEW</span><span>· ⑂ 818 · ${esc(PUB.title)}</span><span class="sp"></span><button class="back" onclick="S.review=null;S.armed=null;render()">${S.frame === 'split' ? '← reader' : '← ledger'} · esc</button></div>
+    <div class="rv">
+      <div class="status"><span class="badge ${m.status === 'open' ? 'mr' : m.status}">⑂ merge · ${m.status}</span><span><span class="k">role</span>${canMerge || (S.owned && !mine) ? 'owner' : mine ? 'requester' : 'reader'}</span><span><span class="k">target</span>30040:…:${PUB.d}</span><span><span class="k">base</span>v3 · ${mine ? 'their' : 'your'} current v${from} · ${base}</span>${m.relays ? `<span><span class="k">sent to</span>${m.relays.length} relays</span>` : ''}</div>
+      <div class="ask" style="${auStyle(m.by)}"><span class="rail"></span><div class="body"><div class="who"><span class="dot"></span>${esc(AUTHORS[m.by].name)} · ${rel(m.t)}</div><div class="txt">${esc(m.body)}</div><div class="who" style="margin-top:4px">source · index′ (derivative, E → v3, p → ${mine ? 'them' : 'you'}) · the definitions stay ${esc(AUTHORS[dl[0] ? dl[0].by : m.by].name)}'s events</div></div></div>
+      <h4>what changes <span class="n">· the engine paired source with base and computed ${mine ? 'the owner\'s' : 'your'} ${m.status === 'merged' ? 'v' + to + ', now signed' : 'next version (v' + to + '); that is what the diff shows and what the button signs'}</span></h4>
+      <div class="sum"><span class="tile plus"><b>${plan.length}</b>section${plan.length === 1 ? '' : 's'} relinked · ${touched}</span><span class="tile plus"><b>${plan.reduce((n, p) => n + p.hunks.length, 0)}</b>hunks · first occurrence per term</span><span class="tile ${gl.length ? 'plus' : 'same'}"><b>${gl.length ? '+1' : '0'}</b>index change${gl.length ? ' · glossary (' + gl.length + ') in slot 4' : 's beyond the sections'}</span><span class="tile same"><b>0</b>sections removed or moved</span><span class="tile same"><b>${untouched}</b>untouched</span></div>
+      <h4>the definitions being linked <span class="n">· ${dl.length} · read these; they become the hover text on every ref</span></h4>
+      <div class="defs">${dl.map((d) => `<div class="dcard" style="${auStyle(d.by)}"><div class="h"><span class="badge def">def</span><span class="dot"></span>${esc(AUTHORS[d.by].name)} · ${rel(d.t)}${m.glossary.includes(d.id) ? '<span class="flag">→ glossary</span>' : ''}<span class="sp"></span><button style="min-height:18px;padding:0 6px;font-size:var(--t-3xs);border-color:transparent" onclick="reveal('${d.id}')" title="its row in the ledger">≡</button></div><div class="t">${esc(d.title)}</div><div class="e">${esc(d.body.slice(0, 150))}…</div></div>`).join('')}</div>
+      <h4>the diff <span class="n">· ${mine ? 'their' : 'your'} v${from} → v${to}, same d</span></h4>
+      ${plan.map((sec) => `<details class="sec" open><summary><b>§${sec.si + 1} · ${esc(sec.title)}</b><span>30041 · d:${sec.d}</span><span class="n">${sec.hunks.length} hunk${sec.hunks.length === 1 ? '' : 's'} · +${sec.tags.length} a tag${sec.tags.length === 1 ? '' : 's'}</span></summary><div class="diff">${sec.hunks.map((h) => `<div class="ln del">- ${esc(h.before)}</div><div class="ln add">+ ${esc(h.after).replace(/\{\{ref:[^}]+\}\}/g, (x) => `<span class="ref">${x}</span>`)}</div>`).join('')}${sec.tags.map((t) => `<div class="ln tag">  tags  + ["a", "${t}"]</div>`).join('')}</div></details>`).join('')}
+      <details class="sec" open><summary><b>index · ${esc(PUB.title)}</b><span>30040 · same d</span><span class="n">${gl.length ? '+1 a tag' : 'unchanged'}</span></summary><div class="diff">${gl.length ? `<div class="struct"><span class="plus">+ a → Glossary</span><span>30040 bundle · ${gl.length}: ${gl.map((d) => esc(d.title)).join(', ')} · by ${esc(AUTHORS[gl[0].by].name)} (stays theirs)</span><span class="n muted">slot 4 (appendix)</span></div>` : ''}<div class="struct"><span class="same">· unchanged</span><span>${untouched} · order kept</span></div></div></details>
+      <div class="agent"><div class="h">assistant review <span class="sp"></span>${S.agentReview === null ? `<button style="min-height:22px;padding:0 8px;font-size:var(--t-3xs)" onclick="askAssistant()">ask the assistant</button>` : S.agentReview === 'pending' ? `<span class="flag wait">get_ask_diff → review_ask</span>` : '<span class="muted">review_ask · a local record, not an event</span>'}</div>
+        ${S.agentReview && S.agentReview !== 'pending' ? `<ul>${S.agentReview.findings.map((f) => `<li>${esc(f)}</li>`).join('')}</ul><div class="rec">↳ recommend: ${esc(S.agentReview.rec)}</div>` : S.agentReview === null ? `<span class="muted">optional — the review reads the same diff and writes findings for you; it cannot merge</span>` : ''}</div>
+      ${threadHtml(m)}
+    </div>
+    <div class="rvfoot">${foot}</div></div>`;
+}
+
+// ------------------------------------------------------------------ render: annotations pane
+function headerHtml() {
+  const c = counts(); const total = ITEMS.length; const vis = visible().length;
+  const authorTotal = Object.values(c.by).reduce((a, b) => a + b, 0) || 1;
+  const authors = Object.keys(AUTHORS).filter((a) => c.by[a] || S.by.has(a)).map((a) => { const n = c.by[a] || 0; return `<button style="${auStyle(a)}" class="${S.by.has(a) ? 'on' : ''} ${n ? '' : 'zero'}" onclick="tog(S.by,'${a}')" title="${esc(AUTHORS[a].name)} — click to filter"><i style="width:${Math.round(100 * n / authorTotal)}%"></i><span class="dot"></span>${esc(AUTHORS[a].name)}<span class="k">${n}</span></button>`; }).join('');
+  const secs = [-1, 0, 1, 2].map((n) => `<button class="sec ${S.secs.has(n) ? 'on' : ''} ${c.sec[n] ? '' : 'zero'}" onclick="tog(S.secs,${n})" title="${esc(secTitle(n))}" onmouseenter="S.hotSec=${n};render()" onmouseleave="S.hotSec=null;render()">${secLabel(n)}<span class="k">${c.sec[n] || 0}</span></button>`).join('');
+  const kinds = [['note', 'notes', '◂', 'note'], ['def', 'def', 'def', 'def'], ['request', 'requests', '?', 'req'], ['mr', 'merge', '⑂', 'mr'], ['kasten', 'kasten', '⊞', 'kasten']].map(([k, l, g, cls]) => `<button class="${S.kinds.has(k) ? 'on' : ''} ${c.kind[k] ? '' : 'zero'}" onclick="tog(S.kinds,'${k}')"><span class="g ${cls}">${g}</span>${l}<span class="k">${c.kind[k] || 0}</span></button>`).join('');
+  const max = Math.max(1, ...c.day);
+  const spark = `<span class="spark" title="the last 21 days, newest on the right — click a day to filter">${c.day.slice().reverse().map((n, idx) => { const d = 20 - idx; return `<b style="height:${Math.max(1, Math.round(14 * n / max))}px" class="${S.day === d ? 'on' : ''}" onclick="pickDay(${d})" title="${d === 0 ? 'today' : d + 'd ago'} · ${n}"></b>`; }).join('')}</span>`;
+  const sinceLabel = S.day != null ? (S.day === 0 ? 'today' : `${S.day}d ago`) : S.since == null ? 'all time' : `${S.since}d`;
+  const phone = S.frame === 'phone';
+  return `
+  <div class="qrow">
+    ${phone ? `<button class="wand" title="${esc(spellText())}" style="font-size:var(--t-2xs);flex:1;text-align:left;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;color:var(--base5)">${esc(spellText()).slice(0, 30)}…</button>` : `<input id="spell" value="${esc(spellText())}" spellcheck="false" aria-label="Table query" title="The table's query — a spell. Enter applies; the wand saves it." onkeydown="if(event.key==='Enter'){this.blur();toast('spell applied — the facets re-render from it')}">`}
+    <button class="wand" title="Save this query as a spell">🪄</button>
+    <button class="plus" onclick="openAsk(S.secs.size === 1 ? [...S.secs][0] : 1)" title="Open the annotate window (n) — a request to your agent, or a definition by hand">+ annotate</button>
+    <span class="seg" title="Group rows by">${[['section', '§'], ['author', 'author'], ['kind', 'kind'], ['time', 'time']].map(([g, l]) => `<button class="${S.group === g ? 'on' : ''}" onclick="setGroup('${g}')">${l}</button>`).join('')}</span>
+    ${phone ? '' : `<span class="seg" title="rows: a ledger · board: content-sized cards in section columns"><button class="${S.view === 'rows' ? 'on' : ''}" onclick="setView('rows')">≡ rows</button><button class="${S.view === 'board' ? 'on' : ''}" onclick="setView('board')">▦ board</button></span>`}
+    <span class="n">${vis}${vis !== total ? ` of ${total}` : ''}</span>
+  </div>
+  <div class="facets">
+    <span class="grp"><span class="lab">who</span>${authors}</span>
+    <span class="grp"><span class="lab">where</span>${secs}</span>
+    <span class="grp kind"><span class="lab">what</span>${kinds}</span>
+    <span class="grp when"><span class="lab">when</span>${spark}<button class="${S.since != null || S.day != null ? 'on' : ''}" onclick="cycleSince()" title="all · 7d · 30d">${sinceLabel}</button></span>
+  </div>`;
+}
+function rowHtml(i, idx, child) {
+  const answers = i.kind === 'request' ? answersOf(i.id).length : 0;
+  const phone = S.frame === 'phone';
+  const fresh = i.fresh; i.fresh = false;
+  return `<div class="row ${child ? 'child' : ''} ${S.cursor === idx ? 'cur' : ''} ${S.expanded === i.id ? 'x' : ''} ${fresh ? 'new' : ''}" data-id="${i.id}" style="${auStyle(i.by)}" onclick="select('${i.id}')" onmouseenter="hover('${i.id}')" onmouseleave="hover(null)" role="row">
+    <span class="rail"></span>
+    <button class="anc" onclick="event.stopPropagation();jump(${i.sec})" title="${esc(secTitle(i.sec))} — scroll the reader there">${secLabel(i.sec)}</button>
+    <span class="main">
+      ${badge(i)}
+      <span class="t">${esc(i.title)}</span>
+      ${i.kind === 'def' && i.glossary ? '<span class="flag" title="listed in the glossary bundle">glossary</span>' : ''}
+      ${i.kind === 'request' && i.status === 'open' && !phone ? '<span class="flag wait" title="waiting for your agent, or for you">waiting</span>' : ''}
+      ${answers ? `<span class="sub" title="${answers} written for it">${answers} ↳</span>` : ''}
+      ${i.request && !child ? `<span class="sub" title="answers a request">↳ ${esc(byId(i.request).output)}</span>` : ''}
+      ${i.replyTo ? `<span class="sub" title="a note written in reply to another annotation">↩ ${esc(byId(i.replyTo).title.slice(0, 22))}</span>` : ''}
+      ${i.replies && i.replies.length ? `<span class="sub rep" title="${i.replies.length} replies (kind 1111)">${i.replies.length} ↩</span>` : ''}
+      ${phone ? `<span class="sec">· ${secLabel(i.sec)} · <span class="dot" style="width:6px;height:6px"></span> ${esc(AUTHORS[i.by].name)}</span>` : ''}
+    </span>
+    <span class="by"><span class="dot"></span>${esc(AUTHORS[i.by].name)}</span>
+    <span class="age">${rel(i.t)}</span>
+    <span class="ptr">${S.expanded === i.id ? '▾' : '▸'}</span>
+  </div>${S.expanded === i.id && S.detail === 'inline' ? bodyHtml(i) : ''}`;
+}
+function bodyHtml(i) {
+  let inner = ''; const stop = 'event.stopPropagation();';
+  if (i.kind === 'request') {
+    const ans = answersOf(i.id);
+    inner += `<div class="meta"><span><span class="k">output</span>${i.output}</span>${i.terms ? `<span><span class="k">terms</span>${i.terms.map((t) => `<span class="chip">${esc(t)}</span>`).join(' ')}</span>` : ''}${i.scope ? `<span><span class="k">scope</span>${i.scope.join(' · ')}</span>` : ''}${i.style ? `<span><span class="k">style</span>✎ ${esc(styleTitle(i.style))}</span>` : ''}<span><span class="k">${i.signed ? 'signed' : 'record'}</span>30041 · t: annotation-request</span></div>`;
+    if (i.output !== 'vocabulary') inner += `<div class="txt"><p>${esc(i.task)}</p></div>`;
+    if (i.context) inner += `<blockquote>${esc(i.context)}</blockquote>`;
+    inner += `<div class="answers">${ans.length ? `answered by ${ans.length} ${ans.length === 1 ? 'event' : 'events'} — ${ans.map((a) => `<span class="g ${glyph(a).cls}">${glyph(a).g}</span> ${esc(a.title)}`).join(' · ')}` : i.signed ? 'open — answered by the first event that points at it' : 'local record — say “check tendrl requests” in your agent'}</div>`;
+    const relinkable = i.output === 'vocabulary' && ans.length;
+    inner += `<div class="acts">${i.status === 'open' || i.output === 'vocabulary' ? `<button class="go ask" onclick="${stop}openAnswer('${i.id}')" title="${i.output === 'vocabulary' ? 'Write the definitions yourself — one signed entry per term, each pointing at this request' : i.output === 'ask' ? 'Answer the question yourself — a signed note pointing at this request' : 'Write it yourself in the composer, pointing at this request'}">${i.status === 'open' ? 'answer it yourself ▸' : 'define a term yourself ▸'}</button>${i.status === 'open' ? `<button class="demo" onclick="${stop}agentAnswers('${i.id}')" title="demo only: what the agent's answer looks like when it lands">demo · let the agent answer</button>` : ''}` : ''}${relinkable ? `<button class="go def" onclick="${stop}openRelink(${JSON.stringify(ans.map((a) => a.id)).replace(/"/g, '&quot;')})">${S.owned ? `relink ${ans.length} term${ans.length === 1 ? '' : 's'} ▸` : `fork + merge request (${ans.length}) ▸`}</button>` : ''}<button onclick="${stop}act('menu','${i.id}')">menu</button><span class="coord">30041 · d:${i.id}9k</span></div>`;
+  } else if (i.kind === 'mr') {
+    const mine = i.by === 'you';
+    inner += `<div class="meta"><span><span class="k">kind</span>818 · a → ${ROOT()}</span><span><span class="k">source</span>index′ (derivative, E → ${mine ? 'their' : 'your'} v3)</span><span><span class="k">base</span>${mine ? 'their' : 'your'} v3</span>${i.relays ? `<span><span class="k">sent to</span>${i.relays.length} relays</span>` : ''}</div>`;
+    inner += `<div class="txt"><p>${esc(i.body)}</p></div>`;
+    if (i.status !== 'open') inner += `<div class="answers">${i.status === 'merged' ? `<span class="g merged">+</span> merged ${rel(i.verdict)} ago — ${mine ? 'the owner republished v4 under their key; your derivative stays as provenance' : 'you republished v' + S.pubVer + ' under your d'}` : `<span class="g declined">−</span> declined ${rel(i.verdict)} ago${i.reason ? ' — “' + esc(i.reason) + '”' : ''}; the derivative stays as ${mine ? 'your' : 'their'} fork`}</div>`;
+    inner += `<div class="acts">${i.status === 'open' ? (S.owned && !mine ? `<button class="go ask" onclick="${stop}openReview('${i.id}')" title="Review the diff — the engine computes your next version; merge or decline there">review the diff ▸</button>` : mine ? `<button onclick="${stop}openReview('${i.id}')" title="read-only: you are the requester">review (read-only)</button><button class="demo" onclick="${stop}ownerVerdict('${i.id}','merged')">demo · owner merges</button><button class="demo" onclick="${stop}ownerVerdict('${i.id}','declined')">demo · owner declines</button>` : `<button onclick="${stop}openReview('${i.id}')" title="not yours to merge — addressed to npub1pkf…">review (read-only · addressed to npub1pkf…)</button>`) : ''}<button onclick="${stop}act('menu','${i.id}')">menu</button><span class="coord">818 · e:${i.id}f2…</span></div>`;
+  } else if (i.kind === 'kasten') {
+    inner += `<div class="txt"><p>${esc(i.body)}</p></div>`;
+    inner += `<div class="acts"><button class="go" onclick="${stop}act('kasten','${i.id}')">open kasten ▸</button>${i.request ? `<button onclick="${stop}reveal('${i.request}')">↳ answers ${esc(byId(i.request).title)}</button>` : ''}<button onclick="${stop}act('menu','${i.id}')">menu</button><span class="coord">30040 · t: kasten</span></div>`;
+  } else {
+    inner += `<div class="txt"><p>${esc(i.body)}</p></div>`;
+    inner += `<div class="meta">${i.kind === 'def' ? `<span><span class="k">term</span><span class="chip">${esc(i.term)}</span></span><span><span class="k">${i.glossary ? 'in glossary' : 'not in glossary'}</span></span><span><span class="k">refs</span>${S.relinked && relinkPlan([i]).length ? 'linked from §2' : 'none yet'}</span>` : `<span><span class="k">placement</span>${i.placement}</span>`}${i.style ? `<span><span class="k">style</span>✎ ${esc(styleTitle(i.style))}</span>` : ''}${i.format ? `<span><span class="k">format</span>${i.format}</span>` : ''}</div>`;
+    inner += `<div class="acts">${i.kind === 'def' ? `<button class="go def" onclick="${stop}openRelink(['${i.id}'])" title="${S.owned ? 'Wrap the first occurrence of the term in each section as a {{ref}} to this definition — diff first, then one armed sign' : 'Not your publication: a derivative with the refs in, plus a kind 818 to the owner'}">${S.owned ? 'relink' : 'fork + merge request'}</button>${S.owned ? `<button class="go def" onclick="${stop}toggleGlossary('${i.id}');render()">${i.glossary ? 'remove from glossary' : 'promote → glossary'}</button>` : `<button class="go def" onclick="${stop}toggleGlossary('${i.id}');render()" title="the glossary bundle lives under your key; the index is not yours">${i.glossary ? 'remove from your glossary' : 'promote → your glossary'}</button>`}` : `<button class="go" onclick="${stop}act('promote','${i.id}')">promote</button>`}${i.request ? `<button onclick="${stop}reveal('${i.request}')">↳ answers ${esc(byId(i.request).output)}</button>` : ''}<button onclick="${stop}act('open','${i.id}')">open ▸</button><button onclick="${stop}act('menu','${i.id}')">menu</button><span class="coord">${i.coord || '30041 · d:' + i.id + 'x7'}</span></div>`;
+  }
+  return `<div class="xb" style="${auStyle(i.by)}">${inner}${threadHtml(i)}</div>`;
+}
+// ---- responding: a thread of kind-1111 comments under the annotation, or a note in reply
+function threadHtml(i, compact) {
+  const rs = i.replies || []; const stop = 'event.stopPropagation();';
+  return `<div class="thread" onclick="${stop}">
+    <div class="th">replies <span class="n">· ${rs.length} · kind 1111, threaded under this event</span><span class="sp"></span>${compact ? '' : `<button style="font:var(--t-3xs)/1.2 var(--mono);min-height:20px;padding:0 7px;color:var(--yellow);letter-spacing:0;text-transform:none" onclick="${stop}openNoteInReply('${i.id}')" title="a full note (30041) anchored beside this one, carrying a reference to it">note in reply ▸</button>`}</div>
+    ${rs.map((r) => `<div class="reply" style="${auStyle(r.by)}"><span class="rail"></span><div><div class="rh"><span class="dot"></span>${esc(AUTHORS[r.by].name)} · ${rel(r.t)}</div><div class="rb">${esc(r.body)}</div></div></div>`).join('')}
+    <div class="replybox"><textarea id="rp-${i.id}" placeholder="reply…" rows="1" onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendReply('${i.id}')}"></textarea><div class="col2"><button onclick="${stop}sendReply('${i.id}')">sign reply ▸</button></div>
+      <span class="wire">{ "kind": <span class="k">1111</span>, tags: [<span class="k">A</span> ${ROOT()}] [<span class="k">a</span> ${esc(i.coord || '30041:…:' + i.id)}] [<span class="k">K</span> 30040] [<span class="k">k</span> 30041] [<span class="k">p</span> ${esc(AUTHORS[i.by].pk)}…] } — a comment; it never changes the annotation</span></div>
+  </div>`;
+}
+function sendReply(id) { const ta = document.getElementById('rp-' + id); const v = ta ? ta.value.trim() : ''; if (!v) { toast('type the reply first'); return; } const i = byId(id); (i.replies = i.replies || []).push({ by: 'you', t: NOW, body: v }); toast(`signed a kind-1111 reply under “${i.title}” — the thread grows, the annotation is untouched`, 'ok'); render(); }
+function openNoteInReply(id) { const i = byId(id); S.composer = { replyTo: id, sec: i.sec, title: '', body: '', placement: 'attached' }; render(); }
+function rowsHtml() {
+  const gs = groups(); const flat = flatRows(); const idx = (id) => flat.findIndex((r) => r.id === id);
+  if (!gs.length) return `<div class="rows" id="rows"><div class="empty">nothing matches — clear a facet above</div></div>`;
+  return `<div class="rows" id="rows">${gs.map((g) => `
+    <div class="gh ${S.hotSec != null && g.sec === S.hotSec ? 'hot' : ''}" onclick="toggleGroup('${g.key}')" ${g.author ? `style="${auStyle(g.author)}"` : ''}>${g.author ? '<span class="dot"></span>' : ''}${esc(g.label)} <span class="n">· ${g.items.length}</span>${g.sec != null && g.sec >= 0 ? `<button class="anc" style="min-height:16px;padding:0 4px;border-color:transparent;color:var(--base4);font-size:var(--t-3xs)" onclick="event.stopPropagation();jump(${g.sec})" title="scroll the reader there">→</button>` : ''}<span class="ptr">${S.collapsed.has(g.key) ? '▸' : '▾'}</span></div>
+    ${S.collapsed.has(g.key) ? '' : g.items.map((i) => rowHtml(i, idx(i.id), false) + (S.group === 'section' && i.kind === 'request' ? answersOf(i.id).filter(passes).map((c) => rowHtml(c, idx(c.id), true)).join('') : '')).join('')}`).join('')}</div>`;
+}
+function boardHtml() {
+  const vis = visible(); const curId = (flatRows()[S.cursor] || {}).id;
+  const cols = [-1, 0, 1, 2].map((n) => ({ n, items: vis.filter((i) => i.sec === n && !i.request) }));
+  return `<div class="board">${cols.map((c) => `<div class="bcol"><div class="bh ${S.hotSec === c.n ? 'hot' : ''}" onclick="jump(${c.n})" title="scroll the reader there">${esc(secTitle(c.n))} <span class="n">· ${c.items.length}</span></div>
+    ${c.items.length ? c.items.map((i) => { const g = glyph(i); const ans = i.kind === 'request' ? answersOf(i.id) : []; return `<div class="bcard ${S.expanded === i.id ? 'x' : ''} ${curId === i.id ? 'cur' : ''}" style="${auStyle(i.by)}" onclick="select('${i.id}')" onmouseenter="hover('${i.id}')" onmouseleave="hover(null)">
+      <div class="h"><span class="g ${g.cls}">${g.g}</span>${i.kind === 'request' ? esc(i.output) : i.kind === 'note' ? esc(i.placement) : esc(i.kind)}<span class="sp"></span><span class="dot"></span>${esc(AUTHORS[i.by].name)} · ${rel(i.t)}</div>
+      <div class="t">${esc(i.title)}</div>
+      ${i.kind === 'request' && (i.output === 'vocabulary' || i.output === 'kasten') ? '' : `<div class="e">${esc(i.body || i.task || '')}</div>`}
+      ${ans.map((a) => `<div class="child"><span class="g ${glyph(a).cls}">${glyph(a).g}</span> ${esc(a.title)} · ${esc(AUTHORS[a.by].name)}</div>`).join('')}
+      ${S.expanded === i.id ? `<div class="acts">${i.kind === 'request' && (i.status === 'open' || i.output === 'vocabulary') ? `<button class="go ask" onclick="event.stopPropagation();openAnswer('${i.id}')">${i.status === 'open' ? 'answer it yourself ▸' : 'define a term ▸'}</button>` : ''}${i.kind === 'mr' && i.status === 'open' && S.owned && i.by !== 'you' ? `<button class="go ask" onclick="event.stopPropagation();openReview('${i.id}')">review the diff ▸</button>` : ''}${i.kind === 'def' ? `<button class="go def" onclick="event.stopPropagation();openRelink(['${i.id}'])">relink</button>` : ''}<button onclick="event.stopPropagation();act('open','${i.id}')">open ▸</button><button onclick="event.stopPropagation();act('menu','${i.id}')">menu</button></div>` : ''}
+    </div>`; }).join('') : `<div class="empty" style="padding:14px 4px;text-align:left">—</div>`}</div>`).join('')}</div>`;
+}
+function detailHtml() {
+  const i = S.expanded ? byId(S.expanded) : null;
+  if (!i) return `<div class="detail"><div class="empty">select a row — Enter or click<br><br>the full annotation reads here, with its actions; the rows stay one line each</div></div>`;
+  return `<div class="detail" style="${auStyle(i.by)}"><div class="dh">${badge(i)}<b>${esc(i.title)}</b><span class="sp"></span><span><span class="dot"></span>${esc(AUTHORS[i.by].name)} · ${rel(i.t)}</span></div>${bodyHtml(i)}</div>`;
+}
+function annotationsPane() {
+  const wide = S.frame === 'wide';
+  const body = S.view === 'board' && S.frame !== 'phone' ? boardHtml() : rowsHtml();
+  const main = wide && S.detail === 'pane' && S.view === 'rows' ? `<div class="split2">${body}${detailHtml()}</div>` : body;
+  const legend = S.frame === 'phone' ? '' : `<div class="legend"><span>j/k moves · Enter opens · n annotates at the cursor · g cycles grouping · hover lights the section · § scrolls the reader</span><span>colour = author, as in highlights</span>${wide ? `<span class="sp"></span><span class="seg"><button class="${S.detail === 'inline' ? 'on' : ''}" onclick="setDetail('inline')" style="min-height:18px;font-size:var(--t-3xs)">open in place</button><button class="${S.detail === 'pane' ? 'on' : ''}" onclick="setDetail('pane')" style="min-height:18px;font-size:var(--t-3xs)">detail pane</button></span>` : ''}</div>`;
+  return `<div class="pane"><div class="pane-head"><span class="cls">WORK</span><span class="tab">ANNOTATIONS</span><span>· ${esc(PUB.title)}</span></div><div class="ab">${headerHtml()}${main}${legend}</div></div>`;
+}
+
+// ------------------------------------------------------------------ render: reader
+function paraHtml(p, si, done) {
+  let html = esc(p); if (!S.relinked) return html;
+  for (const d of defs()) { const key = si + ':' + d.id; if (done.has(key)) continue; const re = new RegExp('(' + d.term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/\s+/g, '\\s+') + ')', 'i'); if (!re.test(html)) continue; done.add(key); html = html.replace(re, (m) => `<a class="nref" data-def="${esc(d.title)} — ${esc(d.body.slice(0, 150))}…" title="{{ref:${d.coord}|${esc(m)}}}">${m}</a>`); }
+  return html;
+}
+function readerPane() {
+  const secHtml = (n) => {
+    const items = ITEMS.filter((i) => i.sec === n && !i.request);
+    const strip = items.length ? `<div class="strip">${items.map((i) => { const g = glyph(i); const ans = i.kind === 'request' ? answersOf(i.id).length : 0; return `<button class="stub ${S.openStub === i.id ? 'on' : ''}" style="${auStyle(i.by)}" onclick="openStub('${i.id}')" title="${esc(AUTHORS[i.by].name)} · ${rel(i.t)}"><span class="g ${g.cls}">${g.g}</span><span class="t">${esc(i.kind === 'request' && i.output === 'vocabulary' && i.terms && i.terms.length ? i.terms.join(', ') : i.title)}</span>${ans ? `<span class="muted">${ans}↳</span>` : ''}</button>`; }).join('')}</div>` : '';
+    const open = S.openStub && byId(S.openStub) && byId(S.openStub).sec === n ? readerCard(byId(S.openStub)) : '';
+    const hot = S.hotSec === n; const hotAu = S.hot ? au(byId(S.hot).by) : 'var(--blue)';
+    const count = ITEMS.filter((i) => i.sec === n).length;
+    const nbtn = `<button class="n" onclick="openAsk(${n})" title="annotate ${n < 0 ? 'the whole publication' : '§' + (n + 1)} (n) — a request to your agent, or a definition by hand"><b>n</b> annotate</button>`;
+    if (n < 0) return `<div class="section ${hot ? 'anchor-hot' : ''}" data-sec="-1" style="--au-hot:${hotAu};border-bottom:0;padding-top:0"><div class="stitle" style="margin:0"><span class="idx">⌂</span><span class="muted mono" style="font-weight:400;font-size:var(--t-2xs)">whole publication</span><span class="hot">${count} ←</span>${nbtn}</div>${strip}${open}</div>`;
+    const s = SECTIONS[n]; const done = new Set();
+    return `<div class="section ${hot ? 'anchor-hot' : ''}" data-sec="${n}" style="--au-hot:${hotAu}"><div class="stitle"><span class="idx">§${n + 1}</span>${esc(s.title)}<span class="hot">${count} ←</span>${nbtn}</div>${s.paras.map((p) => `<p>${paraHtml(p, n, done)}</p>`).join('')}${strip}${open}</div>`;
+  };
+  const gl = defs().filter((d) => d.glossary);
+  return `<div class="pane reader"><div class="pane-head"><span class="cls">WORK</span><span class="tab">READER</span><span>· ${esc(PUB.title)}</span></div>
+    <div class="rd-toolbar"><button class="tb">§</button><span class="seg"><button>paged</button><button class="on">scroll</button></span><span class="sp"></span><button class="tb letter">T</button><button class="tb letter">M</button></div>
+    <div class="rd-content"><div class="col"><h1 class="pubtitle">${esc(PUB.title)} <span class="by">${esc(AUTHORS[ownerKey()].name)} · v${S.pubVer} · 3 sections${S.relinked ? ' · relinked' : ''}</span></h1>${[-1, 0, 1, 2].map(secHtml).join('')}
+    ${gl.length && (S.owned || S.relinked) ? `<div class="section" style="border-bottom:0"><div class="stitle"><span class="idx">▸</span><span style="color:var(--green)">Glossary</span><span class="muted mono" style="font-weight:400;font-size:var(--t-2xs)">· ${gl.length} · a nested 30040 in slot 4${S.owned ? '' : ' (under your key)'}</span></div><div class="strip">${gl.map((d) => `<span class="stub" style="--au:var(--green)"><span class="g def">${esc(d.title)}</span></span>`).join('')}</div></div>` : ''}</div></div></div>`;
+}
+function readerCard(i) {
+  const ans = i.kind === 'request' ? answersOf(i.id) : []; const stop = '';
+  return `<div class="rcard" style="${auStyle(i.by)}"><div class="who">${badge(i)}<span><span class="dot"></span> ${esc(AUTHORS[i.by].name)} · ${rel(i.t)}</span>${i.request ? `<span>↳ answers ${esc(byId(i.request).output)}</span>` : ''}</div>
+    <h4>${esc(i.title)}</h4>
+    ${i.kind === 'request' ? `${i.terms ? `<div class="strip" style="margin:0 0 6px">${i.terms.map((t) => `<span class="stub" style="--au:var(--green)"><span class="g def">${esc(t)}</span></span>`).join('')}</div>` : `<div class="txt"><p>${esc(i.task)}</p></div>`}${i.context ? `<blockquote>${esc(i.context)}</blockquote>` : ''}${ans.length ? `<div class="muted mono" style="font-size:var(--t-3xs)">answered by ${ans.map((a) => esc(a.title)).join(' · ')}</div>` : ''}` : `<div class="txt"><p>${esc(i.body)}</p></div>`}
+    <div class="acts">${i.kind === 'request' && (i.status === 'open' || i.output === 'vocabulary') ? `<button class="go ask" onclick="openAnswer('${i.id}')">${i.status === 'open' ? 'answer it yourself ▸' : 'define a term yourself ▸'}</button>` : ''}${i.kind === 'def' ? `<button class="go def" onclick="openRelink(['${i.id}'])">${S.owned ? 'relink' : 'fork + merge request'}</button><button class="go def" onclick="toggleGlossary('${i.id}');render()">${i.glossary ? 'remove from glossary' : 'promote → glossary'}</button>` : ''}${i.kind === 'mr' && i.status === 'open' && S.owned && i.by !== 'you' ? `<button class="go ask" onclick="openReview('${i.id}')">review the diff ▸</button>` : ''}${i.kind === 'note' ? `<button class="go" onclick="act('promote','${i.id}')">promote</button>` : ''}<button onclick="act('open','${i.id}')">open ▸</button><button onclick="act('menu','${i.id}')">menu</button><span class="sp"></span><button onclick="reveal('${i.id}')" title="show this row in the ledger">≡ row</button><button onclick="openStub(null)" style="color:var(--base5)">fold ▴</button></div>${threadHtml(i, true)}</div>`;
+}
+
+// ------------------------------------------------------------------ render: what I saw
+function sawHtml() {
+  return `<div class="scrim" onclick="if(event.target===this)toggleSaw()"><div class="saw">
+    <h3>the table today, split beside the reader at 1280 px <span class="muted">— screenshot from the scratch engine, 9 cards</span><button class="x" onclick="toggleSaw()">close · Esc</button></h3>
+    <div class="shot"><img src="" data-note="screenshot of the pre-ledger table, stripped from the committed copy" alt="the current annotations table">
+      <span class="m" style="left:6px;top:12px">1</span><span class="m" style="left:180px;top:250px">2</span><span class="m" style="left:60px;top:392px">3</span><span class="m" style="left:120px;top:322px">4</span><span class="m" style="left:6px;top:560px">5</span><span class="m" style="left:60px;top:772px">6</span><span class="m" style="left:180px;top:214px">7</span>
+    </div>
+    <ol>
+      <li><span class="m">1</span><span><b>Four rows of chrome</b> before the first card: spell, chips, layout picker, author bars. In the split that is a third of the pane.</span></li>
+      <li><span class="m">2</span><span><b>Fixed-size cards on a dotted canvas.</b> At 420 px only one card fits per lane, so most of the canvas is empty grid and the lanes stack into a tall scroll.</span></li>
+      <li><span class="m">3</span><span><b>The excerpt repeats the title</b> on every request card (the task is both). Cards with long titles grow past their slot and cover the next card.</span></li>
+      <li><span class="m">4</span><span><b>“open as section ▸” on every card</b> and a masked excerpt that cuts mid-word. The action is the same on all of them, so it carries no information.</span></li>
+      <li><span class="m">5</span><span><b>Lane labels collide</b> with the card above them once a card overflows its 96 px; “§2 AGAINST METHOD” is half hidden here.</span></li>
+      <li><span class="m">6</span><span><b>Nothing says what answers what.</b> The definition that answers the vocabulary request sits as a peer card; the “↳ answer” chip only shows when expanded.</span></li>
+      <li><span class="m">7</span><span><b>Authors as hex prefixes</b> in bars and cards; the colour does the work but a second look is needed to tell whose note it is.</span></li>
+    </ol>
+    <div class="then"><b>What the mock changes</b>
+      <ul>
+        <li>The canvas becomes a <b>ledger</b>: one row per annotation, grouped and sorted, each opening in place (or in a detail pane when the table is wide). Timeline and collective go away as layouts and come back as <b>facets</b>: a day sparkline for “when”, author × section counts in “who” and “where”.</li>
+        <li>Two rows of chrome; every element in them is a filter and the spell line rewrites from them. Kinds get one glyph each (◂ note · def · ? / ✓ request · ⑂ merge · ⊞ kasten) so a row is readable without a badge zoo.</li>
+        <li>A request's answers nest under it (↳). Definitions carry their term and a “glossary” flag. Row hover lights the section in the reader; the § cell scrolls it.</li>
+        <li>The workflows hang off the rows: <b>+ annotate</b> / a section's <b>n</b> opens the annotate window; an open request's row offers <b>answer it yourself</b> (definitions by hand, or the composer); a def row offers <b>relink</b> and <b>promote → glossary</b>; the ⑂ row opens the <b>review buffer</b> in the reader's place; every row has a reply thread (kind 1111) and “note in reply”. On someone else's publication, relink becomes fork + 818.</li>
+        <li>“Board” keeps a card view for people who want to see content at a glance: section columns, cards sized to their content, no pins. Free layout is dropped in this mock; say if the pins matter.</li>
+        <li>Reader side: notes fold to a <b>strip of stubs</b> under each section; a stub opens the full card on demand. The margin column and its 280 px squeeze go away.</li>
+      </ul></div>
+  </div></div>`;
+}
+
+// ------------------------------------------------------------------ render
+function render() {
+  const root = document.getElementById('root');
+  const phone = S.frame === 'phone';
+  const inner = S.frame === 'split' ? `<div class="body">${S.review ? reviewPane() : readerPane()}${annotationsPane()}</div>`
+    : phone ? `<div class="body">${S.review ? reviewPane() : annotationsPane()}</div><div class="bottombar"><button>chat</button><button class="on">work</button><button>search</button><button>≡</button></div>`
+    : `<div class="body">${S.review ? reviewPane() : annotationsPane()}</div>`;
+  const ae = document.activeElement; const keep = ae && /INPUT|TEXTAREA/.test(ae.tagName) && ae.closest('.modal, .qrow') ? { path: domPath(ae), v: ae.value, s: ae.selectionStart, e: ae.selectionEnd } : null;
+  const asks = ITEMS.filter((i) => (i.kind === 'mr' && i.status === 'open' && S.owned && i.by !== 'you') || (i.kind === 'mr' && i.by === 'you' && i.status !== 'open' && !i.seen)).length;
+  const modal = S.saw ? sawHtml() : S.ask ? askModal() : S.answer ? answerModal() : S.composer ? composerModal() : S.relink ? relinkModal() : '';
+  root.innerHTML = `<div class="wb ${phone ? 'phone' : ''}">
+    <div class="topbar"><span class="brand">tendrl</span><span class="id">● you</span><span class="sp"></span>${phone ? '' : '<span>W</span><span>settings</span>'}</div>
+    ${inner}
+    ${phone ? '' : `<div class="modeline"><span class="on">WORK</span><span>annotations (${esc(PUB.title)})</span><span class="sp"></span><span class="pill asks ${asks ? '' : 'zero'}">🔔 ${asks} ask${asks === 1 ? '' : 's'}</span><span>feat/annotations-table</span></div>`}
+    ${modal}
+    <div class="toasts">${S.toasts.map((t) => `<div class="toast ${t.kind}"><span class="d"></span>${esc(t.msg)}</div>`).join('')}</div>
+  </div>`;
+  for (const f of ['split', 'wide', 'phone']) document.getElementById('f-' + f).classList.toggle('on', S.frame === f);
+  document.getElementById('own-you').classList.toggle('on', S.owned); document.getElementById('own-them').classList.toggle('on', !S.owned);
+  if (keep) { const el = byPath(keep.path); if (el) { el.value = keep.v; el.focus(); try { el.setSelectionRange(keep.s, keep.e); } catch {} } }
+  const hints = { split: 'rows, not a canvas · every header element filters · a row opens in place · the workflows hang off the rows · review the ⑂ row to see the review buffer take the reader’s place', wide: 'the table on its own: rows left, the selected annotation in a detail pane · toggle “open in place” in the legend', phone: 'the same rows at 390 px · facets scroll sideways · § and author fold into the title line' };
+  document.getElementById('guidehint').textContent = hints[S.frame];
+}
+function domPath(el) { const p = []; while (el && el !== document.body) { const par = el.parentElement; p.unshift(par ? [...par.children].indexOf(el) : 0); el = par; } return p; }
+function byPath(p) { let el = document.body; for (const i of p) { el = el.children[i]; if (!el) return null; } return el; }
+render();
+</script>

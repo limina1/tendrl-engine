@@ -166,6 +166,10 @@ export type InsertionComposerOpen = {
 	 *  `request` tag; the pointer marks a signed request answered). */
 	request?: string;
 	requestTitle?: string;
+	/** A note in reply: the annotation (coordinate) it answers → the
+	 *  `reply_to` field / `q` tag; the composer shows "↩ in reply to …". */
+	replyTo?: string;
+	replyToTitle?: string | null;
 };
 
 export function createAppState() {
@@ -615,6 +619,10 @@ function _createAppState() {
 	// Hovering a table card lights its anchor section in the reader
 	// (`.anchor-hot` + the "N cards →" tip). null clears.
 	let hoverAnchor: { root: string; addr: string; count: number } | null = $state(null);
+	// The ledger reveals one row (expand + cursor + scroll) — a signal from
+	// a reader card's "≡ row": root + id (a coordinate, an `818:<id>`, or a
+	// request id) + nonce, applied once by the open ledger buffer.
+	let revealAnnotation: { root: string; id: string; nonce: number } | null = $state(null);
 
 	// --- Annotate mode + the request window ---
 	// Like highlight mode, but the selection (or an event's menu) opens the
@@ -4457,6 +4465,9 @@ function _createAppState() {
 		onDiscussion?: (event_id: string, kind: number) => void;
 		/** Open the merge-request review buffer (`review:<818 id>`). */
 		onMergeRequestReview?: (id: string) => void;
+		/** Open (or focus) the annotations ledger for a publication root —
+		 *  the same door as the reader's Tools → table. */
+		onAnnotationsTable?: (root: string) => void;
 		/** Open an arbitrary reader buffer by its id. Used when the id
 		 *  needs to carry a marker (`?focus_comment=`, `?highlight=`)
 		 *  that the structured handlers above can't express. */
@@ -5377,6 +5388,13 @@ function _createAppState() {
 		get readerJump() { return readerJump; },
 		requestReaderJump(root: string, addr: string) {
 			readerJump = { root, addr, nonce: (readerJump?.nonce ?? 0) + 1 };
+		},
+		get revealAnnotation() { return revealAnnotation; },
+		/** Make sure the ledger is open on `root` (the page's handler splits
+		 *  or focuses it, as Tools → table does), then reveal the row. */
+		requestRevealAnnotation(root: string, id: string) {
+			navHandlers?.onAnnotationsTable?.(root);
+			revealAnnotation = { root, id, nonce: (revealAnnotation?.nonce ?? 0) + 1 };
 		},
 		get hoverAnchor() { return hoverAnchor; },
 		setHoverAnchor(v: { root: string; addr: string; count: number } | null) {
