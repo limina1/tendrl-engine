@@ -522,6 +522,22 @@ pub enum InsertionRole {
     /// A kind-30041 tagged `t: definition`: one term's entry, the answer
     /// shape of a vocabulary request. Counted as a note; never a request.
     Definition,
+    /// A kind-818 merge request whose target is this root or one of its
+    /// sections — an ask the reader shows as a card under its target,
+    /// never a note (excluded from counts like a request).
+    Ask,
+}
+
+/// What a `role: ask` row carries about its 818.
+#[derive(Debug, Clone, Serialize)]
+pub struct AskSummary {
+    pub id: String,
+    pub status: crate::publication::merge_request::MergeStatus,
+    pub content: String,
+    pub pubkey: String,
+    /// The derivative the request asks the owner to take (`e … source`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source: Option<String>,
 }
 
 /// One loaded insertion: the section event plus its parsed anchor, so the
@@ -549,6 +565,61 @@ pub struct LoadedInsertion {
     /// The glossary bundle's coordinate when `promoted`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub glossary: Option<String>,
+    /// A `role: ask` row's merge request.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub merge_request: Option<AskSummary>,
+}
+
+/// The kind-818s whose target is `root` or one of its sections, as
+/// `role: ask` rows anchored to their target. Local store only.
+async fn load_asks(engine: &AppState, root: &str, ignored_pubkeys: &[String]) -> Result<Vec<LoadedInsertion>, EngineError> {
+    use crate::publication::merge_request::{resolve_status, MergeRequest};
+    let Some((_, root_pk, root_d)) = coord_parts(root) else { return Ok(Vec::new()) };
+    let mut targets = vec![root.to_string()];
+    if let Some(ix) = engine.get_addressable(30040, root_pk, root_d, FetchPolicy::LocalOnly).await? {
+        targets.extend(index_children(&ix));
+    }
+    let events = engine
+        .get_events(vec![json!({ "kinds": [818], "#a": targets, "limit": 200 })], FetchPolicy::LocalOnly, None)
+        .await?
+        .events;
+    let mut out = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    for ev in events {
+        let Some(mr) = MergeRequest::from_event(&ev) else { continue };
+        if !seen.insert(mr.id.clone()) || ignored_pubkeys.iter().any(|p| *p == mr.pubkey) {
+            continue;
+        }
+        let Some((tk, tpk, _)) = coord_parts(&mr.target) else { continue };
+        let anchor = InsertionAnchor {
+            root: root.to_string(),
+            root_kind: 30040,
+            root_pubkey: root_pk.to_string(),
+            parent: mr.target.clone(),
+            parent_kind: tk,
+            parent_pubkey: tpk.to_string(),
+            parent_event_id: mr.base.clone(),
+            placement: Placement::default(),
+        };
+        let reactions = engine
+            .get_events(vec![json!({ "kinds": [7], "#e": [mr.id.clone()], "authors": [mr.owner.clone()], "limit": 50 })], FetchPolicy::LocalOnly, None)
+            .await?
+            .events;
+        let (status, _) = resolve_status(&mr, &reactions);
+        out.push(LoadedInsertion {
+            coordinate: format!("818:{}", mr.id),
+            event: ev,
+            anchor,
+            role: InsertionRole::Ask,
+            request: None,
+            children: Vec::new(),
+            term: None,
+            promoted: false,
+            glossary: None,
+            merge_request: Some(AskSummary { id: mr.id.clone(), status, content: mr.content.clone(), pubkey: mr.pubkey.clone(), source: mr.source.clone() }),
+        });
+    }
+    Ok(out)
 }
 
 /// Histograms over every note on a root (requests excluded), for the
@@ -599,7 +670,7 @@ pub(crate) fn insertion_counts(insertions: &[LoadedInsertion]) -> InsertionCount
     let mut by_author: BTreeMap<&str, Vec<String>> = BTreeMap::new();
     let mut by_parent: BTreeMap<&str, Vec<String>> = BTreeMap::new();
     let mut total = 0usize;
-    for ins in insertions.iter().filter(|i| i.role != InsertionRole::Request) {
+    for ins in insertions.iter().filter(|i| !matches!(i.role, InsertionRole::Request | InsertionRole::Ask)) {
         total += 1;
         let id = ins
             .event
@@ -771,7 +842,7 @@ pub(crate) async fn load_insertions(
     let mut events = super::dedup_events_by_id(response.events);
 
     // Muted authors never render.
-    {
+    let ignored_pubkeys: Vec<String> = {
         let ignored = engine.ignore_list().read().await;
         if !ignored.pubkeys.is_empty() || !ignored.event_ids.is_empty() {
             events.retain(|e| {
@@ -780,7 +851,8 @@ pub(crate) async fn load_insertions(
                 !ignored.pubkeys.contains(pk) && !ignored.event_ids.contains(id)
             });
         }
-    }
+        ignored.pubkeys.iter().cloned().collect()
+    };
 
     // Addressable: newest version per coordinate wins.
     let mut newest: std::collections::HashMap<String, Value> = std::collections::HashMap::new();
@@ -840,9 +912,13 @@ pub(crate) async fn load_insertions(
                 term,
                 promoted: false,
                 glossary: None,
+                merge_request: None,
             })
         })
         .collect();
+    // Merge requests on this root or its sections: an ask is a card under
+    // its target. Local only — an 818 rides the owner's inbox, not `#A`.
+    insertions.extend(load_asks(engine, &root, &ignored_pubkeys).await?);
     // Spec: clients SHOULD order same-position insertions by created_at.
     insertions.sort_by_key(|i| i.event.get("created_at").and_then(Value::as_i64).unwrap_or(0));
     mark_promoted(&mut insertions);
@@ -1960,6 +2036,7 @@ mod tests {
             term: None,
             promoted: false,
             glossary: None,
+            merge_request: None,
         }
     }
 

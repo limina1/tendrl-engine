@@ -959,6 +959,18 @@ pub async fn start(opts: ServeOptions) -> anyhow::Result<RunningServer> {
             post(api::merge_requests::react_handler),
         )
         .route(
+            "/api/v1/merge-requests/:id/diff",
+            get(api::merge_requests::review_handler),
+        )
+        .route(
+            "/api/v1/merge-requests/:id/merge",
+            post(api::merge_requests::merge_handler),
+        )
+        .route(
+            "/api/v1/merge-requests/:id/decline",
+            post(api::merge_requests::decline_handler),
+        )
+        .route(
             "/api/v1/publication/fork",
             post(api::insertions::fork_publish_handler),
         )

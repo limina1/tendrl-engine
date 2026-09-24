@@ -10418,14 +10418,115 @@ mod chat_api_tests {
         // B cannot answer their own ask; A can.
         let refused = merge_requests::reaction_for(&engine, &mr.id, '+', None, &user_pk).await;
         assert!(matches!(refused, Err(EngineError::Forbidden(_))), "{refused:?}");
+
+        // The review, seen by the owner: one replaced section whose hunks add
+        // the refs; the index diff pairs s2 with s2′ and adds the glossary;
+        // `next` is the OWNER's version — the owner's own d's, the owner's key.
+        use crate::publication::merge_request::DiffKind;
+        let rv = merge_requests::review(&engine, &mr.id, &asst_pk).await.unwrap();
+        assert_eq!(rv.role, "owner");
+        assert_eq!(rv.status, MergeStatus::Open);
+        assert_eq!(rv.base.base_id.as_deref(), Some(index_id.as_str()));
+        assert_eq!(rv.base.current_id, index_id);
+        assert!(!rv.base.moved_on && rv.note.is_none());
+        assert_eq!(rv.source.id, dr.index["id"]);
+        assert_eq!(rv.sections.len(), 1, "one replaced section");
+        let sec = &rv.sections[0];
+        assert_eq!(sec.original, s2);
+        assert_eq!(sec.derivative, dr.sections[0].coordinate);
+        assert!(sec.hunks.iter().flatten().any(|h| h.kind == DiffKind::Added && h.line.contains("{{ref:")), "{:?}", sec.hunks);
+        assert!(sec.hunks.iter().flatten().any(|h| h.kind == DiffKind::Removed));
+        assert_eq!(sec.tags_added.len(), 2, "both definition a-tags are new to the original");
+        assert!(sec.tags_removed.is_empty());
+        assert_eq!(sec.next.pubkey.as_deref(), Some(asst_pk.as_str()));
+        assert!(sec.next.tags.iter().any(|t| t[0] == "d" && t[1] == coord_parts(&s2).unwrap().2), "same d as the original");
+        assert_eq!(sec.next.content.matches("{{ref:").count(), 2);
+        assert!(sec.next.tags.iter().filter(|t| t[0] == "a").count() == 2);
+        let ix = rv.index.as_ref().expect("an index diff for a 30040 target");
+        assert_eq!(ix.diff.replaced.len(), 1);
+        assert_eq!((ix.diff.replaced[0].original.as_str(), ix.diff.replaced[0].derivative.as_str()), (s2.as_str(), dr.sections[0].coordinate.as_str()));
+        assert_eq!(ix.diff.added.len(), 1);
+        assert_eq!(ix.diff.added[0].coordinate, resp.glossary.as_ref().and_then(crate::publication::insertion::event_coordinate).unwrap());
+        assert!(ix.diff.removed.is_empty() && ix.diff.moved.is_empty());
+        assert_eq!(ix.diff.unchanged, vec![s1.clone()]);
+        assert!(ix.next.tags.iter().any(|t| t[0] == "d" && t[1] == coord_parts(&root).unwrap().2), "the owner's index, same d");
+        let next_a: Vec<&str> = ix.next.tags.iter().filter(|t| t[0] == "a").map(|t| t[1].as_str()).collect();
+        assert_eq!(next_a, vec![s1.as_str(), s2.as_str(), ix.diff.added[0].coordinate.as_str()], "replaced sections stay at their own coordinates; the glossary is appended");
+        assert_eq!(rv.definitions.len(), 2);
+        assert!(rv.definitions.iter().any(|d| d.coordinate == coords[0] && d.promoted_in_source));
+        assert!(rv.definitions.iter().any(|d| d.coordinate == coords[1] && !d.promoted_in_source));
+        // the requester may read it too; a stranger may not
+        assert_eq!(merge_requests::review(&engine, &mr.id, &user_pk).await.unwrap().role, "requester");
+        assert!(matches!(merge_requests::review(&engine, &mr.id, &"c".repeat(64)).await, Err(EngineError::Forbidden(_))));
+
+        // The reader's load pass shows the ask as a card under its target.
+        let loaded = insertions::load_insertions(&engine, serde_json::from_value(json!({ "root": root, "policy": "local_only", "counts": true })).unwrap()).await.unwrap();
+        let ask = loaded.insertions.iter().find(|i| i.role == insertions::InsertionRole::Ask).expect("an ask row");
+        assert_eq!(ask.anchor.parent, root);
+        let mrs = ask.merge_request.as_ref().unwrap();
+        assert_eq!((mrs.id.as_str(), mrs.status), (mr.id.as_str(), MergeStatus::Open));
+        assert_eq!(mrs.pubkey, user_pk);
+        let notes = loaded.insertions.iter().filter(|i| !matches!(i.role, insertions::InsertionRole::Ask | insertions::InsertionRole::Request)).count();
+        assert_eq!(loaded.counts.as_ref().unwrap().total, notes, "asks are not notes (2 definitions + B's glossary bundle)");
+        assert_eq!(notes, 3);
+
+        // Merging: the requester is refused; the owner signs their next
+        // versions under their own d's and the + follows.
+        let asst_signing = engine.assistant_signing().unwrap().clone();
+        assert!(matches!(merge_requests::merge(&engine, &signing, &mr.id, false, None, false).await, Err(EngineError::Forbidden(_))));
+        let merged = merge_requests::merge(&engine, &asst_signing, &mr.id, false, None, false).await.unwrap();
+        assert!(merged.merged && merged.status == MergeStatus::Merged);
+        assert_eq!(merged.sections.len(), 1);
+        assert_eq!(merged.sections[0].coordinate, s2, "the owner's own coordinate");
+        assert_eq!(merged.sections[0].event["pubkey"], asst_pk);
+        assert_eq!(merged.index.as_ref().unwrap()["pubkey"], asst_pk);
+        assert_eq!(merged.reaction["content"], "+");
+        tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+        let cur2 = engine.get_addressable(30040, &asst_pk, coord_parts(&root).unwrap().2, crate::engine::FetchPolicy::LocalOnly).await.unwrap().unwrap();
+        assert_ne!(cur2["id"], index_id, "the owner's index moved to the merged version");
+        assert!(index_children(&cur2).iter().any(|c| c == &ix.diff.added[0].coordinate), "glossary in the owner's index");
+        let s2_now = engine.get_addressable(30041, &asst_pk, coord_parts(&s2).unwrap().2, crate::engine::FetchPolicy::LocalOnly).await.unwrap().unwrap();
+        assert_eq!(s2_now["content"].as_str().unwrap().matches("{{ref:").count(), 2, "the owner's §2 carries the refs");
+        // Notifications: the owner's open acts are empty, the ask sits in
+        // `done`; the requester's `mine` row says merged.
+        let prefs = crate::notifications::Prefs::default();
+        let owner_n = notifications::list_notifications(&engine, &asst_pk, &prefs, "open").await.unwrap();
+        assert!(owner_n.acts.iter().all(|r| r.key != "818"), "no open 818 left");
+        assert_eq!(owner_n.done.len(), 1);
+        assert_eq!(owner_n.done[0].status.as_deref(), Some("merged"));
+        assert!(owner_n.done[0].verdict.is_some());
+        let owner_all = notifications::list_notifications(&engine, &asst_pk, &prefs, "all").await.unwrap();
+        assert!(owner_all.acts.iter().any(|r| r.key == "818" && r.status.as_deref() == Some("merged")) && owner_all.done.is_empty());
+        let mine_n = notifications::list_notifications(&engine, &user_pk, &prefs, "open").await.unwrap();
+        assert_eq!(mine_n.mine.len(), 1);
+        assert_eq!(mine_n.mine[0].status.as_deref(), Some("merged"));
+        assert!(mine_n.mine[0].summary.ends_with("— merged"));
+        assert!(mine_n.acts.iter().any(|r| r.key == "7-on-my-818" && r.status.as_deref() == Some("merged")), "the verdict reaches the requester as an act: {:?}", mine_n.acts.iter().map(|r| r.key.clone()).collect::<Vec<_>>());
+        let ask2 = insertions::load_insertions(&engine, serde_json::from_value(json!({ "root": root, "policy": "local_only" })).unwrap()).await.unwrap();
+        assert_eq!(ask2.insertions.iter().find(|i| i.role == insertions::InsertionRole::Ask).unwrap().merge_request.as_ref().unwrap().status, MergeStatus::Merged);
+
+        // A fresh 818 (hand-built by B on the owner's index) is declined with a reason.
+        let t2 = crate::publication::merge_request::template(&root, Some(cur2["id"].as_str().unwrap()), Some(dr.index["id"].as_str().unwrap()), &asst_pk, "again", &crate::publication::merge_request::MergeHints::default(), unix_now_i64() + 5).unwrap();
+        let (_, user_signer) = resolve_publish_signer(&engine, &signing, SignAs::User).await.unwrap();
+        let mut t2 = t2;
+        t2.pubkey = Some(user_pk.clone());
+        let mr2 = user_signer.sign(t2).await.unwrap();
+        let _ = finalize_publish(&engine, None, vec![mr2.clone()], false, None, true).await.unwrap();
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+        let mr2_id = mr2["id"].as_str().unwrap();
+        let declined = merge_requests::react_inner(&engine, &asst_signing, mr2_id, '-', Some("not now"), false, None, false).await.unwrap();
+        assert_eq!(declined.status, MergeStatus::Declined);
+        assert_eq!(declined.reaction["content"], "- not now");
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+        assert_eq!(merge_requests::list(&engine, &user_pk, "requester", "all").await.unwrap().requests.iter().find(|r| r.request.id == mr2_id).unwrap().status, MergeStatus::Declined);
         let (_, mut t) = merge_requests::reaction_for(&engine, &mr.id, '+', Some("thanks"), &asst_pk).await.unwrap();
         t.pubkey = Some(asst_pk.clone());
         let reaction = engine.assistant_signing().unwrap().sign(t).await.unwrap();
         assert_eq!(reaction["content"], "+ thanks");
         let _ = finalize_publish(&engine, None, vec![reaction], false, None, true).await.unwrap();
         let after = merge_requests::list(&engine, &user_pk, "requester", "all").await.unwrap();
-        assert_eq!(after.requests[0].status, MergeStatus::Merged);
-        assert!(merge_requests::list(&engine, &asst_pk, "owner", "open").await.unwrap().requests.is_empty());
+        assert_eq!(after.requests.iter().find(|r| r.request.id == mr.id).unwrap().status, MergeStatus::Merged);
+        assert!(merge_requests::list(&engine, &asst_pk, "owner", "open").await.unwrap().requests.is_empty(), "merged + declined: nothing open");
         let _ = event_tags(&index);
     }
 
@@ -10804,7 +10905,7 @@ mod chat_api_tests {
 
         // defaults: the asks only
         let prefs = Prefs::load(&data_dir);
-        let r = notifications::list_notifications(&engine, &me, &prefs).await.unwrap();
+        let r = notifications::list_notifications(&engine, &me, &prefs, "open").await.unwrap();
         let act_keys: Vec<&str> = r.acts.iter().map(|x| x.key.as_str()).collect();
         assert!(act_keys.contains(&"818"), "the 818 is an ask: {act_keys:?}");
         assert!(act_keys.contains(&"request-on-mine"), "the signed request is an ask: {act_keys:?}");
@@ -10814,7 +10915,9 @@ mod chat_api_tests {
         let mr_row = r.acts.iter().find(|x| x.key == "818").unwrap();
         assert_eq!(mr_row.anchor.root.as_deref(), Some(root.as_str()));
         assert!(mr_row.summary.contains("merge request on On Method"), "{}", mr_row.summary);
-        assert!(mr_row.status.is_none() && mr_row.verdict.is_none(), "818 status lands with merge_request.rs");
+        assert_eq!(mr_row.status.as_deref(), Some("open"), "an 818 with no verdict yet is open");
+        assert!(mr_row.verdict.is_none());
+        assert!(r.done.is_empty());
         assert!(r.mine.is_empty());
 
         // enable highlights (count) + comments (list): both show, the stray reaction never does
@@ -10822,7 +10925,7 @@ mod chat_api_tests {
         prefs.set("9802", Some(true), Some(How::Count)).unwrap();
         prefs.set("1111", Some(true), Some(How::List)).unwrap();
         prefs.save(&data_dir).unwrap();
-        let r = notifications::list_notifications(&engine, &me, &Prefs::load(&data_dir)).await.unwrap();
+        let r = notifications::list_notifications(&engine, &me, &Prefs::load(&data_dir), "open").await.unwrap();
         let keys: Vec<&str> = r.activity.iter().map(|x| x.key.as_str()).collect();
         assert_eq!(keys.len(), 2, "{keys:?}");
         assert!(keys.contains(&"9802") && keys.contains(&"1111"));
@@ -10834,12 +10937,12 @@ mod chat_api_tests {
 
         // turning on the generic reaction rule still keeps the unrelated 7 out
         prefs.set("7", Some(true), None).unwrap();
-        let r = notifications::list_notifications(&engine, &me, &prefs).await.unwrap();
+        let r = notifications::list_notifications(&engine, &me, &prefs, "open").await.unwrap();
         assert!(!r.activity.iter().any(|x| x.kind == 7));
 
         // muted author → nothing from them
         engine.ignore_list().write().await.pubkeys.insert(hl["pubkey"].as_str().unwrap().to_string());
-        let r = notifications::list_notifications(&engine, &me, &prefs).await.unwrap();
+        let r = notifications::list_notifications(&engine, &me, &prefs, "open").await.unwrap();
         assert!(r.acts.is_empty() && r.activity.is_empty(), "the ignore list applies before counting");
     }
 }

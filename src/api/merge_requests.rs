@@ -1,7 +1,15 @@
-//! Merge requests on publications (kind 818) — the routing payload and the
-//! local list. Publishing a derivative + 818 and the owner's review /
-//! merge / decline land with the relink work; this file is what they will
-//! read and what the Confirm modal shows.
+//! Merge requests on publications (kind 818) — the routing payload, the
+//! local list, and the owner's review / merge / decline. Publishing a
+//! derivative + 818 lives with the relink path (`api::insertions`).
+//!
+//! - `GET /api/v1/merge-requests/:id/diff` — the review: the source paired
+//!   with the owner's current version, a line diff per replaced section,
+//!   the index diff, and the OWNER'S NEXT VERSION templates (same `d`) that
+//!   a merge signs (`docs/zettel/decision-merge-requests-818.org`).
+//! - `POST /api/v1/merge-requests/:id/merge` — owner only: sign those next
+//!   versions, store them, then the `+` verdict.
+//! - `POST /api/v1/merge-requests/:id/decline` / `POST /merge-requests/react`
+//!   — the verdict alone.
 //!
 //! - `POST /api/v1/merge-requests/destinations` — where an ask addressed to
 //!   the target's owner goes: their inbox (kind-10002 read relays) ∪ where
@@ -13,7 +21,7 @@
 //!   (requester), each with its status resolved from the owner's newest
 //!   kind-7 (`publication::merge_request::resolve_status`).
 
-use axum::extract::{Query, State};
+use axum::extract::{Path, Query, State};
 use axum::{Extension, Json};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -21,8 +29,9 @@ use serde_json::{json, Value};
 use crate::api::AppState;
 use crate::engine::FetchPolicy;
 use crate::error::EngineError;
-use crate::publication::insertion::coord_parts;
-use crate::publication::merge_request::{destination_set, is_deliverable, reaction_template, resolve_status, verdict_of, Destination, MergeRequest, MergeStatus};
+use crate::publication::insertion::{coord_parts, event_coordinate, event_tags, index_children, is_definition, is_glossary};
+use crate::signing::EventTemplate;
+use crate::publication::merge_request::{destination_set, find_replacements, index_diff, is_deliverable, line_diff, reaction_template, resolve_status, verdict_of, Destination, DiffHunk, IndexDiff, MergeRequest, MergeStatus};
 
 #[derive(Debug, Deserialize)]
 pub struct DestinationsRequest {
@@ -292,58 +301,501 @@ pub(crate) async fn reaction_for(
     Ok((mr, t))
 }
 
-/// POST /api/v1/merge-requests/react — the target owner's kind-7 on an
-/// 818: `+` merged, `-` declined. Anyone else gets 403. The republish that
-/// a merge means is the review endpoint's job; this is only the verdict.
-pub async fn react_handler(
-    State(engine): State<AppState>,
-    Extension(signing): Extension<crate::signing::SigningController>,
-    Json(req): Json<ReactRequest>,
-) -> Result<Json<ReactResponse>, EngineError> {
-    let id = req.id.trim();
+/// Where a verdict goes when broadcast: `extra` ∪ the requester's inbox ∪
+/// the 818's provenance, falling back to the publish set.
+async fn verdict_relays(engine: &AppState, mr: &MergeRequest, extra: Option<&[String]>, mode_confirm: bool) -> Vec<String> {
+    let mut urls: Vec<String> = extra.map(|v| v.to_vec()).unwrap_or_default();
+    let policy = if mode_confirm { FetchPolicy::LocalFirst } else { FetchPolicy::LocalOnly };
+    urls.extend(engine.inbox_relays_for(&mr.pubkey, policy, mode_confirm).await.unwrap_or_default());
+    urls.extend(engine.provenance_for(&mr.id).await);
+    let mut out: Vec<String> = Vec::new();
+    for u in urls {
+        let n = crate::relay_url::normalize_relay_url(&u);
+        if !n.is_empty() && !out.contains(&n) {
+            out.push(n);
+        }
+    }
+    if out.is_empty() {
+        out = engine.publish_relays().to_vec();
+    }
+    out
+}
+
+/// Sign the owner's verdict on `id` as the user and store it (broadcast
+/// when asked). Shared by `/react`, `/:id/decline` and the merge.
+pub(crate) async fn react_inner(
+    engine: &AppState,
+    signing: &crate::signing::SigningController,
+    id: &str,
+    verdict: char,
+    reason: Option<&str>,
+    broadcast: bool,
+    relays: Option<&[String]>,
+    mode_confirm: bool,
+) -> Result<ReactResponse, EngineError> {
     if !super::is_hex64(id) {
         return Err(EngineError::BadRequest("id must be the 818's 64-hex event id".into()));
     }
-    let verdict = match req.verdict.trim() {
-        "+" => '+',
-        "-" => '-',
-        other => return Err(EngineError::BadRequest(format!("verdict must be + or -, got `{other}`"))),
-    };
-    let (pubkey, signer) = super::resolve_publish_signer(&engine, &signing, crate::api::SignAs::User).await?;
-    let (mr, mut t) = reaction_for(&engine, id, verdict, req.reason.as_deref(), &pubkey).await?;
+    let (pubkey, signer) = super::resolve_publish_signer(engine, signing, crate::api::SignAs::User).await?;
+    let (mr, mut t) = reaction_for(engine, id, verdict, reason, &pubkey).await?;
     t.pubkey = Some(pubkey.clone());
     let reaction = signer.sign(t).await.map_err(super::map_publish_sign_error)?;
     let rid = reaction.get("id").and_then(Value::as_str).unwrap_or("").to_string();
-    let relays_used: Vec<String> = if req.broadcast {
-        let mut urls: Vec<String> = req.relays.clone().unwrap_or_default();
-        let policy = if req.mode_confirm { FetchPolicy::LocalFirst } else { FetchPolicy::LocalOnly };
-        urls.extend(engine.inbox_relays_for(&mr.pubkey, policy, req.mode_confirm).await.unwrap_or_default());
-        urls.extend(engine.provenance_for(&mr.id).await);
-        let mut out: Vec<String> = Vec::new();
-        for u in urls {
-            let n = crate::relay_url::normalize_relay_url(&u);
-            if !n.is_empty() && !out.contains(&n) {
-                out.push(n);
-            }
-        }
-        if out.is_empty() {
-            out = engine.publish_relays().to_vec();
-        }
-        out
-    } else {
-        Vec::new()
-    };
-    let publish = super::finalize_publish(&engine, None, vec![reaction.clone()], req.broadcast, Some(relays_used.clone()), true)
+    let relays_used = if broadcast { verdict_relays(engine, &mr, relays, mode_confirm).await } else { Vec::new() };
+    let publish = super::finalize_publish(engine, None, vec![reaction.clone()], broadcast, Some(relays_used.clone()), true)
         .await?
         .0;
-    Ok(Json(ReactResponse {
+    Ok(ReactResponse {
         merge_request_id: mr.id,
         status: verdict_of(&reaction).unwrap_or_default(),
         reaction,
         id: rid,
         relays_used,
         publish,
-    }))
+    })
+}
+
+/// POST /api/v1/merge-requests/react — the target owner's kind-7 on an
+/// 818: `+` merged, `-` declined. Anyone else gets 403. The republish that
+/// a merge means is `/merge-requests/:id/merge`; this is only the verdict.
+pub async fn react_handler(
+    State(engine): State<AppState>,
+    Extension(signing): Extension<crate::signing::SigningController>,
+    Json(req): Json<ReactRequest>,
+) -> Result<Json<ReactResponse>, EngineError> {
+    let verdict = match req.verdict.trim() {
+        "+" => '+',
+        "-" => '-',
+        other => return Err(EngineError::BadRequest(format!("verdict must be + or -, got `{other}`"))),
+    };
+    Ok(Json(react_inner(&engine, &signing, req.id.trim(), verdict, req.reason.as_deref(), req.broadcast, req.relays.as_deref(), req.mode_confirm).await?))
+}
+
+#[derive(Debug, Deserialize, Default)]
+pub struct DeclineRequest {
+    #[serde(default)]
+    pub reason: Option<String>,
+    #[serde(default)]
+    pub broadcast: bool,
+    #[serde(default)]
+    pub relays: Option<Vec<String>>,
+    #[serde(default)]
+    pub mode_confirm: bool,
+}
+
+/// POST /api/v1/merge-requests/:id/decline — the owner's `-`, with a reason.
+pub async fn decline_handler(
+    State(engine): State<AppState>,
+    Extension(signing): Extension<crate::signing::SigningController>,
+    Path(id): Path<String>,
+    Json(req): Json<DeclineRequest>,
+) -> Result<Json<ReactResponse>, EngineError> {
+    Ok(Json(react_inner(&engine, &signing, id.trim(), '-', req.reason.as_deref(), req.broadcast, req.relays.as_deref(), req.mode_confirm).await?))
+}
+
+// ---------------------------------------------------------------------------
+// The review: the owner's next version, as a diff
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ReviewBase {
+    pub coordinate: String,
+    /// The version the 818 says the change was made against (`e`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub base_id: Option<String>,
+    /// The owner's current version of the target.
+    pub current_id: String,
+    /// The target has a newer version than the one the change was made against.
+    pub moved_on: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ReviewSource {
+    pub coordinate: String,
+    pub id: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ReviewSection {
+    pub original: String,
+    pub derivative: String,
+    pub title: String,
+    pub format: String,
+    /// Hunks of the owner's CURRENT content → the derivative's content.
+    pub hunks: Vec<Vec<DiffHunk>>,
+    pub tags_added: Vec<Vec<String>>,
+    pub tags_removed: Vec<Vec<String>>,
+    /// The owner's next version: same `d`, the derivative's content, the
+    /// original's tags with the derivative's reference tags merged in.
+    pub next: EventTemplate,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ReviewIndex {
+    pub diff: IndexDiff,
+    /// The owner's next index: same `d`, replaced sections kept at their own
+    /// coordinates, added entries inserted at their slots.
+    pub next: EventTemplate,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ReviewDefinition {
+    pub coordinate: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub term: Option<String>,
+    /// Listed by a glossary bundle the derivative index carries.
+    pub promoted_in_source: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ReviewResponse {
+    pub merge_request: MergeRequest,
+    pub status: MergeStatus,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub verdict: Option<Value>,
+    pub role: String,
+    pub base: ReviewBase,
+    pub source: ReviewSource,
+    pub sections: Vec<ReviewSection>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub index: Option<ReviewIndex>,
+    pub definitions: Vec<ReviewDefinition>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
+}
+
+/// Tag names that carry references — the ones a relink adds and a review
+/// compares; everything else on the original stays verbatim.
+const REF_TAGS: &[&str] = &["a", "r", "w", "ref", "q"];
+
+fn tag_name(t: &[String]) -> &str {
+    t.first().map(String::as_str).unwrap_or("")
+}
+
+fn first_tag<'a>(tags: &'a [Vec<String>], name: &str) -> Option<&'a str> {
+    tags.iter().find(|t| tag_name(t) == name).and_then(|t| t.get(1)).map(String::as_str)
+}
+
+/// The owner's next version of `original` with `derivative`'s content and
+/// its reference tags merged in; the `(added, removed)` reference tags.
+fn next_section(original: &Value, derivative: &Value, owner: &str, created_at: i64) -> (EventTemplate, Vec<Vec<String>>, Vec<Vec<String>>) {
+    let o_tags = event_tags(original);
+    let d_tags = event_tags(derivative);
+    let is_ref = |t: &Vec<String>| REF_TAGS.contains(&tag_name(t));
+    let same = |x: &Vec<String>, y: &Vec<String>| x.first() == y.first() && x.get(1) == y.get(1);
+    let added: Vec<Vec<String>> = d_tags.iter().filter(|t| is_ref(t) && !o_tags.iter().any(|o| same(o, t))).cloned().collect();
+    let removed: Vec<Vec<String>> = o_tags.iter().filter(|t| is_ref(t) && !d_tags.iter().any(|d| same(d, t))).cloned().collect();
+    let mut tags: Vec<Vec<String>> = o_tags.iter().filter(|t| tag_name(t) != "client").cloned().collect();
+    tags.extend(added.iter().cloned());
+    (
+        EventTemplate {
+            kind: 30041,
+            created_at,
+            tags,
+            content: derivative.get("content").and_then(Value::as_str).unwrap_or("").to_string(),
+            pubkey: Some(owner.to_string()),
+        },
+        added,
+        removed,
+    )
+}
+
+/// The owner's next index: their current tags, with `added` entries
+/// inserted at their slots (clamped to the `a` list).
+fn next_index(current: &Value, diff: &IndexDiff, owner: &str, created_at: i64) -> EventTemplate {
+    let mut tags: Vec<Vec<String>> = event_tags(current).into_iter().filter(|t| tag_name(t) != "client").collect();
+    for add in &diff.added {
+        if tags.iter().any(|t| tag_name(t) == "a" && t.get(1).map(String::as_str) == Some(add.coordinate.as_str())) {
+            continue;
+        }
+        // the position of the slot-th `a` row, else after the last `a`
+        let a_positions: Vec<usize> = tags.iter().enumerate().filter(|(_, t)| tag_name(t) == "a").map(|(i, _)| i).collect();
+        let at = a_positions.get(add.slot).copied().unwrap_or_else(|| a_positions.last().map(|p| p + 1).unwrap_or(tags.len()));
+        tags.insert(at, vec!["a".to_string(), add.coordinate.clone()]);
+    }
+    EventTemplate {
+        kind: 30040,
+        created_at,
+        tags,
+        content: current.get("content").and_then(Value::as_str).unwrap_or("").to_string(),
+        pubkey: Some(owner.to_string()),
+    }
+}
+
+async fn local_addressable(engine: &AppState, coord: &str) -> Result<Option<Value>, EngineError> {
+    match coord_parts(coord) {
+        Some((k, pk, d)) => engine.get_addressable(k as u64, pk, d, FetchPolicy::LocalOnly).await,
+        None => Ok(None),
+    }
+}
+
+/// The review of a local 818 for `me` (its owner or its requester; 403 for
+/// anyone else): status, the base pairing, one entry per replaced section
+/// with the owner's next version, the index diff, the definitions cited.
+pub async fn review(engine: &AppState, id: &str, me: &str) -> Result<ReviewResponse, EngineError> {
+    let ev = engine
+        .get_by_id(id, FetchPolicy::LocalOnly)
+        .await?
+        .ok_or_else(|| EngineError::NotFound(format!("no local kind-818 with id {id}")))?;
+    let mr = MergeRequest::from_event(&ev).ok_or_else(|| EngineError::BadRequest(format!("{id} is not a merge request")))?;
+    let is_owner = me == mr.owner || me == mr.target_pubkey();
+    let is_requester = me == mr.pubkey;
+    let role = match (is_owner, is_requester) {
+        (true, true) => "both",
+        (true, false) => "owner",
+        (false, true) => "requester",
+        (false, false) => return Err(EngineError::Forbidden("only the owner or the requester can review a merge request".into())),
+    };
+    let reactions = engine
+        .get_events(vec![json!({ "kinds": [7], "#e": [mr.id.clone()], "authors": [mr.owner.clone()], "limit": 50 })], FetchPolicy::LocalOnly, None)
+        .await?
+        .events;
+    let (status, verdict) = resolve_status(&mr, &reactions);
+    let owner = mr.target_pubkey().to_string();
+    let current = local_addressable(engine, &mr.target)
+        .await?
+        .ok_or_else(|| EngineError::NotFound(format!("the target {} is not local", mr.target)))?;
+    let current_id = current.get("id").and_then(Value::as_str).unwrap_or("").to_string();
+    let moved_on = mr.base.as_deref().is_some_and(|b| b != current_id);
+    let source_id = mr.source.clone().ok_or_else(|| EngineError::BadRequest("the merge request names no source".into()))?;
+    let source = engine
+        .get_by_id(&source_id, FetchPolicy::LocalOnly)
+        .await?
+        .ok_or_else(|| EngineError::NotFound(format!("the source {source_id} is not local — fetch it first")))?;
+    let source_coord = event_coordinate(&source).unwrap_or_default();
+    let now = super::unix_now_i64();
+    let mut sections = Vec::new();
+    let mut index = None;
+    let mut cited: Vec<String> = Vec::new();
+    let mut promoted_in_source: Vec<String> = Vec::new();
+    if mr.target_kind == 30041 {
+        let (next, added, removed) = next_section(&current, &source, &owner, now);
+        let tags = event_tags(&current);
+        sections.push(ReviewSection {
+            original: mr.target.clone(),
+            derivative: source_coord.clone(),
+            title: first_tag(&tags, "title").unwrap_or("").to_string(),
+            format: format_of(&current),
+            hunks: line_diff(current.get("content").and_then(Value::as_str).unwrap_or(""), source.get("content").and_then(Value::as_str).unwrap_or("")),
+            tags_added: added,
+            tags_removed: removed,
+            next,
+        });
+        cited.extend(a_values(&source));
+    } else {
+        // base sections (current versions) and the source's children
+        let mut base_sections = Vec::new();
+        for c in index_children(&current) {
+            if let Some(e) = local_addressable(engine, &c).await? {
+                base_sections.push(e);
+            }
+        }
+        let mut src_children = Vec::new();
+        for c in index_children(&source) {
+            if let Some(e) = local_addressable(engine, &c).await? {
+                src_children.push(e);
+            }
+        }
+        // a derivative section: a 30041 not by the owner, or one carrying E
+        let derivatives: Vec<Value> = src_children
+            .iter()
+            .filter(|e| e.get("kind").and_then(Value::as_u64) == Some(30041))
+            .filter(|e| e.get("pubkey").and_then(Value::as_str) != Some(owner.as_str()) || event_tags(e).iter().any(|t| tag_name(t) == "E"))
+            .cloned()
+            .collect();
+        // `E` may name an older version of a base section: resolve those ids to coordinates too
+        let mut base_versions = base_sections.clone();
+        for d in &derivatives {
+            if let Some(eid) = event_tags(d).iter().find(|t| tag_name(t) == "E").and_then(|t| t.get(1).cloned()) {
+                if !base_versions.iter().any(|b| b.get("id").and_then(Value::as_str) == Some(eid.as_str())) {
+                    if let Some(old) = engine.get_by_id(&eid, FetchPolicy::LocalOnly).await? {
+                        base_versions.push(old);
+                    }
+                }
+            }
+        }
+        let replacements = find_replacements(&derivatives, &base_versions);
+        for (orig_coord, deriv_coord) in &replacements {
+            let Some(original) = base_sections.iter().find(|b| event_coordinate(b).as_deref() == Some(orig_coord.as_str())) else { continue };
+            let Some(derivative) = derivatives.iter().find(|d| event_coordinate(d).as_deref() == Some(deriv_coord.as_str())) else { continue };
+            let (next, added, removed) = next_section(original, derivative, &owner, now);
+            let tags = event_tags(original);
+            sections.push(ReviewSection {
+                original: orig_coord.clone(),
+                derivative: deriv_coord.clone(),
+                title: first_tag(&tags, "title").unwrap_or("").to_string(),
+                format: format_of(original),
+                hunks: line_diff(original.get("content").and_then(Value::as_str).unwrap_or(""), derivative.get("content").and_then(Value::as_str).unwrap_or("")),
+                tags_added: added,
+                tags_removed: removed,
+                next,
+            });
+            cited.extend(a_values(derivative));
+        }
+        let diff = index_diff(&current, &source, &replacements);
+        let next = next_index(&current, &diff, &owner, now);
+        // glossary bundles the source lists → the definitions they promote
+        for c in &src_children {
+            if is_glossary(c) {
+                promoted_in_source.extend(index_children(c));
+            }
+        }
+        index = Some(ReviewIndex { diff, next });
+    }
+    cited.sort();
+    cited.dedup();
+    let mut definitions = Vec::new();
+    for c in cited {
+        if let Some(e) = local_addressable(engine, &c).await? {
+            if is_definition(&e) {
+                let tags = event_tags(&e);
+                definitions.push(ReviewDefinition {
+                    coordinate: c.clone(),
+                    term: first_tag(&tags, "title").map(String::from),
+                    promoted_in_source: promoted_in_source.contains(&c),
+                });
+            }
+        }
+    }
+    let note = moved_on.then(|| format!("based on an older version of {} — the diff is against the owner's current one", mr.target));
+    Ok(ReviewResponse {
+        status,
+        verdict: verdict.cloned(),
+        role: role.to_string(),
+        base: ReviewBase { coordinate: mr.target.clone(), base_id: mr.base.clone(), current_id, moved_on },
+        source: ReviewSource { coordinate: source_coord, id: source_id },
+        sections,
+        index,
+        definitions,
+        note,
+        merge_request: mr,
+    })
+}
+
+fn a_values(ev: &Value) -> Vec<String> {
+    event_tags(ev).into_iter().filter(|t| tag_name(t) == "a").filter_map(|t| t.get(1).cloned()).collect()
+}
+
+fn format_of(ev: &Value) -> String {
+    match crate::publication::relink::section_format(ev) {
+        crate::nostrdown::RelinkFormat::Markdown => "markdown",
+        crate::nostrdown::RelinkFormat::Org => "org",
+        crate::nostrdown::RelinkFormat::Asciidoc => "asciidoc",
+        crate::nostrdown::RelinkFormat::Plain => "plain",
+    }
+    .to_string()
+}
+
+/// GET /api/v1/merge-requests/:id/diff
+pub async fn review_handler(
+    State(engine): State<AppState>,
+    Extension(signing): Extension<crate::signing::SigningController>,
+    Path(id): Path<String>,
+) -> Result<Json<ReviewResponse>, EngineError> {
+    let id = id.trim().to_string();
+    if !super::is_hex64(&id) {
+        return Err(EngineError::BadRequest("id must be the 818's 64-hex event id".into()));
+    }
+    let me = signing
+        .active_pubkey()
+        .await
+        .or_else(|| engine.my_pubkey())
+        .ok_or_else(|| EngineError::Auth("no identity — log in to review a merge request".into()))?;
+    Ok(Json(review(&engine, &id, &me).await?))
+}
+
+#[derive(Debug, Deserialize, Default)]
+pub struct MergeRequestBody {
+    #[serde(default)]
+    pub broadcast: bool,
+    #[serde(default)]
+    pub relays: Option<Vec<String>>,
+    #[serde(default)]
+    pub mode_confirm: bool,
+}
+
+#[derive(Debug, Serialize)]
+pub struct MergedSection {
+    pub coordinate: String,
+    pub event: Value,
+}
+
+#[derive(Debug, Serialize)]
+pub struct MergeResponse {
+    pub merged: bool,
+    pub merge_request_id: String,
+    pub sections: Vec<MergedSection>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub index: Option<Value>,
+    pub reaction: Value,
+    pub status: MergeStatus,
+    pub relays_used: Vec<String>,
+    #[serde(flatten)]
+    pub publish: crate::api::PublishResponse,
+}
+
+/// The merge: sign the owner's next versions (same `d`), store them, then
+/// the `+` verdict. Owner only.
+pub(crate) async fn merge(
+    engine: &AppState,
+    signing: &crate::signing::SigningController,
+    id: &str,
+    broadcast: bool,
+    relays: Option<&[String]>,
+    mode_confirm: bool,
+) -> Result<MergeResponse, EngineError> {
+    if !super::is_hex64(id) {
+        return Err(EngineError::BadRequest("id must be the 818's 64-hex event id".into()));
+    }
+    let (pubkey, signer) = super::resolve_publish_signer(engine, signing, crate::api::SignAs::User).await?;
+    let rv = review(engine, id, &pubkey).await?;
+    if rv.role == "requester" {
+        return Err(EngineError::Forbidden("only the owner can merge; the requester waits for the verdict".into()));
+    }
+    if rv.sections.is_empty() && rv.index.as_ref().map(|i| i.diff.added.is_empty() && i.diff.removed.is_empty() && i.diff.moved.is_empty()).unwrap_or(true) {
+        return Err(EngineError::BadRequest("nothing to merge: the source does not change the target".into()));
+    }
+    let mut sections = Vec::new();
+    let mut events = Vec::new();
+    for s in rv.sections {
+        let mut t = s.next;
+        t.pubkey = Some(pubkey.clone());
+        let ev = signer.sign(t).await.map_err(super::map_publish_sign_error)?;
+        sections.push(MergedSection { coordinate: event_coordinate(&ev).unwrap_or(s.original), event: ev.clone() });
+        events.push(ev);
+    }
+    let index = match rv.index {
+        Some(ix) => {
+            let mut t = ix.next;
+            t.pubkey = Some(pubkey.clone());
+            Some(signer.sign(t).await.map_err(super::map_publish_sign_error)?)
+        }
+        None => None,
+    };
+    let publish = super::finalize_publish(engine, index.clone(), events, broadcast, relays.map(|r| r.to_vec()), true)
+        .await?
+        .0;
+    let verdict = react_inner(engine, signing, id, '+', None, broadcast, relays, mode_confirm).await?;
+    Ok(MergeResponse {
+        merged: true,
+        merge_request_id: rv.merge_request.id,
+        sections,
+        index,
+        reaction: verdict.reaction,
+        status: MergeStatus::Merged,
+        relays_used: verdict.relays_used,
+        publish,
+    })
+}
+
+/// POST /api/v1/merge-requests/:id/merge
+pub async fn merge_handler(
+    State(engine): State<AppState>,
+    Extension(signing): Extension<crate::signing::SigningController>,
+    Path(id): Path<String>,
+    Json(req): Json<MergeRequestBody>,
+) -> Result<Json<MergeResponse>, EngineError> {
+    Ok(Json(merge(&engine, &signing, id.trim(), req.broadcast, req.relays.as_deref(), req.mode_confirm).await?))
 }
 
 #[cfg(test)]

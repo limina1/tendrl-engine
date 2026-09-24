@@ -435,6 +435,231 @@ pub fn is_deliverable(set: &[Destination]) -> bool {
     set.iter().any(|d| d.reasons.iter().any(|r| matches!(r, Reason::Inbox | Reason::FoundOn)))
 }
 
+// ---------------------------------------------------------------------------
+// Review: the line diff and the index diff
+// ---------------------------------------------------------------------------
+
+/// One line of a diff hunk.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DiffKind {
+    Context,
+    Removed,
+    Added,
+}
+
+/// A line in a hunk: which side(s) it belongs to and its 1-based line
+/// numbers in the before / after texts (`None` on the side it is absent).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DiffHunk {
+    pub kind: DiffKind,
+    pub line: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub n_before: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub n_after: Option<usize>,
+}
+
+/// The longest common subsequence of two line lists as index pairs, by the
+/// classic DP — sections are short, so O(n·m) is fine and predictable.
+fn lcs_pairs(a: &[&str], b: &[&str]) -> Vec<(usize, usize)> {
+    let (n, m) = (a.len(), b.len());
+    let mut dp = vec![vec![0u32; m + 1]; n + 1];
+    for i in (0..n).rev() {
+        for j in (0..m).rev() {
+            dp[i][j] = if a[i] == b[j] { dp[i + 1][j + 1] + 1 } else { dp[i + 1][j].max(dp[i][j + 1]) };
+        }
+    }
+    let (mut i, mut j) = (0, 0);
+    let mut out = Vec::new();
+    while i < n && j < m {
+        if a[i] == b[j] {
+            out.push((i, j));
+            i += 1;
+            j += 1;
+        } else if dp[i + 1][j] >= dp[i][j + 1] {
+            i += 1;
+        } else {
+            j += 1;
+        }
+    }
+    out
+}
+
+/// A line diff of `before` → `after`: the edit script (context / removed /
+/// added lines) grouped into hunks with one line of context on each side.
+/// Identical texts yield no hunks. Pure.
+pub fn line_diff(before: &str, after: &str) -> Vec<Vec<DiffHunk>> {
+    let a: Vec<&str> = before.lines().collect();
+    let b: Vec<&str> = after.lines().collect();
+    let common = lcs_pairs(&a, &b);
+    // the full script, in order
+    let mut script: Vec<DiffHunk> = Vec::new();
+    let (mut i, mut j) = (0usize, 0usize);
+    for (ci, cj) in common.iter().copied().chain(std::iter::once((a.len(), b.len()))) {
+        while i < ci {
+            script.push(DiffHunk { kind: DiffKind::Removed, line: a[i].to_string(), n_before: Some(i + 1), n_after: None });
+            i += 1;
+        }
+        while j < cj {
+            script.push(DiffHunk { kind: DiffKind::Added, line: b[j].to_string(), n_before: None, n_after: Some(j + 1) });
+            j += 1;
+        }
+        if ci < a.len() && cj < b.len() {
+            script.push(DiffHunk { kind: DiffKind::Context, line: a[ci].to_string(), n_before: Some(ci + 1), n_after: Some(cj + 1) });
+            i = ci + 1;
+            j = cj + 1;
+        }
+    }
+    // group: a change plus one context line either side; merge hunks whose
+    // context would overlap
+    let changed: Vec<usize> = script.iter().enumerate().filter(|(_, h)| h.kind != DiffKind::Context).map(|(k, _)| k).collect();
+    if changed.is_empty() {
+        return Vec::new();
+    }
+    let mut hunks: Vec<Vec<DiffHunk>> = Vec::new();
+    let mut start = changed[0].saturating_sub(1);
+    let mut end = (changed[0] + 1).min(script.len() - 1);
+    for &k in &changed[1..] {
+        let s = k.saturating_sub(1);
+        if s <= end + 1 {
+            end = (k + 1).min(script.len() - 1);
+        } else {
+            hunks.push(script[start..=end].to_vec());
+            start = s;
+            end = (k + 1).min(script.len() - 1);
+        }
+    }
+    hunks.push(script[start..=end].to_vec());
+    hunks
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct IndexAdded {
+    pub coordinate: String,
+    /// 0-based position in the source's `a` list.
+    pub slot: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct IndexMoved {
+    pub coordinate: String,
+    pub from: usize,
+    pub to: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct IndexReplaced {
+    pub original: String,
+    pub derivative: String,
+}
+
+/// How a derivative index differs from the base: entries added (with their
+/// slot), removed, moved, unchanged, and the base sections a derivative
+/// section stands in for (`replaced` — a replacement is neither an add nor
+/// a remove).
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct IndexDiff {
+    pub added: Vec<IndexAdded>,
+    pub removed: Vec<String>,
+    pub moved: Vec<IndexMoved>,
+    pub unchanged: Vec<String>,
+    pub replaced: Vec<IndexReplaced>,
+}
+
+/// Pair derivative sections with the base sections they were copied from:
+/// by `E` (the copied version's id, any version of a base section), else by
+/// a `p` naming the base author plus an equal `title`. Returns
+/// `(original coordinate, derivative coordinate)` pairs in source order.
+pub fn find_replacements(derivatives: &[Value], base_sections: &[Value]) -> Vec<(String, String)> {
+    use crate::publication::insertion::event_coordinate;
+    let mut out: Vec<(String, String)> = Vec::new();
+    for d in derivatives {
+        let Some(dc) = event_coordinate(d) else { continue };
+        let tags = event_tags(d);
+        let e_id = tags.iter().find(|t| t.first().map(String::as_str) == Some("E")).and_then(|t| t.get(1).cloned());
+        let mut original = e_id.as_deref().and_then(|id| {
+            base_sections
+                .iter()
+                .find(|b| b.get("id").and_then(Value::as_str) == Some(id))
+                .and_then(event_coordinate)
+        });
+        if original.is_none() {
+            let title = tags.iter().find(|t| t.first().map(String::as_str) == Some("title")).and_then(|t| t.get(1).cloned());
+            let ps: Vec<&str> = tags.iter().filter(|t| t.first().map(String::as_str) == Some("p")).filter_map(|t| t.get(1).map(String::as_str)).collect();
+            original = base_sections
+                .iter()
+                .find(|b| {
+                    let bt = event_tags(b);
+                    let btitle = bt.iter().find(|t| t.first().map(String::as_str) == Some("title")).and_then(|t| t.get(1).cloned());
+                    let author = b.get("pubkey").and_then(Value::as_str).unwrap_or("");
+                    title.is_some() && btitle == title && ps.contains(&author)
+                })
+                .and_then(event_coordinate);
+        }
+        if let Some(o) = original {
+            if !out.iter().any(|(a, _)| *a == o) {
+                out.push((o, dc));
+            }
+        }
+    }
+    out
+}
+
+fn a_list(index: &Value) -> Vec<String> {
+    event_tags(index)
+        .into_iter()
+        .filter(|t| t.first().map(String::as_str) == Some("a"))
+        .filter_map(|t| t.get(1).cloned())
+        .collect()
+}
+
+/// Diff the `a` lists of `base` and `source` with `replacements`
+/// (original → derivative) folded in, so a derivative section counts as its
+/// original for ordering. Pure.
+pub fn index_diff(base: &Value, source: &Value, replacements: &[(String, String)]) -> IndexDiff {
+    let base_list = a_list(base);
+    let src_raw = a_list(source);
+    // normalize: derivative → original
+    let src: Vec<String> = src_raw
+        .iter()
+        .map(|c| replacements.iter().find(|(_, d)| d == c).map(|(o, _)| o.clone()).unwrap_or_else(|| c.clone()))
+        .collect();
+    let mut diff = IndexDiff::default();
+    for (o, d) in replacements {
+        if src_raw.contains(d) {
+            diff.replaced.push(IndexReplaced { original: o.clone(), derivative: d.clone() });
+        }
+    }
+    for (slot, c) in src_raw.iter().enumerate() {
+        if !base_list.contains(&src[slot]) {
+            diff.added.push(IndexAdded { coordinate: c.clone(), slot });
+        }
+    }
+    for c in &base_list {
+        if !src.contains(c) {
+            diff.removed.push(c.clone());
+        }
+    }
+    // common entries: those outside the LCS of the two orders moved
+    let common_base: Vec<&str> = base_list.iter().filter(|c| src.contains(c)).map(String::as_str).collect();
+    let common_src: Vec<&str> = src.iter().filter(|c| base_list.contains(c)).map(String::as_str).collect();
+    let keep: std::collections::HashSet<&str> = lcs_pairs(&common_base, &common_src).into_iter().map(|(i, _)| common_base[i]).collect();
+    for c in &common_base {
+        if diff.replaced.iter().any(|r| r.original == *c) {
+            continue; // a replaced section is reported once, under `replaced`
+        }
+        if keep.contains(c) {
+            diff.unchanged.push(c.to_string());
+        } else {
+            let from = base_list.iter().position(|x| x == c).unwrap_or(0);
+            let to = src.iter().position(|x| x == c).unwrap_or(0);
+            diff.moved.push(IndexMoved { coordinate: c.to_string(), from, to });
+        }
+    }
+    diff
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -598,5 +823,55 @@ mod tests {
         let index2 = serde_json::json!({ "id": "c".repeat(64), "pubkey": owner, "kind": 30040, "created_at": 1, "tags": [["d", "book"], ["a", s1], ["a", gl]] });
         let (t2, _) = derivative_index(&index2, &[], Some(&gl), &me, "", 5).unwrap();
         assert_eq!(t2.tags.iter().filter(|t| t[0] == "a").count(), 2);
+    }
+
+    #[test]
+    fn line_diff_groups_changes_with_one_line_of_context() {
+        let before = "one\ntwo\nthree\nfour\nfive\nsix\nseven";
+        let after = "one\ntwo changed\nthree\nfour\nfive\nsix\nseven\neight";
+        let hunks = line_diff(before, after);
+        assert_eq!(hunks.len(), 2, "{hunks:?}");
+        let h0: Vec<(DiffKind, &str)> = hunks[0].iter().map(|h| (h.kind, h.line.as_str())).collect();
+        assert_eq!(h0, vec![(DiffKind::Context, "one"), (DiffKind::Removed, "two"), (DiffKind::Added, "two changed"), (DiffKind::Context, "three")]);
+        assert_eq!(hunks[0][1].n_before, Some(2));
+        assert_eq!(hunks[0][2].n_after, Some(2));
+        let h1: Vec<(DiffKind, &str)> = hunks[1].iter().map(|h| (h.kind, h.line.as_str())).collect();
+        assert_eq!(h1, vec![(DiffKind::Context, "seven"), (DiffKind::Added, "eight")]);
+        assert!(line_diff("same\nsame", "same\nsame").is_empty());
+        // adjacent changes merge into one hunk
+        let m = line_diff("a\nb\nc\nd", "a\nB\nC\nd");
+        assert_eq!(m.len(), 1);
+    }
+
+    #[test]
+    fn index_diff_reports_replacements_adds_removes_moves() {
+        let pk = "a".repeat(64);
+        let base = json!({ "kind": 30040, "pubkey": pk, "tags": [["d","x"],["a", format!("30041:{pk}:s1")],["a", format!("30041:{pk}:s2")],["a", format!("30041:{pk}:s3")],["a", format!("30041:{pk}:s4")]] });
+        let me = "b".repeat(64);
+        let source = json!({ "kind": 30040, "pubkey": me, "tags": [["d","y"],["a", format!("30041:{pk}:s1")],["a", format!("30041:{me}:s2p")],["a", format!("30041:{pk}:s4")],["a", format!("30041:{pk}:s3")],["a", format!("30040:{me}:gl")]] });
+        let reps = vec![(format!("30041:{pk}:s2"), format!("30041:{me}:s2p"))];
+        let d = index_diff(&base, &source, &reps);
+        assert_eq!(d.replaced, vec![IndexReplaced { original: format!("30041:{pk}:s2"), derivative: format!("30041:{me}:s2p") }]);
+        assert_eq!(d.added, vec![IndexAdded { coordinate: format!("30040:{me}:gl"), slot: 4 }]);
+        assert!(d.removed.is_empty());
+        assert_eq!(d.moved.len(), 1, "{:?}", d.moved);
+        assert_eq!(d.unchanged.len(), 2, "s2 is replaced, not unchanged: {:?}", d.unchanged);
+        // a removed section
+        let source2 = json!({ "kind": 30040, "pubkey": me, "tags": [["a", format!("30041:{pk}:s1")]] });
+        let d2 = index_diff(&base, &source2, &[]);
+        assert_eq!(d2.removed.len(), 3);
+        assert_eq!(d2.unchanged, vec![format!("30041:{pk}:s1")]);
+    }
+
+    #[test]
+    fn find_replacements_pairs_by_e_then_by_author_and_title() {
+        let pk = "a".repeat(64);
+        let me = "b".repeat(64);
+        let s2 = json!({ "kind": 30041, "id": "1".repeat(64), "pubkey": pk, "tags": [["d","s2"],["title","Two"]], "content": "" });
+        let s3 = json!({ "kind": 30041, "id": "3".repeat(64), "pubkey": pk, "tags": [["d","s3"],["title","Three"]], "content": "" });
+        let d2 = json!({ "kind": 30041, "id": "2".repeat(64), "pubkey": me, "tags": [["d","s2p"],["title","Two"],["E", "1".repeat(64), "", pk],["p", pk]], "content": "" });
+        let d3 = json!({ "kind": 30041, "id": "4".repeat(64), "pubkey": me, "tags": [["d","s3p"],["title","Three"],["p", pk]], "content": "" });
+        let r = find_replacements(&[d2, d3], &[s2, s3]);
+        assert_eq!(r, vec![(format!("30041:{pk}:s2"), format!("30041:{me}:s2p")), (format!("30041:{pk}:s3"), format!("30041:{me}:s3p"))]);
     }
 }

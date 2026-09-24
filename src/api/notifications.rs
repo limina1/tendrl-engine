@@ -4,15 +4,18 @@
 //! /notifications/fetch` first pulls the same filters from relays (one
 //! Confirm-gated fetch on the user's read relays ∪ the provenance relays of
 //! their own events) and then lists. `GET|PUT /notifications/prefs` is the
-//! checkable list the settings buffer shows. Kind-818 status is resolved on
-//! another branch (`publication::merge_request`); rows carry `status` /
-//! `verdict` as `null` until it lands.
+//! checkable list the settings buffer shows. A kind-818 row (an ask for
+//! me, or one of `mine`) carries its `status` — the target owner's newest
+//! kind-7, `publication::merge_request::resolve_status` — and `verdict`;
+//! `?status=open` keeps only open asks in `acts`, the settled ones move to
+//! `done`.
 
 use super::AppState;
 use crate::engine::FetchPolicy;
 use crate::error::{EngineError, Result};
 use crate::notifications::{self, EffectiveRule, How, Me, Prefs};
 use crate::publication::insertion::{coord_parts, event_coordinate, event_tags};
+use crate::publication::merge_request::{resolve_status, verdict_of, MergeRequest, MergeStatus};
 use axum::extract::{Extension, Query, State};
 use axum::Json;
 use serde::{Deserialize, Serialize};
@@ -44,10 +47,10 @@ pub struct Row {
     pub act: bool,
     pub how: How,
     pub event: Value,
-    /// Merge-request status (`open` / `merged` / `declined`) — TODO: filled
-    /// once `publication::merge_request::resolve_status` is merged in.
+    /// Merge-request status (`open` / `merged` / `declined`) on an 818 row
+    /// and on `mine`; on a `7-on-my-818` row, the verdict the reaction gives.
     pub status: Option<String>,
-    /// The owner's kind-7 verdict event, when any — TODO, as above.
+    /// The owner's kind-7 verdict event, when any.
     pub verdict: Option<Value>,
 }
 
@@ -65,15 +68,18 @@ pub struct NotificationsResponse {
     pub me: String,
     pub acts: Vec<Row>,
     pub activity: Vec<Row>,
-    /// My own outgoing 818s (verdicts fold on once merge_request lands).
+    /// My own outgoing 818s, each with its status.
     pub mine: Vec<Row>,
+    /// Asks that no longer need an act (merged / declined 818s) when the
+    /// listing is `status=open`; empty for `all` (they stay in `acts`).
+    pub done: Vec<Row>,
     pub counts: Counts,
 }
 
 #[derive(Debug, Deserialize, Default)]
 pub struct ListQuery {
-    /// `open` (default) or `all` — meaningful once 818 status exists; today
-    /// both list the same rows.
+    /// `open` (default): settled 818s leave `acts` for `done`; `all` keeps
+    /// every ask in `acts`.
     #[serde(default)]
     pub status: Option<String>,
 }
@@ -234,8 +240,29 @@ async fn summary(engine: &AppState, titles: &mut Titles<'_>, rule: &EffectiveRul
     }
 }
 
+fn status_name(s: MergeStatus) -> String {
+    match s {
+        MergeStatus::Open => "open",
+        MergeStatus::Merged => "merged",
+        MergeStatus::Declined => "declined",
+    }
+    .to_string()
+}
+
+/// An 818's status from the target owner's local reactions.
+async fn merge_status(engine: &AppState, ev: &Value) -> (Option<String>, Option<Value>) {
+    let Some(mr) = MergeRequest::from_event(ev) else { return (None, None) };
+    let reactions = engine
+        .get_events(vec![json!({ "kinds": [7], "#e": [mr.id.clone()], "authors": [mr.owner.clone()], "limit": 50 })], FetchPolicy::LocalOnly, None)
+        .await
+        .map(|r| r.events)
+        .unwrap_or_default();
+    let (st, v) = resolve_status(&mr, &reactions);
+    (Some(status_name(st)), v.cloned())
+}
+
 /// The listing, engine-level so tests and the fetch path share it.
-pub async fn list_notifications(engine: &AppState, me_pk: &str, prefs: &Prefs) -> Result<NotificationsResponse> {
+pub async fn list_notifications(engine: &AppState, me_pk: &str, prefs: &Prefs, status: &str) -> Result<NotificationsResponse> {
     let me = gather_me(engine, me_pk).await?;
     let enabled = prefs.apply();
     let filters = notifications::filters_for(&enabled, &me, ROW_CAP);
@@ -262,12 +289,19 @@ pub async fn list_notifications(engine: &AppState, me_pk: &str, prefs: &Prefs) -
     }
     let parent_roots = my_parent_roots(engine, me_pk).await?;
     let mut titles = Titles { engine, cache: HashMap::new() };
+    let only_open = status != "all";
     let mut acts = Vec::new();
     let mut activity = Vec::new();
+    let mut done = Vec::new();
     for ev in &events {
         let Some(rule) = notifications::classify(&enabled, ev, &me) else { continue };
         let anchor = anchor_of(ev, &parent_roots);
         let s = summary(engine, &mut titles, rule, ev, &anchor).await;
+        let (status, verdict) = match rule.key {
+            "818" => merge_status(engine, ev).await,
+            "7-on-my-818" => (verdict_of(ev).map(status_name), None),
+            _ => (None, None),
+        };
         let row = Row {
             key: rule.key.to_string(),
             kind: ev.get("kind").and_then(Value::as_u64).unwrap_or(0),
@@ -279,10 +313,18 @@ pub async fn list_notifications(engine: &AppState, me_pk: &str, prefs: &Prefs) -
             act: rule.act,
             how: rule.how,
             event: ev.clone(),
-            status: None,
-            verdict: None,
+            status,
+            verdict,
         };
-        if rule.act { acts.push(row) } else { activity.push(row) }
+        if rule.act {
+            if only_open && row.kind == 818 && row.status.as_deref().is_some_and(|s| s != "open") {
+                done.push(row)
+            } else {
+                acts.push(row)
+            }
+        } else {
+            activity.push(row)
+        }
     }
     let mut mine = Vec::new();
     for ev in &mine_818 {
@@ -291,6 +333,12 @@ pub async fn list_notifications(engine: &AppState, me_pk: &str, prefs: &Prefs) -
             Some(r) => titles.title(r).await.unwrap_or_else(|| r.clone()),
             None => "a publication".into(),
         };
+        let (status, verdict) = merge_status(engine, ev).await;
+        let state = match status.as_deref() {
+            Some("merged") => " — merged",
+            Some("declined") => " — declined",
+            _ => " — open",
+        };
         mine.push(Row {
             key: "mine-818".into(),
             kind: 818,
@@ -298,35 +346,40 @@ pub async fn list_notifications(engine: &AppState, me_pk: &str, prefs: &Prefs) -
             pubkey: me_pk.to_string(),
             created_at: ev.get("created_at").and_then(Value::as_i64).unwrap_or(0),
             anchor,
-            summary: format!("your merge request on {place}"),
+            summary: format!("your merge request on {place}{state}"),
             act: false,
             how: How::List,
             event: ev.clone(),
-            status: None,
-            verdict: None,
+            status,
+            verdict,
         });
     }
     let newest = |a: &Row, b: &Row| b.created_at.cmp(&a.created_at);
     acts.sort_by(newest);
     activity.sort_by(newest);
     mine.sort_by(newest);
+    done.sort_by(newest);
     let counts = Counts {
         acts: acts.len(),
         activity_count: activity.iter().filter(|r| r.how == How::Count).count(),
         activity_list: activity.iter().filter(|r| r.how == How::List).count(),
     };
-    Ok(NotificationsResponse { me: me_pk.to_string(), acts, activity, mine, counts })
+    Ok(NotificationsResponse { me: me_pk.to_string(), acts, activity, mine, done, counts })
 }
 
 /// GET /api/v1/notifications
 pub async fn list_handler(
     State(engine): State<AppState>,
     Extension(signing): Extension<crate::signing::SigningController>,
-    Query(_q): Query<ListQuery>,
+    Query(q): Query<ListQuery>,
 ) -> Result<Json<NotificationsResponse>> {
     let me = me_or_err(signing.active_pubkey().await)?;
     let prefs = Prefs::load(engine.data_dir());
-    Ok(Json(list_notifications(&engine, &me, &prefs).await?))
+    let status = q.status.as_deref().unwrap_or("open");
+    if !matches!(status, "open" | "all") {
+        return Err(EngineError::BadRequest("status must be open or all".into()));
+    }
+    Ok(Json(list_notifications(&engine, &me, &prefs, status).await?))
 }
 
 #[derive(Debug, Serialize)]
@@ -468,6 +521,6 @@ pub async fn fetch_handler(
     if let Some(o) = op {
         o.complete(fetched);
     }
-    let list = list_notifications(&engine, &me_pk, &prefs).await?;
+    let list = list_notifications(&engine, &me_pk, &prefs, "open").await?;
     Ok(Json(FetchResponse { relays: if policy == FetchPolicy::LocalOnly { vec![] } else { chosen }, fetched, list }))
 }
