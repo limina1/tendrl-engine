@@ -793,6 +793,262 @@ pub fn reference_tags(content: &str) -> Vec<Vec<String>> {
     out
 }
 
+// ---------------------------------------------------------------------------
+// Relink: wrap terms as coordinate refs (plan Phase 5c, vocabulary requests)
+// ---------------------------------------------------------------------------
+
+/// One relink edit: the term, the coordinate it now points at, and the byte
+/// span of the *original* text that was wrapped.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct LinkedTerm {
+    pub term: String,
+    pub coordinate: String,
+    /// The occurrence as written in the text (case and spacing preserved).
+    pub display: String,
+    /// Byte span of the occurrence in the ORIGINAL content.
+    pub start: usize,
+    pub end: usize,
+}
+
+/// Which markup the content is in — decides what counts as a heading, a
+/// code span, or a native link that must not be rewritten.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RelinkFormat {
+    Markdown,
+    Org,
+    Asciidoc,
+    Plain,
+}
+
+impl RelinkFormat {
+    /// From a section's `format` / `m` value (`markdown`, `org`, `asciidoc`,
+    /// `text/markdown`, `text/org`, …); anything else is plain.
+    pub fn from_name(name: Option<&str>) -> Self {
+        let n = name.unwrap_or("").trim().to_ascii_lowercase();
+        if n.contains("org") {
+            Self::Org
+        } else if n.contains("asciidoc") || n == "adoc" {
+            Self::Asciidoc
+        } else if n.contains("markdown") || n == "md" || n.is_empty() {
+            Self::Markdown
+        } else {
+            Self::Plain
+        }
+    }
+}
+
+/// Byte ranges of `content` that a relink must leave alone: fenced and
+/// indented code, inline code, headings, existing `{{ }}` / `[[ ]]` tokens,
+/// and the markup's own links (a term inside a link's text or URL stays).
+fn protected_spans(content: &str, format: RelinkFormat) -> Vec<(usize, usize)> {
+    let mut spans: Vec<(usize, usize)> = Vec::new();
+    // 1. existing nostrdown tokens (both grammars)
+    for r in parse(content) {
+        spans.push((r.start, r.end));
+    }
+    // 2. line-level: fences, headings, indented code
+    let mut in_fence: Option<&str> = None;
+    let mut pos = 0usize;
+    for line in content.split_inclusive('\n') {
+        let start = pos;
+        pos += line.len();
+        let t = line.trim_end_matches(['\n', '\r']);
+        let tt = t.trim_start();
+        if let Some(close) = in_fence {
+            spans.push((start, pos));
+            let closed = match format {
+                RelinkFormat::Org => tt.to_ascii_lowercase().starts_with(close),
+                _ => tt.starts_with(close),
+            };
+            if closed {
+                in_fence = None;
+            }
+            continue;
+        }
+        let opens = match format {
+            RelinkFormat::Markdown | RelinkFormat::Plain => {
+                if tt.starts_with("```") {
+                    Some("```")
+                } else if tt.starts_with("~~~") {
+                    Some("~~~")
+                } else {
+                    None
+                }
+            }
+            RelinkFormat::Org => {
+                let l = tt.to_ascii_lowercase();
+                if l.starts_with("#+begin_src") || l.starts_with("#+begin_example") {
+                    Some("#+end_")
+                } else if l.starts_with("#+begin_export") {
+                    Some("#+end_export")
+                } else {
+                    None
+                }
+            }
+            RelinkFormat::Asciidoc => {
+                if tt.starts_with("----") {
+                    Some("----")
+                } else if tt.starts_with("....") {
+                    Some("....")
+                } else if tt.starts_with("```") {
+                    Some("```")
+                } else {
+                    None
+                }
+            }
+        };
+        if let Some(close) = opens {
+            in_fence = Some(close);
+            spans.push((start, pos));
+            continue;
+        }
+        let heading = match format {
+            RelinkFormat::Markdown => tt.starts_with('#'),
+            RelinkFormat::Org => t.starts_with('*') || tt.starts_with("#+"),
+            RelinkFormat::Asciidoc => tt.starts_with('=') || tt.starts_with(':'),
+            RelinkFormat::Plain => false,
+        };
+        let indented_code = matches!(format, RelinkFormat::Markdown)
+            && (line.starts_with("    ") || line.starts_with('\t'));
+        if heading || indented_code {
+            spans.push((start, pos));
+        }
+    }
+    // 3. inline: code spans and native links
+    let bytes = content.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        let c = bytes[i];
+        // inline code: `…` (md/adoc), =…= / ~…~ (org)
+        let delim: Option<u8> = match (format, c) {
+            (RelinkFormat::Markdown | RelinkFormat::Asciidoc | RelinkFormat::Plain, b'`') => Some(b'`'),
+            (RelinkFormat::Org, b'=') | (RelinkFormat::Org, b'~') => {
+                // org verbatim only when the delimiter opens after whitespace / start
+                let at_boundary = i == 0 || bytes[i - 1].is_ascii_whitespace() || bytes[i - 1] == b'(';
+                if at_boundary { Some(c) } else { None }
+            }
+            _ => None,
+        };
+        if let Some(d) = delim {
+            if let Some(off) = content[i + 1..].find(d as char) {
+                let close = i + 1 + off;
+                // an org verbatim span must not cross a newline
+                if !(matches!(format, RelinkFormat::Org) && content[i..close].contains('\n')) {
+                    spans.push((i, close + 1));
+                    i = close + 1;
+                    continue;
+                }
+            }
+        }
+        // markdown / asciidoc links and images: [text](url), ![alt](url), link:url[text], https://…
+        if matches!(format, RelinkFormat::Markdown) && c == b'[' && !(i + 1 < bytes.len() && bytes[i + 1] == b'[') {
+            if let Some(cl) = content[i..].find("](") {
+                if let Some(end) = content[i + cl..].find(')') {
+                    spans.push((i, i + cl + end + 1));
+                    i += cl + end + 1;
+                    continue;
+                }
+            }
+        }
+        if matches!(format, RelinkFormat::Asciidoc) && content[i..].starts_with("link:") {
+            if let Some(end) = content[i..].find(']') {
+                spans.push((i, i + end + 1));
+                i += end + 1;
+                continue;
+            }
+        }
+        if content[i..].starts_with("http://") || content[i..].starts_with("https://") || content[i..].starts_with("nostr:") {
+            let end = content[i..]
+                .find(|ch: char| ch.is_whitespace() || ch == ')' || ch == ']' || ch == '>')
+                .map(|o| i + o)
+                .unwrap_or(content.len());
+            spans.push((i, end));
+            i = end;
+            continue;
+        }
+        i += 1;
+    }
+    spans.sort_unstable();
+    spans
+}
+
+fn is_word_byte(b: u8) -> bool {
+    b.is_ascii_alphanumeric() || b == b'_' || b >= 0x80
+}
+
+/// Relink: wrap the **first** plain-text occurrence of each term in
+/// `content` as `{{ref:<coordinate>|<occurrence as written>}}`, skipping code,
+/// headings, native links and anything already inside a nostrdown token.
+/// Matching is case-insensitive on whole words, with any run of whitespace
+/// in the term matching any run of whitespace in the text. Terms are tried
+/// longest first so "epistemological anarchism" wins over "anarchism" when
+/// both are asked for. Returns the rewritten content and the edits made, in
+/// text order; a term that never occurs outside a protected span is simply
+/// absent from the edits. Pure.
+pub fn link_terms(content: &str, format: RelinkFormat, terms: &[(String, String)]) -> (String, Vec<LinkedTerm>) {
+    let protected = protected_spans(content, format);
+    let in_protected = |s: usize, e: usize| protected.iter().any(|&(ps, pe)| s < pe && e > ps);
+    let lower = content.to_lowercase();
+    // to_lowercase can change byte lengths for some scripts; fall back to the
+    // original bytes for offset mapping when it does.
+    let hay: &str = if lower.len() == content.len() { &lower } else { content };
+    let mut ordered: Vec<&(String, String)> = terms.iter().filter(|(t, _)| !t.trim().is_empty()).collect();
+    ordered.sort_by_key(|(t, _)| std::cmp::Reverse(t.trim().len()));
+    let mut edits: Vec<LinkedTerm> = Vec::new();
+    for (term, coord) in ordered {
+        let words: Vec<String> = term.split_whitespace().map(|w| w.to_lowercase()).collect();
+        if words.is_empty() {
+            continue;
+        }
+        let mut from = 0usize;
+        let mut found: Option<(usize, usize)> = None;
+        while let Some(off) = hay[from..].find(words[0].as_str()) {
+            let start = from + off;
+            // whole-word start
+            if start > 0 && is_word_byte(hay.as_bytes()[start - 1]) {
+                from = start + 1;
+                continue;
+            }
+            // walk the remaining words across whitespace runs
+            let mut cur = start + words[0].len();
+            let mut ok = true;
+            for w in &words[1..] {
+                let ws_end = hay[cur..].find(|ch: char| !ch.is_whitespace()).map(|o| cur + o).unwrap_or(hay.len());
+                if ws_end == cur || !hay[ws_end..].starts_with(w.as_str()) {
+                    ok = false;
+                    break;
+                }
+                cur = ws_end + w.len();
+            }
+            if ok && cur < hay.len() && is_word_byte(hay.as_bytes()[cur]) {
+                ok = false;
+            }
+            if ok && !in_protected(start, cur) && !edits.iter().any(|e| start < e.end && cur > e.start) {
+                found = Some((start, cur));
+                break;
+            }
+            from = start + 1;
+        }
+        if let Some((s, e)) = found {
+            edits.push(LinkedTerm { term: term.clone(), coordinate: coord.clone(), display: content[s..e].to_string(), start: s, end: e });
+        }
+    }
+    edits.sort_by_key(|e| e.start);
+    let mut out = String::with_capacity(content.len() + edits.len() * 80);
+    let mut last = 0;
+    for e in &edits {
+        out.push_str(&content[last..e.start]);
+        out.push_str("{{ref:");
+        out.push_str(&e.coordinate);
+        out.push('|');
+        out.push_str(&e.display);
+        out.push_str("}}");
+        last = e.end;
+    }
+    out.push_str(&content[last..]);
+    (out, edits)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1234,5 +1490,68 @@ mod tests {
         assert_eq!(normalize("Ñoño"), "ñoño");
         assert_eq!(normalize("日本語 Article"), "日本語-article");
         assert_eq!(normalize("a--b__c"), "a-b-c");
+    }
+
+    // ---- link_terms -------------------------------------------------------
+
+    fn t(term: &str, d: &str) -> (String, String) {
+        (term.to_string(), format!("30041:{}:{d}", "f".repeat(64)))
+    }
+
+    #[test]
+    fn link_terms_wraps_first_whole_word_occurrence_case_insensitively() {
+        let c = "Feyerabend's Epistemological anarchism holds. Later, epistemological anarchism again; anarchisms too.";
+        let (out, edits) = link_terms(c, RelinkFormat::Markdown, &[t("epistemological anarchism", "z2k7ab")]);
+        assert_eq!(edits.len(), 1);
+        assert_eq!(edits[0].display, "Epistemological anarchism");
+        assert!(out.starts_with("Feyerabend's {{ref:30041:"));
+        assert!(out.contains("|Epistemological anarchism}} holds. Later, epistemological anarchism again"));
+        // the ref is a real token the tokenizer reads back as an entity ref
+        let refs = parse(&out);
+        assert_eq!(refs.len(), 1);
+        assert!(refs[0].is_entity);
+        assert_eq!(refs[0].display.as_deref(), Some("Epistemological anarchism"));
+    }
+
+    #[test]
+    fn link_terms_skips_code_headings_links_and_existing_tokens() {
+        let c = "# incommensurability as a heading\n\nUse `incommensurability` in code, [incommensurability](https://x.y) in a link,\n{{ref:foo|incommensurability}} already, and here incommensurability at last.\n\n```\nincommensurability in a fence\n```\n";
+        let (out, edits) = link_terms(c, RelinkFormat::Markdown, &[t("incommensurability", "b9w1qe")]);
+        assert_eq!(edits.len(), 1, "{edits:?}");
+        assert!(out.contains("and here {{ref:30041:"), "{out}");
+        assert!(out.contains("|incommensurability}} at last"));
+        assert!(out.contains("`incommensurability`"));
+        assert!(out.contains("[incommensurability](https://x.y)"));
+        assert!(out.contains("{{ref:foo|incommensurability}}"));
+        assert!(out.starts_with("# incommensurability as a heading"));
+    }
+
+    #[test]
+    fn link_terms_longest_term_wins_and_whitespace_runs_match() {
+        let c = "epistemological\nanarchism and plain anarchism.";
+        let (out, edits) = link_terms(c, RelinkFormat::Plain, &[t("anarchism", "a1"), t("epistemological anarchism", "b2")]);
+        assert_eq!(edits.len(), 2);
+        assert_eq!(edits[0].term, "epistemological anarchism");
+        assert_eq!(edits[0].display, "epistemological\nanarchism");
+        assert_eq!(edits[1].term, "anarchism");
+        assert!(out.ends_with("and plain {{ref:30041:" .to_string().as_str() ) || out.contains("plain {{ref:30041:"));
+        let tags = reference_tags(&out);
+        assert_eq!(tags.iter().filter(|t| t[0] == "a").count(), 2);
+    }
+
+    #[test]
+    fn link_terms_org_protects_verbatim_headings_and_src_blocks() {
+        let c = "* consistency condition\nThe =consistency condition= in verbatim; the consistency condition in prose.\n#+begin_src rust\nconsistency condition\n#+end_src\n";
+        let (out, edits) = link_terms(c, RelinkFormat::Org, &[t("consistency condition", "q7")]);
+        assert_eq!(edits.len(), 1);
+        assert!(out.contains("prose") && out.contains("; the {{ref:30041:"), "{out}");
+        assert!(out.contains("=consistency condition="));
+    }
+
+    #[test]
+    fn link_terms_reports_nothing_for_an_absent_term() {
+        let (out, edits) = link_terms("nothing here", RelinkFormat::Markdown, &[t("absent", "x")]);
+        assert_eq!(out, "nothing here");
+        assert!(edits.is_empty());
     }
 }
