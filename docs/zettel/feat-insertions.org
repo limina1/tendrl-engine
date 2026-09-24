@@ -134,6 +134,19 @@ histograms computed before the author filter, requests excluded) — the
 engine still owns which notes belong to the root and who wrote them; the
 web only arranges them.
 
+* Next: vocabulary requests, definitions, merge requests (Phase 5c)
+
+Approved 2026-09-24 ([[file:idea-vocabulary-requests.org][idea]], [[file:../vocabulary-workflow.org][design]]):
+a third =output: vocabulary= whose answers are *definition* insertions
+(=t: definition=, one 30041 per term, opaque =d=), relinked into the
+text as ={{ref:<coord>|term}}= (engine-side =link_terms=), promoted per
+event into a glossary bundle when wanted; a non-owner's relink or
+promotion is a derivative plus a *kind-818 merge request*
+([[file:decision-merge-requests-818.org][decision]]), which reaches the
+owner as an *ask* ([[file:feat-notifications.org][notifications]]) rendered
+as an ordinary card under its target. Every event-creating modal ends in
+its unsigned JSON preview.
+
 * Not yet
 - "open in composer" hand-off from the composer modal (an anchored compose
   item) and the capture-card /note/ variant door.
@@ -150,6 +163,7 @@ web only arranges them.
 - [[file:feat-reader.org][Reader]]
 - [[file:feat-assistant.org][AI assistant]] — =propose_insertion= is the zettel bubble's output shape
 - [[file:feat-annotations-table.org][Annotations table]] — every note on one surface; the load pass's =counts=
+- [[file:idea-vocabulary-requests.org][Vocabulary requests]] · [[file:decision-merge-requests-818.org][Merge requests are 818s]] · [[file:feat-notifications.org][Notifications]] — Phase 5c
 - [[file:decision-requests-are-events.org][Decision: requests are records, never a harness]] — the 30041 request + the =request= pointer
 - [[file:decision-insertions-load-on-demand.org][Decision: load on demand]]
 - [[file:decision-assistant-signs-own-key.org][Decision: the assistant signs with its own key]]

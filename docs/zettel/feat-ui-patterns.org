@@ -273,6 +273,11 @@ touched.
   destructive-local → two-step armed; overwrite of shared state →
   diff-gated modal; network side effects → intent confirm.
 - Quick acknowledgment → =app.pushToast=; never a blocking dialog.
+- *Creating an event → preview the event.* Every modal that signs
+  something ends in its unsigned JSON with the tags as they will be
+  emitted (the way the event menu shows an event), above the armed
+  button — the annotate modal, the relink / fork preview, the merge
+  review (decided 2026-09-24, [[file:idea-vocabulary-requests.org][vocabulary requests]]).
 - Relay URL input → =normalizeRelayUrl=, accept bare hostnames.
 - New text input → =data-entry=, and its unsent text parks in
   =entryDrafts= (teardown save, clear on send). New list → =j/k= cursor +

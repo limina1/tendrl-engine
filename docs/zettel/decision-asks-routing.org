@@ -1,0 +1,57 @@
+#+TITLE: Decision: asks travel inbox-side — the owner's read relays and where the event was found
+#+TYPE: decision
+#+STATUS: current
+#+DATE: 2026-09-24
+
+* The decision
+
+Anything addressed to another pubkey — a signed annotation request on
+their publication, a kind-818 merge request against their index or
+section — goes to a *destination set* the engine builds from sources
+it already has, each relay carrying its reason, and refuses rather
+than guess when the two that matter are both empty:
+
+1. *Their inbox*: the =read= entries of the owner's kind 10002
+   (=RelayList::read_relays()=). Local store first; else resolved
+   through the indexer composition the way =pull-user-data= does for
+   your own 10002 — one Confirm-gated fetch, named as such.
+2. *Where the annotated event was found*: nostrdb's per-note
+   provenance (=note.relays()=, what the feed's relay badge reads) for
+   the target section and its index.
+3. *Relay hints* on the index's =a= tag for that section.
+4. *Your write relays*, so the ask is findable from your side.
+
+The Confirm modal lists every relay with its reason — /inbox/, /found
+on/, /hint/, /yours/ — and the user may drop any. If 1 and 2 are both
+empty the ask does *not* fall back to the general publish set
+silently: the modal says so and offers the 10002 fetch. After
+acceptance =record_event_relay= stamps the ask with its provenance.
+
+The mirror holds for reading: =fetch= for notifications pulls =#p me=
+(and =#a=/=#A= on my coordinates) on *my* read relays ∪ the provenance
+relays of my own events — someone answers on the relay they found me
+on, which may not be in my 10002 at all.
+
+* Why
+
+NIP-65: things addressed to you arrive on your read relays, where
+others write to reach you; publishing to your own write relays would
+put the ask where the owner never looks. Provenance is the second
+source because a 10002 may be missing or stale, while the relay that
+served the event to you is one the owner demonstrably published to.
+
+* What exists, what is missing
+
+Exists: 10002 parsing into read/write (=user_data.rs=), the own-10002
+pull through the indexer composition, per-event provenance
+(=record_event_relay= / =note.relays()=), and =union_relays= folding a
+NIP-34 repository's relays into a broadcast set for issue comments.
+Missing: =engine.inbox_relays_for(pubkey)= and
+=destination_set(target_coord, owner) -> Vec<(url, reason)>=.
+
+* Related
+- [[file:index.org][Index]]
+- [[file:decision-merge-requests-818.org][Merge requests are 818s]]
+- [[file:feat-notifications.org][Notifications]]
+- [[file:feat-relays.org][Relay sets]] · [[file:feat-network.org][Network modes]]
+- [[file:../vocabulary-workflow.org][The design]] § Relay routing

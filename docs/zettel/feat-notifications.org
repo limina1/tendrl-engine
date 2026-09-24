@@ -1,0 +1,67 @@
+#+TITLE: Notifications — what is for you, chosen by kind, never pushed
+#+TYPE: feature
+#+STATUS: plan (approved 2026-09-24; building as plan Phase 5c)
+#+DATE: 2026-09-24
+
+Not a social stream. tendrl lists *events of a kind that wants
+something from you* — counted, never pushed — plus whatever activity
+kinds you chose to hear about. Two surfaces, kept apart:
+
+- *Choose* in the settings buffer (Settings › Notifications): a
+  *checkable list* of the event kinds tendrl has a verb for, not a free
+  kind-number field. A kind appears there the day the engine gains a
+  verb for it. Each row: the kind, the engine's one-line rule ("9802 ·
+  a highlight of one of your sections"), a checkbox, and whether it
+  *counts* toward the modeline number or only *lists*.
+- *See* on the 🔔 pill in the desktop modeline (next to agent
+  services) and in the ☰ drawer's status section on the phone. Either
+  opens the list: *asks* first (the fixed rows, which always show and
+  need an act), then *activity* (the kinds you chose), then *mine* (the
+  verdicts on merge requests you sent).
+
+* The rule is the engine's, per kind
+
+| Kind  | Addressed to you when…                            | Verb                      | Default |
+|-------+---------------------------------------------------+---------------------------+---------|
+| 818   | =p= you, or =a= one of your 30040/30041           | review, merge or decline  | on      |
+| 7     | =e= an 818 you sent                               | see the verdict           | on      |
+| 30041 =t: annotation-request= | =A= your publication, signed | answer or ignore        | on      |
+| 1111  | =A=/=a= your coordinates, or =P=/=p= you          | read, reply in place      | off     |
+| 9802  | =a= your coordinate, or =p= you                   | read                      | off     |
+| 7     | =e=/=a= anything of yours that is not an 818      | read                      | off     |
+| 9735  | =p= you                                           | read                      | off     |
+| 30045 | =a= your 30040                                    | read                      | off     |
+| any   | =p= you                                           | read                      | off     |
+
+"Addressed to me" is a tag, not a search, so adding a kind is a
+preference and the web never builds a filter. An unknown kind falls to
+the generic =p= rule; a smarter rule is a code change on purpose. Muted
+authors and the ignore list apply before anything is counted.
+Persisted in =<data_dir>/notifications.json= — local state like
+=relays.json=, never a Nostr event.
+
+* Fetching
+
+=GET /api/v1/notifications= reads the local store; the store stream
+already announces every ingested kind, so an open list updates without
+a refresh. Pulling from relays is a fetch like any other, Confirm-gated:
+one filter per enabled rule (=#p= me, =#a=/=#A= on my coordinates) on
+*my read relays* ∪ the provenance relays of my own events
+([[file:decision-asks-routing.org][routing]]). A live subscription is a
+follow-up and changes nothing here.
+
+* Never a push
+
+No OS notification, no badge that demands clearing. An ignored ask stays
+open; the requester sees "open" and nothing more. This is the mission's
+dial ([[file:mission.org][orientation dials]]) and the resurfacing idea's
+"a modeline count, never a notification".
+
+* Related
+- [[file:index.org][Index]]
+- [[file:decision-merge-requests-818.org][Merge requests are 818s]] — the first ask kind
+- [[file:decision-asks-routing.org][Asks travel inbox-side]]
+- [[file:feat-insertions.org][Insertions]] — an ask is an annotation card
+- [[file:feat-mcp.org][MCP surface]] — =list_asks= reads the same list
+- [[file:idea-resurfacing.org][Resurfacing]] · [[file:feat-mobile.org][Mobile]] (the drawer's status section)
+- [[file:../vocabulary-workflow.org][The design]] § Merge requests: the inbox

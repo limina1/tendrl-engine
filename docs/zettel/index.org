@@ -43,6 +43,7 @@ exists (with code paths), gaps.
 - [[file:feat-discussions.org][Discussions & highlights]] — 9802 anatomy, source families, both capture surfaces
 - [[file:feat-insertions.org][Insertions]] — reader-attached 30041s with NIP-22 anchors; requests as 30041s the answers point at
 - [[file:feat-annotations-table.org][Annotations table]] — every note on a publication on one surface: five layouts, spell header, author colour (plan; five tracks in flight)
+- [[file:feat-notifications.org][Notifications]] — what is for you, chosen by kind in settings, seen on the 🔔 / drawer status; never pushed (plan, Phase 5c)
 
 ** Substrate
 - [[file:feat-engine-substrate.org][Engine substrate]] — nostrdb + the
@@ -154,6 +155,9 @@ Spec: [[file:../../nips/NKBIP-01-insertions.org][NKBIP-01 insertions extension]]
 - [[file:idea-insertions.org][Insertions]] — reader-attached 30041s with NIP-22 anchors; promotable by index republication; the zettel bubble's output
 - [[file:feat-insertions.org][Insertions]] — built: anchor core, =/insertions*= + =/publication/fork*=, three tools, reader cards + composer (2026-09-16); requests as 30041s the answers point at (2026-09-17)
 - [[file:feat-annotations-table.org][Annotations table]] — Phase 5b: contract frozen 2026-09-17 ([[file:../annotations-table-contract.org][contract]]), Tracks A–E building in parallel worktrees
+- [[file:idea-vocabulary-requests.org][Vocabulary requests]] — Phase 5c: definitions as 30041s, relink by coordinate ref, per-event glossary promotion (approved 2026-09-24, [[file:../vocabulary-workflow.org][design]])
+- [[file:decision-merge-requests-818.org][Merge requests are NIP-54's 818]] — derivative + 818, owner republishes and reacts; NIP-34 set aside
+- [[file:decision-asks-routing.org][Asks travel inbox-side]] — owner's read relays ∪ where the event was found ∪ hints ∪ mine, each with a reason
 
 * Ideas — captured, not scheduled
 
