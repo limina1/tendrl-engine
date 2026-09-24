@@ -1,18 +1,21 @@
 <script lang="ts">
-	// The annotations table — one buffer kind (`annotations:<root>`) with its
-	// own views: by section · by author · timeline · free · collective. Beside
-	// the reader or filling the window is the WM's split state, not a mode
-	// of the table. Contract: docs/annotations-table-contract.org.
+	// The annotations ledger — one buffer kind (`annotations:<root>`): rows
+	// grouped by § · author · kind · time, two rows of chrome that filter,
+	// each row opening in place (or in a detail pane when wide), a board
+	// view, and the workflows hanging off the rows. Beside the reader or
+	// filling the window is the WM's split state, not a mode of the
+	// ledger. Contract: docs/annotations-ledger-contract.org.
 	//
-	// Engine-side: which 30041s anchor to the root, their anchors/roles/
-	// request pointers (`insertions/load`), the author/parent histograms
-	// (`counts`), the request list. Here: arranging what came back
-	// (`table-model.ts`) and view state. No Svelte lifecycle hooks (buffer
-	// renderers unmount on every switch): props + $effect teardown, view
-	// state parked in store.bufferState. Loaders keep their bookkeeping in a
-	// plain `book` object and the effects that start them depend only on
-	// version counters — never on state the loaders write (the query-flood
-	// lesson, project_effect_async_state_loop).
+	// Engine-side: which 30041s anchor to the root, their anchors / roles /
+	// request pointers / reply pointers (`insertions/load`), the author
+	// histogram (`counts`), the per-annotation reply counts (`replies`),
+	// the request list. Here: arranging what came back (`ledger-model.ts`)
+	// and view state. No Svelte lifecycle hooks (buffer renderers unmount
+	// on every switch): props + $effect teardown, view state parked in
+	// store.bufferState. Loaders keep their bookkeeping in a plain `book`
+	// object and the effects that start them depend only on version
+	// counters — never on state the loaders write
+	// (project_effect_async_state_loop).
 	import { untrack } from 'svelte';
 	import * as api from '$lib/api';
 	import { getAppState } from '$lib/state.svelte';
@@ -22,66 +25,68 @@
 	import type { Buffer } from '../types';
 	import { onStoreEvent, concernsRoot, type StoreEvent } from '$lib/store-events.svelte';
 	import { prefetchAuthors, getAuthorDisplayName } from '$lib/discussions/authors.svelte';
+	import { pubkeyToColor } from '$lib/discussions/colors';
 	import type { TocEntry } from '$lib/types';
 	import {
 		rootFromAnnotationsId,
 		flattenToc,
-		buildCards,
-		layoutCards,
+		buildRows,
+		filterRows,
+		facetCounts,
+		groupRows,
+		flatOrder,
 		buildSpell,
 		parseSpell,
-		authorBars,
+		relTime,
+		GROUPS,
 		DEFAULT_VIEW,
-		type AnnotationsViewState,
-		type LayoutMode,
-		type Section,
-		type TableCard
-	} from '$lib/components/annotations/table-model';
-	import AnnotationsSpell from '$lib/components/annotations/AnnotationsSpell.svelte';
-	import AnnotationsTable from '$lib/components/annotations/AnnotationsTable.svelte';
-	import AnnotationsList from '$lib/components/annotations/AnnotationsList.svelte';
+		type LedgerView,
+		type LedgerRow,
+		type LedgerKind,
+		type GroupBy,
+		type Section
+	} from '$lib/components/annotations/ledger-model';
+	import LedgerHeader from '$lib/components/annotations/LedgerHeader.svelte';
+	import LedgerRows from '$lib/components/annotations/LedgerRows.svelte';
+	import LedgerBody from '$lib/components/annotations/LedgerBody.svelte';
+	import LedgerBoard from '$lib/components/annotations/LedgerBoard.svelte';
 	import SpellComposerModal from '$lib/components/SpellComposerModal.svelte';
 
 	let { buffer }: { buffer: Buffer } = $props();
 	const store = getActiveStore();
 	const app = getAppState();
-
 	const root = $derived(rootFromAnnotationsId(buffer.id));
 	const isMobile = $derived(shell.mode === 'mobile');
-	const MODES: LayoutMode[] = ['section', 'author', 'timeline', 'free', 'collective'];
-	const modes = $derived(isMobile ? MODES.filter((m) => m !== 'free') : MODES);
 
 	// ----- View state: read once, written on teardown -----
 	// svelte-ignore state_referenced_locally
-	const saved = store.bufferState.get(buffer.id) as Partial<AnnotationsViewState> | undefined;
-	let view = $state<AnnotationsViewState>({
+	const saved = store.bufferState.get(buffer.id) as Partial<LedgerView> | undefined;
+	let view = $state<LedgerView>({
 		...DEFAULT_VIEW,
 		...(saved ?? {}),
-		pins: { ...(saved?.pins ?? {}) },
-		scroll: { ...(saved?.scroll ?? DEFAULT_VIEW.scroll) }
+		by: [...(saved?.by ?? [])],
+		secs: [...(saved?.secs ?? [])],
+		kinds: [...(saved?.kinds ?? [])],
+		collapsed: [...(saved?.collapsed ?? [])]
 	});
-	// The table's scroll offsets, kept off the reactive graph (written on
-	// every scroll event; only the teardown reads them).
-	const scrollBook = { x: view.scroll.x, y: view.scroll.y };
+	// The scroll offset, kept off the reactive graph (written on every
+	// scroll event; only the teardown reads it).
+	const scrollBook = { top: view.scroll };
 	$effect(() => {
 		return () => {
-			store.bufferState.set(buffer.id, {
-				...$state.snapshot(view),
-				scroll: { x: scrollBook.x, y: scrollBook.y }
-			} satisfies AnnotationsViewState);
+			store.bufferState.set(buffer.id, { ...$state.snapshot(view), scroll: scrollBook.top } satisfies LedgerView);
 			app.setHoverAnchor(null);
 		};
 	});
-
-	// Mobile Back walks layout changes (a teleport, not a page turn) and the
-	// shell's view switch lists the table in the ☰ drawer.
+	// Mobile Back walks grouping changes (a teleport, not a page turn) and
+	// the shell's view switch lists the ledger in the ☰ drawer.
 	$effect(() => {
 		const id = buffer.id;
 		mobileNav.registerViewProvider(id, {
-			capture: () => ({ mode: view.mode }),
+			capture: () => ({ group: view.group }),
 			apply: (v) => {
-				const m = v.mode as LayoutMode;
-				if (MODES.includes(m)) view.mode = m;
+				const g = v.group as GroupBy;
+				if (GROUPS.includes(g)) view.group = g;
 			}
 		});
 		return () => mobileNav.unregisterViewProvider(id);
@@ -90,9 +95,10 @@
 	// ----- Loaders -----
 	let sections = $state<Section[]>([]);
 	let pubTitle = $state<string | null>(null);
+	let pubPubkey = $state<string | null>(null);
 	let notes = $state<api.LoadedInsertion[]>([]);
 	let counts = $state<api.InsertionCounts | undefined>(undefined);
-	let countsLocal = $state(false);
+	let replies = $state<Record<string, number>>({});
 	let requests = $state<api.AnnotationRequest[]>([]);
 	let loading = $state(true);
 	let error = $state<string | null>(null);
@@ -113,6 +119,7 @@
 			const res = await api.getPublication(pk, d.join(':'), 'local_only', 2);
 			sections = flattenToc(walkToc(res.toc, []));
 			pubTitle = res.publication?.title ?? null;
+			pubPubkey = pk;
 			error = null;
 		} catch (e) {
 			error = api.errorMessage(e, 'Failed to load the publication');
@@ -120,25 +127,6 @@
 			book.toc = false;
 			loading = false;
 		}
-	}
-	function fallbackCounts(list: api.LoadedInsertion[]): api.InsertionCounts {
-		const by = new Map<string, string[]>();
-		const parent = new Map<string, string[]>();
-		let total = 0;
-		for (const i of list) {
-			if (i.role === 'request') continue;
-			total += 1;
-			(by.get(i.event.pubkey) ?? by.set(i.event.pubkey, []).get(i.event.pubkey)!).push(i.event.id);
-			(parent.get(i.anchor.parent) ?? parent.set(i.anchor.parent, []).get(i.anchor.parent)!).push(i.event.id);
-		}
-		const bucket = (m: Map<string, string[]>, label: boolean) =>
-			[...m.entries()].map(([value, ids]) => ({
-				value,
-				count: ids.length,
-				event_ids: ids,
-				...(label ? { label: getAuthorDisplayName(value) } : {})
-			}));
-		return { by_author: bucket(by, true), by_parent: bucket(parent, false), total };
 	}
 	function sinceTs(days: number | null): number | undefined {
 		return days == null ? undefined : Math.floor(Date.now() / 1000) - days * 86400;
@@ -150,13 +138,10 @@
 		}
 		book.notes = true;
 		try {
-			const resp = await api.loadInsertions({ root: r, policy: 'local_only', counts: true, since });
+			const resp = await api.loadInsertions({ root: r, policy: 'local_only', counts: true, replies: true, since });
 			notes = resp.insertions;
-			// The histograms are engine-side (Track A). An engine without them
-			// (pre-merge) gets a same-shape fallback over the loaded notes so
-			// the bars still render; labels resolve through the authors cache.
-			countsLocal = !resp.counts;
-			counts = resp.counts ?? fallbackCounts(resp.insertions);
+			counts = resp.counts;
+			replies = resp.replies ?? {};
 			const authors = new Set(resp.insertions.map((i) => i.event.pubkey));
 			if (authors.size) prefetchAuthors([...authors]);
 		} catch (e) {
@@ -181,7 +166,6 @@
 			book.requests = false;
 		}
 	}
-
 	$effect(() => {
 		const r = root;
 		if (!r) return;
@@ -203,26 +187,37 @@
 		if (!r) return;
 		untrack(() => void loadRequests(r));
 	});
-
 	// Live: the store stream names what just landed; re-read the affected
-	// slice after a short debounce. A callback, not an effect, so the
-	// loaders' writes cannot re-trigger it.
+	// slice after a short debounce, and mark the row `.new` once. A
+	// callback, not an effect, so the loaders' writes cannot re-trigger it.
 	const liveTimers: Record<string, ReturnType<typeof setTimeout> | undefined> = {};
+	let fresh = $state<Set<string>>(new Set());
 	function liveDebounce(key: string, fn: () => void) {
 		clearTimeout(liveTimers[key]);
 		liveTimers[key] = setTimeout(fn, 300);
+	}
+	function markFresh(id: string) {
+		fresh = new Set([...fresh, id]);
+		setTimeout(() => {
+			const next = new Set(fresh);
+			next.delete(id);
+			fresh = next;
+		}, 2500);
 	}
 	function onLiveStoreEvent(ev: StoreEvent) {
 		const r = root;
 		if (!r || !concernsRoot(ev, r)) return;
 		if (ev.type === 'request') {
+			markFresh(ev.id);
 			liveDebounce('requests', () => void loadRequests(r));
 			return;
 		}
-		if (ev.kind === 30041 || ev.kind === 30040) {
+		if (ev.kind === 30041 || ev.kind === 30040 || ev.kind === 818) {
+			if (ev.coordinate) markFresh(ev.coordinate);
 			liveDebounce('notes', () => void loadNotes(r, sinceTs(view.sinceDays)));
 			if (ev.coordinate === r) liveDebounce('toc', () => void loadToc(r));
 		}
+		if (ev.kind === 1111) liveDebounce('notes', () => void loadNotes(r, sinceTs(view.sinceDays)));
 	}
 	$effect(() => {
 		const off = onStoreEvent(onLiveStoreEvent);
@@ -233,155 +228,245 @@
 	});
 
 	// ----- Model -----
-	const allCards = $derived(buildCards(notes, requests));
-	const cards = $derived.by(() => {
-		const by = view.by;
-		const since = sinceTs(view.sinceDays);
-		return allCards.filter(
-			(c) => (by.length === 0 || by.includes(c.author)) && (since == null || c.createdAt >= since)
-		);
+	const allRows = $derived(buildRows(notes, requests, sections, replies));
+	const rows = $derived(filterRows(allRows, view));
+	const facets = $derived(facetCounts(allRows, view));
+	const who = (pk: string) => (app.identityStatus?.pubkey === pk ? 'you' : getAuthorDisplayName(pk));
+	// Authors in bar order: the engine's histogram (descending count, kind-0
+	// labels), then any author the rows know that it does not (an 818's
+	// requester, an unsigned record).
+	const authors = $derived.by(() => {
+		const seen = new Set<string>();
+		const out: { pubkey: string; label: string }[] = [];
+		for (const b of [...(counts?.by_author ?? [])].sort((x, y) => y.count - x.count)) {
+			seen.add(b.value);
+			out.push({ pubkey: b.value, label: who(b.value) === b.value ? (b.label ?? b.value.slice(0, 8) + '…') : who(b.value) });
+		}
+		const extra = new Map<string, number>();
+		for (const r of allRows) if (!seen.has(r.author)) extra.set(r.author, (extra.get(r.author) ?? 0) + 1);
+		for (const [pk] of [...extra.entries()].sort((a, b) => b[1] - a[1])) out.push({ pubkey: pk, label: pk ? who(pk) : 'unsigned' });
+		return out;
 	});
-	const unsignedRequests = $derived(requests.filter((r) => !r.coordinate).length);
-	const bars = $derived(
-		authorBars(counts, unsignedRequests).map((b) =>
-			countsLocal && b.pubkey ? { ...b, label: getAuthorDisplayName(b.pubkey) } : b
-		)
-	);
-	const spellText = $derived(root ? buildSpell(root, view) : '');
-	const secWith = $derived.by(() => {
-		const withCards = new Set(cards.map((c) => c.parent));
-		return sections.filter((s) => withCards.has(s.coordinate)).length;
-	});
+	const groups = $derived(groupRows(rows, sections, view, who));
+	const flat = $derived(flatOrder(groups, rows, view));
+	const spellText = $derived(root ? buildSpell(root, view, sections) : '');
+	const ownsRoot = $derived(!!app.identityStatus?.pubkey && pubPubkey === app.identityStatus.pubkey);
+	const titleOf = (id: string) => allRows.find((r) => r.id === id)?.title;
 	const countByParent = $derived.by(() => {
 		const m = new Map<string, number>();
-		for (const c of cards) m.set(c.parent, (m.get(c.parent) ?? 0) + 1);
+		for (const r of rows) m.set(r.parent, (m.get(r.parent) ?? 0) + 1);
 		return m;
 	});
-	const authorLabel = (pk: string) => getAuthorDisplayName(pk);
-
-	let width = $state(0);
-	const layout = $derived.by(() =>
-		layoutCards(
-			cards,
-			sections,
-			view.mode,
-			{ expanded: view.expanded, pins: view.pins },
-			Math.max(420, width),
-			authorLabel
-		)
-	);
-	// Keep the cursor inside the placed list as filters change.
+	// Keep the cursor inside the flat list as filters change.
 	$effect(() => {
-		const n = layout.placed.length;
+		const n = flat.length;
 		if (view.cursor >= n) view.cursor = Math.max(0, n - 1);
 	});
-
-	const hotAddr = $derived(
-		app.hoverAnchor && root && app.hoverAnchor.root === root ? app.hoverAnchor.addr : null
+	const hotAddr = $derived(app.hoverAnchor && root && app.hoverAnchor.root === root ? app.hoverAnchor.addr : null);
+	const hotSec = $derived.by(() => {
+		if (localHotSec != null) return localHotSec;
+		if (!hotAddr) return null;
+		if (hotAddr === root) return -1;
+		const i = sections.findIndex((s) => s.coordinate === hotAddr);
+		return i >= 0 ? i : null;
+	});
+	let localHotSec = $state<number | null>(null);
+	let width = $state(0);
+	const wide = $derived(!isMobile && width >= 900);
+	const usePane = $derived(wide && view.detail === 'pane' && view.view === 'rows');
+	const expandedRow = $derived(view.expanded ? allRows.find((r) => r.id === view.expanded) ?? null : null);
+	const emptyText = $derived(
+		error ? error : !loading && allRows.length === 0 ? 'no annotations on this publication yet — notes and requests land here as they are written' : rows.length === 0 && allRows.length > 0 ? 'nothing matches — clear a facet above' : null
 	);
 
 	// ----- Actions -----
-	function setMode(m: LayoutMode) {
-		if (!modes.includes(m) || view.mode === m) return;
-		view.mode = m;
+	function setGroup(g: GroupBy) {
+		if (view.group === g) return;
+		view.group = g;
+		view.cursor = 0;
 		mobileNav.pushViewChange(buffer.id);
 	}
-	function cycleMode(dir: 1 | -1) {
-		const i = modes.indexOf(view.mode);
-		setMode(modes[(i + dir + modes.length) % modes.length]);
+	function cycleGroup(dir: 1 | -1) {
+		const i = GROUPS.indexOf(view.group);
+		setGroup(GROUPS[(i + dir + GROUPS.length) % GROUPS.length]);
+	}
+	function toggleIn<T>(list: T[], v: T): T[] {
+		return list.includes(v) ? list.filter((x) => x !== v) : [...list, v];
 	}
 	function toggleBy(pk: string) {
-		view.by = view.by.includes(pk) ? view.by.filter((x) => x !== pk) : [...view.by, pk];
+		view.by = toggleIn(view.by, pk);
+		view.cursor = 0;
+	}
+	function toggleSec(sec: number) {
+		view.secs = toggleIn(view.secs, sec);
+		view.cursor = 0;
+	}
+	function toggleKind(k: LedgerKind) {
+		view.kinds = toggleIn(view.kinds, k);
+		view.cursor = 0;
+	}
+	function pickDay(day: number) {
+		view.day = view.day === day ? null : day;
+		view.sinceDays = null;
 	}
 	function cycleSince() {
 		view.sinceDays = view.sinceDays == null ? 7 : view.sinceDays === 7 ? 30 : null;
+		view.day = null;
 	}
 	function applySpell(text: string): boolean {
 		const r = root;
 		if (!r) return false;
-		const parsed = parseSpell(text, r);
+		const parsed = parseSpell(text, r, sections);
 		if (!parsed) {
-			app.pushToast('That spell names another publication — the table stays on this one', 'error', 4000);
+			app.pushToast('That spell names another publication — the ledger stays on this one', 'error', 4000);
 			return false;
 		}
 		view.by = parsed.by;
+		view.secs = parsed.secs;
+		view.kinds = parsed.kinds;
 		view.sinceDays = parsed.sinceDays;
+		view.day = parsed.day;
 		return true;
 	}
+	function toggleGroupCollapsed(key: string) {
+		view.collapsed = toggleIn(view.collapsed, key);
+	}
 	let wandOpen = $state(false);
-	function toggleExpand(card: TableCard) {
-		view.expanded = view.expanded === card.id ? null : card.id;
+	function select(row: LedgerRow) {
+		const i = flat.findIndex((r) => r.id === row.id);
+		if (i >= 0) view.cursor = i;
+		view.expanded = view.expanded === row.id ? null : row.id;
 	}
-	function hover(card: TableCard | null) {
-		const r = root;
-		if (!r) return;
-		app.setHoverAnchor(card ? { root: r, addr: card.parent, count: countByParent.get(card.parent) ?? 1 } : null);
-	}
-	function jumpTo(card: TableCard) {
-		const r = root;
-		if (!r) return;
-		app.requestReaderJump(r, card.parent);
-	}
-	function jumpToAndSwitch(card: TableCard) {
-		const r = root;
-		if (!r) return;
-		jumpTo(card);
-		store.openBuffer({
-			className: 'work',
-			buffer: { id: `reader:${r}`, kind: 'reader', label: 'reader', kicker: pubTitle ?? r.split(':').slice(2).join(':') }
+	function reveal(id: string) {
+		const target = allRows.find((r) => r.id === id) ?? allRows.find((r) => r.req?.id === id);
+		if (!target) return;
+		// Make the row reachable: drop the facets hiding it, expand its group.
+		if (!rows.some((r) => r.id === target.id)) {
+			view.by = [];
+			view.secs = [];
+			view.kinds = [];
+			view.sinceDays = null;
+			view.day = null;
+		}
+		view.collapsed = [];
+		view.expanded = target.id;
+		queueMicrotask(() => {
+			const i = flat.findIndex((r) => r.id === target.id);
+			if (i >= 0) view.cursor = i;
+			setTimeout(() => {
+				document.querySelector<HTMLElement>(`.abuf[data-root="${CSS.escape(root ?? '')}"] .row[data-id="${CSS.escape(target.id)}"]`)?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+			}, 50);
 		});
+	}
+	// A reader card's "≡ row" — root + nonce, applied once.
+	let appliedRevealNonce = 0;
+	$effect(() => {
+		const rv = app.revealAnnotation;
+		const r = root;
+		if (!rv || !r || rv.root !== r || rv.nonce === appliedRevealNonce) return;
+		appliedRevealNonce = rv.nonce;
+		untrack(() => reveal(rv.id));
+	});
+	function hover(row: LedgerRow | null) {
+		const r = root;
+		if (!r) return;
+		if (!row) {
+			localHotSec = null;
+			app.setHoverAnchor(null);
+			return;
+		}
+		// A group header hands a bare `{ sec }` — light the section only.
+		const parent = row.parent ?? (row.sec < 0 ? r : (sections[row.sec]?.coordinate ?? r));
+		app.setHoverAnchor({ root: r, addr: parent, count: countByParent.get(parent) ?? 1 });
+	}
+	function jumpTo(row: LedgerRow) {
+		jumpSec(row.sec);
+	}
+	function jumpSec(sec: number) {
+		const r = root;
+		if (!r) return;
+		const addr = sec < 0 ? r : (sections[sec]?.coordinate ?? r);
+		app.requestReaderJump(r, addr);
+		if (isMobile) {
+			store.openBuffer({
+				className: 'work',
+				buffer: { id: `reader:${r}`, kind: 'reader', label: 'reader', kicker: pubTitle ?? r.split(':').slice(2).join(':') }
+			});
+		}
 	}
 	function openCoordinate(coord: string) {
 		const [k, pk, ...d] = coord.split(':');
 		void app.openAddressableInModal({ kind: Number(k), pubkey: pk, d_tag: d.join(':') });
 	}
-	function openCard(card: TableCard) {
-		if (card.note) {
-			const title = card.note.event.tags.find((t) => t[0] === 'title')?.[1] ?? null;
+	function openRow(row: LedgerRow) {
+		if (row.kind === 'kasten' && row.note) {
+			const [, pk, ...d] = row.id.split(':');
+			void app.openAddressableInModal({ kind: 30040, pubkey: pk, d_tag: d.join(':') });
+			return;
+		}
+		if (row.note) {
+			const title = row.note.event.tags.find((t) => t[0] === 'title')?.[1] ?? null;
 			store.openBuffer({
 				className: 'work',
 				buffer: {
-					id: `reader:event:${card.note.event.id}`,
+					id: `reader:event:${row.note.event.id}`,
 					kind: 'reader',
 					label: 'section',
-					kicker: title ?? card.note.event.id.slice(0, 8)
+					kicker: title ?? row.note.event.id.slice(0, 8)
 				}
 			});
-		} else if (card.req) {
-			// A request opens the way RequestCard's menu does: its signed
-			// 30041 in the event menu; an unsigned record has no event.
-			if (card.req.coordinate) openCoordinate(card.req.coordinate);
+		} else if (row.req) {
+			if (row.req.coordinate) openCoordinate(row.req.coordinate);
 			else {
-				view.expanded = card.id;
+				view.expanded = row.id;
 				app.pushToast('Unsigned local record — nothing signed to open', 'info');
 			}
 		}
 	}
-	function menuCard(card: TableCard) {
-		if (card.note) {
-			openCoordinate(card.note.coordinate);
-		} else if (card.req?.coordinate) {
-			openCoordinate(card.req.coordinate);
-		}
+	function annotate(secHint?: number) {
+		const r = root;
+		if (!r) return;
+		const sec = secHint ?? (view.secs.length === 1 ? view.secs[0] : sections.length ? 0 : -1);
+		const s = sec >= 0 ? sections[sec] : undefined;
+		const parent = s && s.coordinate.startsWith('30041:') ? s.coordinate : undefined;
+		app.annotationRequest = {
+			root: r,
+			rootTitle: pubTitle,
+			parent,
+			parentTitle: parent ? (s?.title ?? null) : null
+		};
 	}
-	function openRequestOf(card: TableCard) {
-		if (card.request) openCoordinate(card.request);
+	function boardAction(what: 'answer' | 'review' | 'relink' | 'open' | 'menu', row: LedgerRow) {
+		const r = root;
+		if (!r) return;
+		if (what === 'answer' && row.req) {
+			app.annotationRequest = {
+				root: r,
+				rootTitle: pubTitle,
+				parent: row.parent !== r ? row.parent : undefined,
+				parentTitle: row.sec >= 0 ? (sections[row.sec]?.title ?? null) : null,
+				parentEventId: row.req.parent_event_id,
+				output: row.req.output,
+				answer: row.req
+			};
+		} else if (what === 'review') app.openMergeRequestReview(row.note?.merge_request?.id ?? row.id.slice(4));
+		else if (what === 'relink') app.relink = { root: r, rootTitle: pubTitle, definitions: [row.id], promoted: row.glossary ? [row.id] : [] };
+		else if (what === 'open') openRow(row);
+		else if (row.kind === 'mr') void app.getEventForModal(row.note?.merge_request?.id ?? row.id.slice(4));
+		else if (row.kind === 'request') {
+			if (row.req?.coordinate) openCoordinate(row.req.coordinate);
+		} else openCoordinate(row.id);
 	}
-	function pin(id: string, x: number, y: number) {
-		view.pins = { ...view.pins, [id]: { x, y } };
-		app.pushToast('Card pinned — positions are yours, never published', 'info');
-	}
-	function unpin(id: string) {
-		if (!view.pins[id]) return;
-		const next = { ...view.pins };
-		delete next[id];
-		view.pins = next;
-		app.pushToast('Card unpinned', 'info');
+	function reload() {
+		const r = root;
+		if (!r) return;
+		void loadNotes(r, sinceTs(view.sinceDays));
+		void loadRequests(r);
 	}
 
-	// ----- Keys (desktop, table focused) -----
+	// ----- Keys (desktop, ledger focused) -----
 	function handleNav(action: NavAction): boolean {
-		const n = layout.placed.length;
+		const n = flat.length;
 		switch (action) {
 			case 'down':
 				if (!n) return false;
@@ -398,19 +483,22 @@
 				view.cursor = Math.max(0, n - 1);
 				return true;
 			case 'select': {
-				const p = layout.placed[view.cursor];
-				if (!p) return false;
-				toggleExpand(p.card);
+				const r = flat[view.cursor];
+				if (!r) return false;
+				view.expanded = view.expanded === r.id ? null : r.id;
 				return true;
 			}
 			case 'left':
-				cycleMode(-1);
+				cycleGroup(-1);
 				return true;
 			case 'right':
-				cycleMode(1);
+				cycleGroup(1);
 				return true;
 			case 'menu':
-				cycleMode(1);
+				cycleGroup(1);
+				return true;
+			case 'insert':
+				annotate(flat[view.cursor]?.sec);
 				return true;
 			case 'back':
 				if (view.expanded) {
@@ -428,83 +516,155 @@
 		return () => untrack(() => store.unregisterNavHandler(id));
 	});
 	function onkeydown(e: KeyboardEvent) {
+		if (e.target && /INPUT|TEXTAREA|SELECT/.test((e.target as HTMLElement).tagName)) return;
 		if (e.key === 'Escape' && view.expanded) {
 			view.expanded = null;
 			e.stopPropagation();
+		} else if (e.key === 'g') {
+			cycleGroup(1);
+			e.stopPropagation();
+		} else if (e.key === 'n') {
+			annotate(flat[view.cursor]?.sec);
+			e.stopPropagation();
 		}
 	}
-
-	const legend = $derived(
-		view.mode === 'free'
-			? 'drag pins a card · double-click unpins · positions are yours, never published'
-			: 'j/k moves the cursor · Enter expands · ←/→ or m switch layout · hover a card lights its section · → §n scrolls the reader'
-	);
+	const legend = 'j/k moves · Enter opens · n annotates at the cursor · g cycles grouping · hover lights the section · § scrolls the reader';
 </script>
 
 <!-- svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_noninteractive_element_interactions -->
-<div class="abuf" data-root={root ?? ''} tabindex="-1" role="region" aria-label="Annotations table" {onkeydown}>
+<div class="abuf" class:phone={isMobile} data-root={root ?? ''} tabindex="-1" role="region" aria-label="Annotations ledger" {onkeydown} bind:clientWidth={width}>
 	{#if !root}
 		<div class="empty">not an annotations buffer: <code>{buffer.id}</code></div>
-	{:else if isMobile}
-		<AnnotationsList
-			{cards}
-			{sections}
-			{bars}
-			{view}
-			spell={spellText}
-			onMode={setMode}
-			onToggleBy={toggleBy}
-			onWand={() => (wandOpen = true)}
-			onAnchor={jumpToAndSwitch}
-			onOpen={openCard}
-		/>
 	{:else}
-		<AnnotationsSpell
+		<LedgerHeader
 			spell={spellText}
-			mode={view.mode}
-			{modes}
-			by={view.by}
-			{bars}
-			sinceDays={view.sinceDays}
-			{secWith}
-			secTotal={sections.length}
-			selectedCount={cards.length}
-			totalCount={allCards.length}
+			{view}
+			counts={facets}
+			{sections}
+			{authors}
+			shown={rows.length}
+			total={allRows.length}
+			phone={isMobile}
 			onapply={applySpell}
 			onwand={() => (wandOpen = true)}
+			onannotate={() => annotate()}
+			ongroup={setGroup}
+			onview={(v) => (view.view = v)}
 			ontoggleby={toggleBy}
+			ontogglesec={toggleSec}
+			ontogglekind={toggleKind}
+			onpickday={pickDay}
 			oncyclesince={cycleSince}
-			onmode={setMode}
+			onhoversec={(sec) => (localHotSec = sec)}
 		/>
-		{#if error}
-			<div class="empty">{error}</div>
-		{:else if !loading && allCards.length === 0}
-			<div class="empty">no annotations on this publication yet — notes and requests land here as they are written</div>
+		{#if view.view === 'board' && !isMobile}
+			<LedgerBoard
+				{rows}
+				{view}
+				{sections}
+				{hotSec}
+				cursorId={flat[view.cursor]?.id ?? null}
+				{who}
+				onselect={select}
+				onhover={hover}
+				onjump={jumpSec}
+				onaction={boardAction}
+			/>
+		{:else if usePane}
+			<div class="split2">
+				<LedgerRows
+					{groups}
+					{rows}
+					{flat}
+					{view}
+					{sections}
+					{root}
+					rootTitle={pubTitle}
+					{ownsRoot}
+					{hotSec}
+					{fresh}
+					phone={isMobile}
+					inline={false}
+					empty={emptyText}
+					{who}
+					{titleOf}
+					initialScroll={scrollBook.top}
+					onscroll={(t) => (scrollBook.top = t)}
+					onselect={select}
+					onanchor={jumpTo}
+					onhover={hover}
+					ontogglegroup={toggleGroupCollapsed}
+					onopen={openRow}
+					onreveal={reveal}
+					onchanged={reload}
+				/>
+				<div class="detail">
+					{#if expandedRow}
+						<div class="detail__dh" style="--au: {expandedRow.author ? pubkeyToColor(expandedRow.author) : 'var(--base5)'}">
+							<b>{expandedRow.title}</b>
+							<span class="detail__sp"></span>
+							<span class="detail__by"><span class="detail__dot"></span>{expandedRow.author ? who(expandedRow.author) : 'unsigned'} · {relTime(expandedRow.createdAt)}</span>
+						</div>
+						<LedgerBody
+							row={expandedRow}
+							answers={rows.filter((r) => r.request === expandedRow.id)}
+							{sections}
+							{root}
+							rootTitle={pubTitle}
+							{ownsRoot}
+							{who}
+							requestTitle={expandedRow.request ? titleOf(expandedRow.request) : undefined}
+							onopen={openRow}
+							onreveal={reveal}
+							onchanged={reload}
+						/>
+					{:else}
+						<div class="detail__empty">select a row — Enter or click<br /><br />the full annotation reads here, with its actions; the rows stay one line each</div>
+					{/if}
+				</div>
+			</div>
+		{:else}
+			<LedgerRows
+				{groups}
+				{rows}
+				{flat}
+				{view}
+				{sections}
+				{root}
+				rootTitle={pubTitle}
+				{ownsRoot}
+				{hotSec}
+				{fresh}
+				phone={isMobile}
+				inline={true}
+				empty={emptyText}
+				{who}
+				{titleOf}
+				initialScroll={scrollBook.top}
+				onscroll={(t) => (scrollBook.top = t)}
+				onselect={select}
+				onanchor={jumpTo}
+				onhover={hover}
+				ontogglegroup={toggleGroupCollapsed}
+				onopen={openRow}
+				onreveal={reveal}
+				onchanged={reload}
+			/>
 		{/if}
-		<AnnotationsTable
-			{layout}
-			mode={view.mode}
-			{sections}
-			cursor={view.cursor}
-			expanded={view.expanded}
-			{hotAddr}
-			bind:width
-			initialScroll={{ x: scrollBook.x, y: scrollBook.y }}
-			onscroll={(x, y) => {
-				scrollBook.x = x;
-				scrollBook.y = y;
-			}}
-			onselect={(i) => (view.cursor = i)}
-			onanchor={jumpTo}
-			onexpand={toggleExpand}
-			onopen={openCard}
-			onmenu={menuCard}
-			onrequest={openRequestOf}
-			onhover={hover}
-			onpin={pin}
-			onunpin={unpin}
-		/>
-		<div class="legend">{legend} · colour = author, as in highlights · {cards.length} cards</div>
+		{#if !isMobile}
+			<div class="legend">
+				<span>{legend}</span>
+				<span>colour = author, as in highlights</span>
+				<span class="legend__sp"></span>
+				{#if wide && view.view === 'rows'}
+					<span class="seg seg--detail">
+						<button class:on={view.detail === 'inline'} onclick={() => (view.detail = 'inline')}>open in place</button>
+						<button class:on={view.detail === 'pane'} onclick={() => (view.detail = 'pane')}>detail pane</button>
+					</span>
+				{/if}
+				<span>{rows.length} rows</span>
+			</div>
+		{/if}
 	{/if}
 	{#if wandOpen}
 		<SpellComposerModal query={spellText} onclose={() => (wandOpen = false)} />
@@ -512,8 +672,39 @@
 </div>
 
 <style>
-	.abuf { display: flex; flex-direction: column; min-height: 0; height: 100%; outline: none; }
+	.abuf { display: flex; flex-direction: column; min-height: 0; height: 100%; outline: none; position: relative; }
 	.empty { padding: var(--s-2) var(--s-3); font-family: var(--font-mono); font-size: var(--t-xs); color: var(--base5); font-style: italic; border-bottom: 1px solid var(--panel-border); }
 	code { font-family: var(--font-mono); color: var(--base6); }
-	.legend { padding: 4px 10px; border-top: 1px solid var(--panel-border); font: var(--t-3xs) / 1.4 var(--font-mono); color: var(--base5); }
+	.split2 { display: flex; flex: 1; min-height: 0; }
+	.split2 > :global(.rows) { flex: 1; }
+	.detail { flex: 0 0 380px; border-left: 1px solid var(--panel-border); overflow: auto; background: var(--base1); }
+	.detail__dh {
+		padding: 8px 12px 0;
+		display: flex;
+		gap: 8px;
+		align-items: center;
+		font: var(--t-2xs) / 1 var(--font-mono);
+		color: var(--base5);
+	}
+	.detail__dh b { color: var(--fg); font: 600 var(--t-sm) / 1.3 var(--font-sans); min-width: 0; }
+	.detail__sp { flex: 1; }
+	.detail__by { flex: none; white-space: nowrap; display: inline-flex; gap: 5px; align-items: center; }
+	.detail__dot { width: 7px; height: 7px; border-radius: 50%; background: var(--au); display: inline-block; }
+	.detail__empty { padding: 30px 14px; color: var(--base5); font: var(--t-xs) / 1.4 var(--font-mono); text-align: center; }
+	.legend {
+		padding: 3px 10px;
+		border-top: 1px solid var(--panel-border);
+		font: var(--t-3xs) / 1.4 var(--font-mono);
+		color: var(--base5);
+		flex-shrink: 0;
+		display: flex;
+		gap: 10px;
+		flex-wrap: wrap;
+		align-items: center;
+	}
+	.legend__sp { flex: 1; }
+	.seg { display: inline-flex; border: 1px solid var(--panel-border); border-radius: var(--r-md); overflow: hidden; }
+	.seg button { border: 0; border-radius: 0; border-right: 1px solid var(--panel-border); min-height: 18px; padding: 0 7px; font: var(--t-3xs) / 1 var(--font-mono); background: transparent; color: var(--base6); cursor: pointer; }
+	.seg button:last-child { border-right: 0; }
+	.seg button.on { background: var(--base2); color: var(--fg); }
 </style>
