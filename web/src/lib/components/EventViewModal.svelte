@@ -562,10 +562,10 @@
 				onCommentAction();
 			} else if (k === 'n' && canAnnotate) {
 				e.preventDefault();
-				onAnnotateAction();
+				onAskAction();
 			} else if (k === 'q' && canAnnotate) {
 				e.preventDefault();
-				onAskAction();
+				onAnnotateAction();
 			} else if (k === 's' && canShelve) {
 				e.preventDefault();
 				void onShelveAction();
@@ -1045,21 +1045,21 @@
 				{#if canAnnotate}
 					<button
 						class="evm__action"
-						onclick={onAnnotateAction}
-						title={n.kind === 30040
-							? 'Attach a note to this publication — front matter, an appendix, or a margin note (NKBIP-01 insertion)'
-							: 'Attach a note to this section — a post-it, or a page inserted before/after it (NKBIP-01 insertion)'}
+						onclick={onAskAction}
+						title="Annotate this place: ask your agent for notes, a kasten, vocabulary definitions, or an answer to your question — a local request it answers over MCP; the same window as annotate mode"
 					>
 						<span class="evm__key">n</span>
 						<span class="evm__action-label">Annotate</span>
 					</button>
 					<button
 						class="evm__action"
-						onclick={onAskAction}
-						title="Ask your agent for notes about this place — a local request it answers over MCP with attached notes"
+						onclick={onAnnotateAction}
+						title={n.kind === 30040
+							? 'Write a note yourself and attach it to this publication — front matter, an appendix, or a margin note (NKBIP-01 insertion)'
+							: 'Write a note yourself and attach it to this section — a post-it, or a page inserted before/after it (NKBIP-01 insertion)'}
 					>
 						<span class="evm__key">q</span>
-						<span class="evm__action-label">Ask</span>
+						<span class="evm__action-label">Write a note</span>
 					</button>
 				{/if}
 				{#if canShelve}
