@@ -76,7 +76,9 @@ never happen in the browser.
   margin cards under their anchor section in both views (front matter /
   appendix on the index), fold to a row under 768 px, take the =sticky=
   skin from Appearance → Notes, and carry =promote=. The event menu's
-  *Annotate* (=n=) opens the composer anchored to the section or the index.
+  *Annotate* (=n=) opens the request window anchored to the section or the
+  index (notes · kasten · vocabulary — the same window as annotate mode;
+  2026-09-24); *Write a note* (=q=) opens the composer to write one yourself.
 
 * Gaps / open edges
 - Nested-publication packed cards, drill-in with breadcrumbs, and parent

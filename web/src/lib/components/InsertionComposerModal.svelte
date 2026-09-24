@@ -175,7 +175,7 @@
 		<header class="ins-header">
 			<h3 class="ins-title">
 				<span class="ins-dot" aria-hidden="true">●</span>
-				create annotation
+				write a note
 				{#if topLevel}
 					<span class="ins-title__on">— on the publication</span>
 				{:else if open?.parentTitle}

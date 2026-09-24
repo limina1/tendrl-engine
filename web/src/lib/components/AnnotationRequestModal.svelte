@@ -290,6 +290,13 @@
 		return `${Math.floor(s / 86400)}d`;
 	}
 
+	/** The same anchor, in the composer: the user writes the note instead of asking for it. */
+	function writeItYourself() {
+		if (!open) return;
+		const { content: _content, ...anchor } = open;
+		app.annotationRequest = null;
+		app.insertionComposer = anchor;
+	}
 	function close() {
 		app.annotationRequest = null;
 	}
@@ -386,6 +393,7 @@
 					<span class="rq-title__on">— on <em>{open.parentTitle}</em></span>
 				{/if}
 			</h3>
+			<button class="rq-mini rq-mini--self" onclick={writeItYourself} disabled={posting} title="Skip the request: write the note yourself, anchored here (the composer)">write it yourself →</button>
 			<button class="rq-close" onclick={close} aria-label="Close">×</button>
 		</header>
 
@@ -623,6 +631,11 @@
 		display: flex;
 		flex-direction: column;
 		gap: 5px;
+	}
+	.rq-mini--self {
+		margin-left: auto;
+		margin-right: var(--s-2);
+		color: var(--base6);
 	}
 	.rq-header {
 		display: flex;

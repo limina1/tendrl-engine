@@ -58,7 +58,8 @@ the idea and its resolved questions: [[file:idea-insertions.org][insertions]].
   A load survives a buffer switch (=insertionsLoaded= in =bufferState= →
   local re-read on remount).
 - *Composer* =InsertionComposerModal=: one form behind the event menu's
-  *Annotate* (=n=) on any 30040/30041 — a section's ⋮ / =menu=, the =M= menu
+  *Write a note* (=q=; was *Annotate* until 2026-09-24 — =n= now opens the
+  request window) on any 30040/30041 — a section's ⋮ / =menu=, the =M= menu
   (= the index: front matter / appendix / a note on the whole), or a
   search result's menu. Anchor chips are read-only (root from the reader
   that opened the menu, else a containing index — a select when there are
