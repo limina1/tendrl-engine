@@ -225,8 +225,15 @@
 			</details>
 
 			<div class="mr-agent" data-slot="assistant-review">
-				<div class="mr-agent__h">assistant review <span class="mr__spacer"></span><button class="mr__btn mr__btn--mini" disabled title="step 6 — the agent reads the same diff and writes findings for you; it cannot merge">ask the assistant</button></div>
-				<div class="mr__note">optional — a structured review kept as a local record, never an event.</div>
+				<div class="mr-agent__h">assistant review <span class="mr__spacer"></span><button class="mr__btn mr__btn--mini" disabled title="your own agent writes it: “check tendrl” in your harness runs list_asks → get_ask_diff → review_ask; it reads this same diff and cannot merge">ask the assistant</button></div>
+				{#if diff?.review}
+					<ul class="mr-agent__findings">
+						{#each diff.review.findings as f}<li>{f}</li>{/each}
+					</ul>
+					<div class="mr-agent__rec" data-recommendation={diff.review.recommendation}>↳ recommend: {diff.review.recommendation}{#if diff.review.note} — {diff.review.note}{/if}</div>
+				{:else}
+					<div class="mr__note">optional — a structured review kept as a local record, never an event. None yet.</div>
+				{/if}
 			</div>
 
 			{#if isOwner}
@@ -442,6 +449,16 @@
 		display: flex;
 		flex-direction: column;
 		gap: 4px;
+	}
+	.mr-agent__findings {
+		margin: 2px 0 0 var(--s-4);
+		padding: 0;
+		font: var(--t-xs) / 1.45 var(--font-sans);
+		color: var(--fg);
+	}
+	.mr-agent__rec {
+		font: var(--t-2xs) / 1.3 var(--font-mono);
+		color: var(--green);
 	}
 	.mr-agent__h {
 		display: flex;

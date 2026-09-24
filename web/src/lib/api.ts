@@ -3141,8 +3141,20 @@ export interface MergeRequestDiff {
 	index: { diff: MergeRequestIndexDiff; next: UnsignedTemplate } | null;
 	definitions: { coordinate: string; term: string; promoted_in_source: boolean }[];
 	note?: string;
+	/** The assistant's local review record, when `review_ask` wrote one. */
+	review?: AskReview | null;
 }
 
+/** The assistant's structured review of an 818 — a LOCAL record written by
+ *  `review_ask` over MCP (never an event). Folded into the diff when present. */
+export interface AskReview {
+	id: string;
+	findings: string[];
+	recommendation: 'merge' | 'decline' | 'edit-first' | (string & {});
+	note?: string;
+	by?: string;
+	created_at: number;
+}
 export function getMergeRequestDiff(id: string) {
 	return fetchJson<MergeRequestDiff>(`/api/v1/merge-requests/${encodeURIComponent(id)}/diff`);
 }
