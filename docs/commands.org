@@ -2440,6 +2440,16 @@ curl -s -X POST $B/api/v1/annotations/requests/preview -H "$J" -d "{\"root\":\"$
 curl -s -X POST $B/mcp -H "$J" -H "$A" -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"list_requests","arguments":{}}}' | jq -c '.result.structuredContent.requests[]|{id, output, terms}'
 #+end_src
 
+** Definitions — live (ran 2026-09-24: API 8/8, GUI harness 8/8 on a fresh seed)
+
+#+begin_src bash
+# after the vocabulary seed (ROOT / S1 / IDX in the env):
+PORT=3131 scripts/verify/vocab-definitions.sh       # request signed → 2 definitions (role: definition) → load roles/terms → glossary preview/publish/remove → refuses a plain note
+node scripts/verify/vocab-definitions.mjs --root "$ROOT" --search "id:$IDX" --out /tmp/def-shots
+# reader-open · definition-cards (.badge.def = unpromoted definitions) · answers-chips · promote-preview (.icard__promote) · promote-event-preview (.icard__wire-pre)
+# · promote-signed (armed sign · promote) · glossary-in-reader (the reader's collapsed .cv-index row “▸ Glossary · N items”) · engine-says-promoted (+1)
+#+end_src
+
 ** Definitions (plan Phase 5c step 2, branch =feat/vocab-definitions=)
 
 A definition is a 30041 insertion with =role: definition= (=t:

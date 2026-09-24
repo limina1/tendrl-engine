@@ -539,15 +539,20 @@ order on branches off =feat/annotations-table=; each step is shippable alone.
 - [X] capture action reads *annotate*; annotate mode + a selection opens
       the modal with the selection pre-highlighted (≤ 4 words)
 
-*Step 2 — definitions* (=feat/vocab-definitions=)
-- [ ] =insertion.rs::InsertionRole::Definition= from =t: definition=;
+*Step 2 — definitions* (=feat/vocab-definitions=, built 2026-09-24: engine =d0a0404=, web =cfb598f=; live API 8/8 + GUI harness)
+- [X] =insertion.rs::InsertionRole::Definition= from =t: definition=;
       =propose_insertion= gains =role= (sets =t=, =T= from title);
       =insertions/load= tags =role: definition=
-- [ ] =InsertionCard= "def" badge, term chip; table =role= filter; hover on
+- [X] =InsertionCard= "def" badge, term chip; table =role= filter; hover on
       a ={{ref}}= to a definition shows its first lines
-- [ ] promotion *per definition event*: card button → the glossary bundle
+- [X] promotion *per definition event*: card button → the glossary bundle
       (a 30040 in the appendix slot) gains/loses that =a=; index republished;
       glossary lists exactly the promoted ones
+      Note: a promoted definition renders through the reader's nested-index
+      row ("▸ Glossary · N items", collapsed by default) — the glossary bundle
+      is an ordinary sub-index. Follow-up: expand a =t: glossary= sub-index by
+      default. Found on the way: the =#A= load filter only asked for 30041, so
+      bundles never loaded — fixed in =d0a0404=.
 
 *Step 3 — relink, own publication* (=feat/vocab-relink=)
 - [ ] =nostrdown::link_terms(content, format, &[(term, coord)]) -> (String, Vec<Hunk>)=,
