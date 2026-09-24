@@ -1,116 +1,180 @@
-#+TITLE: Annotations table — every note on a publication, on one surface
+#+TITLE: Annotations ledger — every note on a publication, on one surface
 #+TYPE: feature
-#+STATUS: plan
+#+STATUS: building (Phase 5d; the table canvas it replaces shipped in 5b)
 #+DATE: 2026-09-17
+#+UPDATED: 2026-09-24
 
-Plan Phase 5b. One buffer beside the reader that shows *all* the
-annotations on a publication at once — the notes people attached, the
-requests still waiting for an answer — arranged five ways, filtered by a
-query, coloured by author. The reader shows notes /at their place/; the
-table shows /who wrote what, where, when/. Frozen design:
-[[file:../annotations-table-contract.org][the Track 0 contract]]
-(2026-09-17); approved prototype:
-[[https://claude.ai/artifact/7RNhEzyQ7nQW5NkBwH2MA5][artifact 7RNhEzyQ7nQW5NkBwH2MA5]]
-(version 2). Five tracks build it in parallel worktrees; the plan
-tracks them by checkbox ([[file:../insertions-plan.org][plan]] § Phase 5b).
+Plan Phase 5b built a *table*: fixed-size cards on a canvas, five
+layouts, a spell header. Two weeks in the user called it "kind of clunky
+for viewing the annotations, especially the table", and the redesign
+that followed — a *ledger* — was approved with "this is a great design.
+really conform to it." This note describes the ledger; the table's
+canvas, its layouts and its pins are gone. Frozen design:
+[[file:../annotations-ledger-contract.org][the Track 0 contract]]
+(2026-09-24, replacing the table contract); approved prototype:
+[[https://claude.ai/artifact/8ZTGgiDa6RPZGpRdWCWRkn][artifact 8ZTGgiDa6RPZGpRdWCWRkn]]
+(version 5), committed as
+[[file:../prototypes/annotations-ledger.html][prototypes/annotations-ledger.html]].
+Six tracks build it in one worktree; the plan tracks them by checkbox
+([[file:../insertions-plan.org][plan]] § Phase 5d).
 
 * What it is
 
 - *One buffer kind*, =annotations:<root>= (=30040:<pk>:<d>=), opened from
   the reader's Tools sheet (*table N*, N = notes, not requests) or
-  =SPC b o t=. On desktop it *splits the pane* — reader | table
-  (=store.splitFocused=) — so the two stay in view together; on the phone
-  it is the focused work buffer, listed in the ☰ drawer, and the
-  reader is one tap away. Beside the reader or filling the window is the
-  WM's split state, like any two buffers — not a mode of the table.
-- *Five layouts*, switched from the buffer's own header (=←=/=→=, =m=):
-  - /by section/ — one lane per TOC row in reading order (plus a "whole
-    publication" lane for front matter / appendix notes); cards packed
-    left to right: requests, then before · attached · after, then by time
-  - /by author/ — one lane per author, most notes first
-  - /timeline/ — x by =created_at=, day ticks, small cards, greedy rows
-  - /free/ — the section layout as the base; drag a card to *pin* it
-    where you want it (desktop only)
-  - /collective/ — a grid: rows = authors, columns = sections; a stack
-    per cell — "who has written where" in one glance
+  =SPC b o t=. On desktop it *splits the pane* — reader | ledger
+  (=store.splitFocused=); on the phone it is the focused work buffer,
+  listed in the ☰ drawer. Beside the reader or filling the window is
+  the WM's split state, not a mode of the ledger.
+- *Rows, not a canvas.* One row per annotation: a 3 px rail in the
+  author's colour, the =§= cell (click → the reader scrolls there), one
+  glyph per kind — =◂= note (=▴= before · =▾= after) · =def= · =?=/=✓=
+  request · =⑂= merge request · =⊞= kasten — the title, a "glossary"
+  flag on a promoted definition, a "waiting" flag on an open request,
+  "N ↳" for a request's answers, "↩ N" for its replies, the author, the
+  age. A row opens *in place* (=Enter= or a click) with the full text,
+  the per-kind actions and its thread; on a wide, unsplit ledger a
+  *detail pane* on the right takes the body instead so the rows stay one
+  line each (a legend toggle switches).
+- *Four groupings*, one segment: /§/ (one group per TOC row in reading
+  order, "whole publication" first; a request's answers *nest* under it
+  with ↳), /author/ (most rows first), /kind/ (requests · merge
+  requests · definitions · kasten · notes), /time/ (today · this week ·
+  this month · earlier). =g= cycles them.
+- *Two rows of chrome, every element a filter.* The spell input (the
+  search DSL the engine mirrors: =A:<root> k:30041 [by:…] [a:<section>]
+  [t:definition | t:annotation-request | k:818] [since:…] count:by
+  count:a=; =Enter= re-parses a hand edit, a foreign root is refused, the
+  wand saves it as a spell), *+ annotate*, the grouping segment,
+  rows|board, then the facets: *who* (author bars with counts — the
+  =count:by= buckets), *where* (=§n= chips with counts), *what* (kind
+  counts), *when* (a 21-day sparkline, click a day; all · 7d · 30d). The
+  timeline and collective layouts of the table survive here as the
+  *when* sparkline and the who × where counts; the free layout and its
+  pins were dropped.
+- *Board* keeps a card view for reading content at a glance: one column
+  per section, cards sized to their content, no absolute positions, no
+  drag.
 - *Colour is per author*, the highlight recipe (=discussions/colors.ts=,
-  =pubkeyToColor=): the card's left rail, its author dot, the =§n= anchor
-  chip, the histogram bar — the same hue the author has on their
-  highlights and comments, so a person reads the same across surfaces.
-- *Requests are cards too*: a signed kind-30041 request
-  ([[file:decision-requests-are-events.org][decision]]) sits on the table
-  with a "? request" badge, "✓ request · answered" once a note points at
-  it; an unsigned local record shows under an /unsigned/ bar. A note
-  that answers wears an "↳ answer" chip. Requests are *not* counted in
-  the author histogram or in *table N* — they are asks, not notes.
-- *The spell is the query.* The header is an editable search-DSL line
-  (=A:<root> k:30041 [by:…] [since:…] count:by count:a=) with a wand:
-  the author bars (=count:by= buckets) toggle =by:= and rewrite the
-  line; =Enter= on a hand-edited line re-parses it (a foreign root is
-  refused); the wand hands the text to the existing spell composer, so
-  a saved table view is a saved spell
-  ([[file:idea-spells.org][spells]]) — no table-specific store.
-- *Cards are handles*: =§n= chip → the reader teleports to the section;
-  hover → the section lights in the reader (=.anchor-hot=, "N cards →");
-  =Enter= expands in place (RichContent), "open as section ▸" opens the
-  30041 in an event reader. =j=/=k= walk the cards in layout order.
-- *Pins are view state*, never published: layout mode, selected
-  authors, since, cursor, expansion and pin positions live in
-  =store.bufferState= (=AnnotationsViewState=), read once on mount and
-  written on teardown ([[file:decision-buffer-state-homes.org][where
-  buffer state lives]]). A drag survives a buffer switch; nothing about
-  the arrangement ever becomes an event.
-- *The reader gains a preference* (D9 in the plan): Reading → notes
-  *margin | inline*. Margin puts the cards in a 280 px gutter beside the
-  measure on a wide pane; inline (the default while split, or below the
-  measure) keeps them under their section as today; the phone folds
-  them into 44 px rows as before.
+  =pubkeyToColor=): the row rail, the dot, the bars, the thread rail —
+  the same hue a person has on their highlights and comments.
+- *The workflows hang off the rows.* =+ annotate= (or a section's =n=)
+  opens the annotate window; an open request's row offers *answer it
+  yourself ▸*; a vocabulary request keeps *define a term yourself ▸*
+  after it is answered; a def row offers *relink* and *promote →
+  glossary* (per event); the ⑂ row offers *review the diff ▸*; every row
+  ends in its *thread*.
+- *The reader folds its notes to a strip.* Under each section (and the
+  whole-publication head) one stub per annotation — glyph · title ·
+  "N↳" — and a click opens the full card under the strip, one open card
+  per section. The 280 px margin column of the table epoch and its
+  Reading preference are gone; the =card | sticky= skin stays. The
+  section title row gains *n annotate*; a card gains *≡ row*, which
+  opens the ledger if needed and reveals that row
+  (=app.requestRevealAnnotation=).
+
+* Answering by hand — one term at a time
+
+The answer mode of the annotate window (the request card's or row's
+*answer it yourself ▸*) takes the window's own shape and walks the
+request's terms *one at a time*: the term is a dropdown listing the
+request's terms with their state (" · defined by @assistant", " · signed
+by you", " · skipped") and a last option *+ another term…* that swaps in
+a free input; below it one definition entry, the format, the style, and
+the event preview for that one 30041. *sign ▸* signs it (=role:
+definition=, the =request= pointer, =sign_as: user=, local) and pages to
+the next undone term; on the last one it closes. *skip ▸* pages without
+signing. The header counts "i of n · k to do"; picking a term someone
+already defined warns that this writes a second definition under your
+key and that relink will ask which one to point at. An =ask= request
+takes the same window with the question as a fixed title. A =notes= or
+=kasten= request still hands off to the composer with the request
+pointer. From vocabulary mode with words marked, *define them myself ▸*
+walks the marked words the same way with no request at all — a
+definition needs no ask.
+
+* Responding to an annotation
+
+Two paths, both on every row and every reader card, distinct by intent:
+- A *reply* is a kind-1111 comment threaded under the annotation
+  (NIP-22: =A= the annotation's coordinate, =K= 30041, =p= its author) —
+  the row's thread shows the replies with the author rail, a reply box
+  and the one-line tag preview; =Enter= signs. The annotation itself is
+  never touched; the row wears "N ↩".
+- A *note in reply* is a full 30041 anchored to the same section that
+  carries a NIP-18 =q= tag naming the annotation it answers
+  (=reply_to= on =POST /insertions=); the ledger shows "↩ <title>" on the
+  row and the reader stacks them.
+A request already had a third kind of response — the answer with the
+=request= pointer — so the three are: a comment, a counter-note, an
+answer.
+
+* The review takes the reader's place
+
+The merge-request review (=review:<id>=) stays a work buffer. Opened
+from the ledger while it is split beside a reader, it replaces the
+reader's leaf and *← reader* restores it. Top to bottom: the status
+strip (badge · role · target · base against your current version), the
+818's content with the requester's rail, *what changes* as tiles
+(sections relinked · hunks · index changes · sections removed or moved ·
+untouched), the definitions being linked as small cards (the reviewer
+reads them; they become the hover text of every ref), one collapsible
+diff per section, the index block, the assistant's review slot, the
+thread on the 818, and a sticky footer — decline − · open merged result
+in composer · merge + (armed). After the verdict the footer shows it in
+place and the buffer stays open; the requester sees the same page
+read-only.
 
 * The boundary
 
-Engine-side (Rust, =src/api/insertions.rs=): which 30041s anchor to the
-root, their anchors, roles and request pointers — the =#A= pass of
-=POST /api/v1/insertions/load= — plus, for the table, =since= (a NIP-01
-bound on the pass) and =counts= (the pass runs *without* the author
-filter, computes =by_author= / =by_parent= / =total= histograms over the
-whole root, then =retain=s by author — so the bars show every author even
-while one is selected; =by_author= buckets are labelled with the kind-0
-name by =label_author_buckets=, the same labelling =count:by= uses in
-search). In Confirm mode the intent text says "any author (table)" so
-the modal is honest about the broader fetch.
+Engine-side (=src/api/insertions.rs=): which 30041s anchor to the root,
+their anchors, roles, request pointers and — new — =reply_to= (the =q=
+coordinate) and, on request, the per-annotation kind-1111 count
+(=replies: true= → one =#A= query over the loaded coordinates); the
+=counts= histograms as before. =POST /insertions= takes =reply_to= and
+emits the =q= tag; =propose_insertion= over MCP takes it too.
 
-Web-side (=components/annotations/table-model.ts=, pure; the buffer and
-its cards): *layout* — =flattenToc= (reading-order rows off the reader's
-tree), =layoutCards= (mode → lanes + placed cards, a =$derived=, the
-=FocusGraph= idiom; the drag transient is never an input), =buildSpell= /
-=parseSpell= (the DSL round trip), =authorBars= (histogram → bars). Cards
-are a keyed ={#each}= — Svelte's own data join; no d3 by default,
-=d3-force= only if free clustering earns it after a real 100-card set.
-The mobile list (=AnnotationsList=) reuses the same cards and lanes as
-grouped rows.
+Web-side (=components/annotations/ledger-model.ts=, pure): =buildRows=
+(notes + requests → rows), =groupRows= (the four groupings),
+=flatOrder= (the cursor's order, a request's answers right after it),
+=facetCounts= (each facet counted over the rows the /other/ facets
+admit), =buildSpell= / =parseSpell=. Rows are a keyed ={#each}=; no d3.
+The thread is one component (=AnnotationThread=) mounted by the row
+body, the reader cards and the review.
 
-Cross-buffer hooks (=state.svelte.ts=): =app.readerJump= (a nonce the
-reader applies once) and =app.hoverAnchor= (root + addr + count) — the
-table writes, the reader reads; live updates arrive through the store
+Cross-buffer hooks (=state.svelte.ts=): =app.readerJump= and
+=app.hoverAnchor= as before; =app.revealAnnotation= (root + id + nonce,
+the reader card's "≡ row"); the page's =onAnnotationsTable= handler
+opens or focuses the ledger. Live updates arrive through the store
 stream ([[file:feat-insertions.org][insertions]] § Live) with
-=concernsRoot=, debounced, as a callback and not an effect.
+=concernsRoot=, debounced; a row that just landed wears =.new= once.
 
 * Verification
 
-=scripts/verify/annotations-table.mjs= — a CDP harness against a scratch
-engine on =:3131= with =nak= fixtures (3 sections · 5 notes by 2 keys · 1
-signed request): the split opens; lane/card counts per layout; an author
-bar rewrites the spell; a drag pins; hover lights the section; the =§n=
-chip scrolls the reader; 390×844 shows the list. Recipe: =docs/commands.org=
-"Annotations table — verify".
+=scripts/verify/annotations-ledger-seed.sh= +
+=scripts/verify/annotations-ledger.mjs= — a CDP harness against a scratch
+engine on =:3131= seeded with every row kind (notes by two keys, a notes
+request answered, a vocabulary request answered by two definitions, an
+open ask, a kasten bundle, two replies on a note, one open 818): the
+split opens; groups per grouping; a facet filters and rewrites the
+spell; a row opens with its thread and a reply signs; the ask is
+answered by hand; a term is defined by hand on the answered vocabulary
+request; a def row's relink opens the diff; the ⑂ row opens the review
+in the reader's leaf and "← reader" restores it; the reader strip, a
+stub's card, "≡ row"; hover lights the section; § scrolls the reader;
+390×844 shows the phone rows. Recipe: =docs/commands.org= "Annotations
+ledger — verify".
 
 * Related
 - [[file:index.org][Index]]
-- [[file:feat-insertions.org][Insertions]] — the notes on the table; § Table
-- [[file:decision-requests-are-events.org][Requests are records, never a harness]] — the badged cards
-- [[file:feat-discussions.org][Discussions & highlights]] — the colour recipe
+- [[file:feat-insertions.org][Insertions]] — the notes on the ledger; § Table
+- [[file:idea-vocabulary-requests.org][Vocabulary requests]] — definitions, relink, glossary
+- [[file:decision-merge-requests-818.org][Merge requests are kind 818]] — the ⑂ rows and the review
+- [[file:decision-requests-are-events.org][Requests are records, never a harness]] — the badged rows
+- [[file:feat-discussions.org][Discussions & highlights]] — the colour recipe; kind-1111 replies
 - [[file:idea-spells.org][Spells]] — a saved view is a saved spell
 - [[file:feat-shell.org][WM shell]] — splits; [[file:feat-mobile.org][Mobile]] — the drawer
-- [[file:decision-buffer-state-homes.org][Where buffer state lives]] — pins in =bufferState=
-- [[file:../annotations-table-contract.org][The Track 0 contract]] — DOM contract, layout rules, files per track
-- [[file:../insertions-plan.org][Plan]] § Phase 5b, § Open follow-ups
+- [[file:decision-buffer-state-homes.org][Where buffer state lives]] — the view state in =bufferState=
+- [[file:../annotations-ledger-contract.org][The Track 0 contract]] — DOM contract, grouping rules, files per track
+- [[file:../annotations-table-contract.org][The table contract]] — the 5b epoch this replaced
+- [[file:../insertions-plan.org][Plan]] § Phase 5d
