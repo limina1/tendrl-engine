@@ -8,8 +8,14 @@
 	// glossary checkboxes change the selection — the glossary bundle and the
 	// index. This window is the diff gate: every event it will sign is shown
 	// before the armed button, and nothing is broadcast (the separate step).
-	// A publication that is not yours is previewed only; the derivative +
-	// kind-818 path is plan Phase 5c step 4.
+	// A publication that is not yours takes the other door (plan Phase 5c
+	// step 4): the same diff, but the button signs a *derivative* under your
+	// key (index′ + copies of the changed sections, `E`/`p` back-pointers)
+	// and one kind-818 merge request addressed to the owner, sent to the
+	// destination set the engine computed — their inbox ∪ where the target
+	// was found ∪ hints ∪ mine — each relay shown with its reason and
+	// uncheckable. Undeliverable (no inbox, no provenance) never falls back
+	// to the publish set silently: the button stays off and the note says why.
 	import * as api from '$lib/api';
 	import { getAppState } from '$lib/state.svelte';
 	import { identityCanSign } from '$lib/identity/signer';
@@ -34,7 +40,46 @@
 	let armed = $state(false);
 	let publishing = $state(false);
 	let wireOpen = $state(false);
-	const yielding = $derived(publishing && confirmState.intent?.type === 'publish_intent');
+	// Foreign root: the destination set, editable (unchecked = dropped) and
+	// refreshable with a Confirm-gated kind-10002 fetch of the owner's inbox.
+	let destSel = $state<Record<string, boolean>>({});
+	let destExtra = $state<api.DestinationSet | null>(null);
+	let fetchingInbox = $state(false);
+	const yielding = $derived((publishing && confirmState.intent?.type === 'publish_intent') || (fetchingInbox && confirmState.intent !== null));
+	const foreign = $derived(!!preview && !preview.owner);
+	const ownerPk = $derived(root.split(':')[1] ?? '');
+	/** The destination rows shown: the preview's set, with a later 10002
+	 *  fetch merged in (reasons unioned, order inbox → found on → hint → mine). */
+	const destinations = $derived.by((): api.Destination[] => {
+		const base = preview?.derivative?.destinations.destinations ?? [];
+		const extra = destExtra?.destinations ?? [];
+		const byUrl = new Map<string, api.Destination>();
+		for (const d of [...base, ...extra]) {
+			const cur = byUrl.get(d.url);
+			if (cur) byUrl.set(d.url, { url: d.url, reasons: [...new Set([...cur.reasons, ...d.reasons])] });
+			else byUrl.set(d.url, { url: d.url, reasons: [...d.reasons] });
+		}
+		const rank: Record<api.DestinationReason, number> = { inbox: 0, found_on: 1, hint: 2, mine: 3 };
+		const best = (d: api.Destination) => Math.min(...d.reasons.map((r) => rank[r] ?? 9));
+		return [...byUrl.values()].sort((a, b) => best(a) - best(b));
+	});
+	const destSet = $derived.by((): api.DestinationSet | null => {
+		const ds = preview?.derivative?.destinations;
+		if (!ds) return null;
+		if (!destExtra) return ds;
+		return {
+			...ds,
+			deliverable: ds.deliverable || destExtra.deliverable,
+			inbox_known: ds.inbox_known || destExtra.inbox_known,
+			provenance_known: ds.provenance_known || destExtra.provenance_known,
+			note: ds.deliverable || destExtra.deliverable ? undefined : (destExtra.note ?? ds.note)
+		};
+	});
+	const checkedDestinations = $derived(destinations.filter((d) => destSel[d.url] !== false).map((d) => d.url));
+	/** Relays that actually reach the owner: checked, with an inbox or
+	 *  found-on reason. A `mine`-only relay is findability, not delivery. */
+	const reachCount = $derived(destinations.filter((d) => destSel[d.url] !== false && d.reasons.some((r) => r === 'inbox' || r === 'found_on')).length);
+	const canSend = $derived(foreign && !!preview?.derivative && reachCount > 0 && checkedDestinations.length > 0);
 
 	const termOf = $derived.by(() => {
 		const m = new Map<string, string>();
@@ -69,7 +114,11 @@
 		previewErr = null;
 		try {
 			const p = await api.previewRelink(body());
-			if (seq === previewSeq) preview = p;
+			if (seq === previewSeq) {
+				preview = p;
+				// New destination rows default to checked; an unchecked one stays unchecked.
+				for (const d of p.derivative?.destinations.destinations ?? []) if (!(d.url in destSel)) destSel = { ...destSel, [d.url]: true };
+			}
 		} catch (e) {
 			if (seq === previewSeq) previewErr = api.errorMessage(e, 'preview failed');
 		} finally {
@@ -85,6 +134,26 @@
 		glossarySel = { ...glossarySel, [coord]: !glossarySel[coord] };
 		schedulePreview();
 	}
+	function toggleDestination(url: string) {
+		destSel = { ...destSel, [url]: destSel[url] === false };
+		armed = false;
+	}
+	/** The owner's inbox is not known locally: one Confirm-gated pull of their
+	 *  kind 10002 through the indexer composition, merged into the rows. */
+	async function fetchInbox() {
+		if (fetchingInbox || !root) return;
+		fetchingInbox = true;
+		try {
+			const ds = await api.getMergeRequestDestinations({ target: root, owner: ownerPk, policy: 'fetch_always', mode_confirm: true });
+			destExtra = ds;
+			for (const d of ds.destinations) if (!(d.url in destSel)) destSel = { ...destSel, [d.url]: true };
+			app.pushToast(ds.inbox_known ? `Inbox found — ${ds.destinations.filter((d) => d.reasons.includes('inbox')).length} read relay(s) for the owner` : 'No kind 10002 found for the owner', ds.inbox_known ? 'success' : 'info');
+		} catch (e) {
+			app.pushToast(api.errorMessage(e, 'Inbox lookup failed'), 'error', 5000);
+		} finally {
+			fetchingInbox = false;
+		}
+	}
 	// Once, on open — from an event handler's timing, not an $effect over the form.
 	void runPreview();
 
@@ -94,12 +163,30 @@
 	}
 
 	async function sign() {
-		if (!preview || !preview.owner || publishing) return;
+		if (!preview || publishing) return;
+		if (!preview.owner && !canSend) return;
 		if (!armed) {
 			armed = true;
 			return;
 		}
 		publishing = true;
+		if (!preview.owner) {
+			try {
+				const resp = await api.publishRelink({ ...body(), destinations: checkedDestinations, broadcast: true });
+				const n = resp.derivative?.sections.length ?? resp.sections.length;
+				const m = resp.merge_request?.destinations_used.length ?? checkedDestinations.length;
+				app.pushToast(`Derivative signed (index′ + ${n} section${n === 1 ? '' : 's'}) · merge request sent to ${m} relay${m === 1 ? '' : 's'}`, 'success');
+				app.markRelinkDone(root);
+				app.bumpInsertions();
+				close();
+			} catch (e) {
+				app.pushToast(api.errorMessage(e, 'Fork + merge request failed'), 'error', 5000);
+				armed = false;
+			} finally {
+				publishing = false;
+			}
+			return;
+		}
 		try {
 			const resp = await api.publishRelink(body());
 			const n = resp.sections.length;
@@ -152,10 +239,27 @@
 	}
 	function wireText(p: api.RelinkPreview): string {
 		const parts: string[] = [];
+		if (p.derivative) {
+			for (const s of p.derivative.sections) parts.push(`section′ · kind ${s.template.kind} · ${dOf(s.original)} → ${dOf(s.coordinate)}\n${tagRows(s.template)}`);
+			if (p.glossary) parts.push(`glossary · kind ${p.glossary.kind}\n${tagRows(p.glossary)}`);
+			parts.push(`index′ · kind ${p.derivative.index.kind} · ${dOf(p.derivative.index_coordinate)}\n${tagRows(p.derivative.index)}`);
+			parts.push(`merge request · kind ${p.derivative.merge_request.kind}\n  content: ${JSON.stringify(p.derivative.merge_request.content)}\n${tagRows(p.derivative.merge_request)}`);
+			return parts.join('\n\n');
+		}
 		for (const s of p.sections) parts.push(`section · kind ${s.template.kind} · d:${s.d}\n${tagRows(s.template)}`);
 		if (p.glossary) parts.push(`glossary · kind ${p.glossary.kind}\n${tagRows(p.glossary)}`);
 		if (p.index) parts.push(`index · kind ${p.index.kind}\n${tagRows(p.index)}`);
 		return parts.join('\n\n');
+	}
+	const reasonLabel: Record<api.DestinationReason, string> = { inbox: 'inbox', found_on: 'found on', hint: 'hint', mine: 'yours' };
+	const reasonTitle: Record<api.DestinationReason, string> = {
+		inbox: 'a read relay from the owner’s kind 10002 — where others write to reach them',
+		found_on: 'the relay that served the target (or its index) to you — the owner published there',
+		hint: 'a relay hint on the index’s a tag',
+		mine: 'one of your write relays — so the merge request is findable from your side'
+	};
+	function tagOf(t: api.UnsignedTemplate | null | undefined, name: string): string | null {
+		return t?.tags.find((x) => x[0] === name)?.[1] ?? null;
 	}
 	function handleKeydown(e: KeyboardEvent) {
 		if (publishing) return;
@@ -186,14 +290,20 @@
 	>
 		<header class="rl-header">
 			<h3 class="rl-title">
-				<span class="rl-dot" aria-hidden="true">⇄</span>
-				relink into your text
-				{#if open?.rootTitle}<span class="rl-title__on">— <em>{open.rootTitle}</em></span>{/if}
+				{#if foreign}
+					<span class="rl-dot rl-dot--ask" aria-hidden="true">⑂</span>
+					fork + merge request
+					<span class="rl-title__on">— a derivative under your key + a kind 818 to the owner{#if open?.rootTitle} · <em>{open.rootTitle}</em>{/if}</span>
+				{:else}
+					<span class="rl-dot" aria-hidden="true">⇄</span>
+					relink into your text
+					{#if open?.rootTitle}<span class="rl-title__on">— <em>{open.rootTitle}</em></span>{/if}
+				{/if}
 			</h3>
 			<button class="rl-close" onclick={close} aria-label="Close">×</button>
 		</header>
 		<div class="rl-help">
-			first occurrence of each term per section becomes <code>{'{{ref:<definition>|term}}'}</code> — code, headings and existing links skipped · new versions under the same <code>d</code>, local until broadcast
+			first occurrence of each term per section becomes <code>{'{{ref:<definition>|term}}'}</code> — code, headings and existing links skipped · {#if foreign}copies under your key with <code>E</code>/<code>p</code> back-pointers; the owner merges by republishing under their own <code>d</code>{:else}new versions under the same <code>d</code>, local until broadcast{/if}
 		</div>
 
 		{#if previewing && !preview}
@@ -249,8 +359,51 @@
 				{/each}
 			</div>
 
+			{#if foreign && preview.derivative}
+				{@const dv = preview.derivative}
+				<div class="rl-diff rl-derivative" data-derivative={dv.index_coordinate}>
+					<div class="rl-diff__head"><b>derivative</b><span>signed under your key · the owner merges by republishing their own</span><span class="rl-diff__n">{dv.sections.length} section{dv.sections.length === 1 ? '' : 's'} + index′</span></div>
+					<div class="rl-struct"><span class="rl-plus">index′</span><span>30040 · d:{dOf(dv.index_coordinate)} · <code>E</code> → their {tagOf(dv.index, 'E') ? (tagOf(dv.index, 'E') ?? '').slice(0, 8) + '…' : 'version'} · <code>p</code> → {ownerPk.slice(0, 8)}…</span></div>
+					{#each dv.sections as ds (ds.coordinate)}
+						<div class="rl-struct"><span class="rl-plus">section′</span><span>d:{dOf(ds.original)} → d:{dOf(ds.coordinate)} · every tag verbatim · <code>E</code> → the copied version</span></div>
+					{/each}
+				</div>
+
+				<div class="rl-label">the 818 <span class="rl-label__sub">— NIP-54’s merge request, target widened to a 30040/30041; the owner answers with a + or − reaction</span></div>
+				<pre class="rl-wire__pre rl-mr" data-kind="818">{`{ "kind": ${dv.merge_request.kind},
+  "content": ${JSON.stringify(dv.merge_request.content)},
+  "tags": [
+${dv.merge_request.tags.map((t) => '    [' + t.map((v) => JSON.stringify(v)).join(', ') + ']' + (t[0] === 'e' && t[3] === 'source' ? '   ← filled with index′’s id after signing' : t[0] === 'a' ? '   ← the target' : t[0] === 'p' ? '   ← the owner' : t[0] === 'e' ? '   ← the base version' : '')).join(',\n')}
+  ] }`}</pre>
+
+				<div class="rl-label">destination set <span class="rl-label__sub">— inbox ∪ found on ∪ hints ∪ yours; the derivative itself goes to your write relays</span></div>
+				<div class="rl-dest" data-deliverable={destSet?.deliverable ? 'true' : 'false'}>
+					{#each destinations as d (d.url)}
+						<label class="rl-dest__row" data-url={d.url}>
+							<input type="checkbox" id="rl-dest-{d.url.replace(/[^a-z0-9]/gi, '-')}" checked={destSel[d.url] !== false} onchange={() => toggleDestination(d.url)} disabled={publishing} />
+							<span class="rl-dest__url">{d.url}</span>
+							{#each d.reasons as r (r)}
+								<span class="rl-why rl-why--{r}" title={reasonTitle[r]}>{reasonLabel[r]}</span>
+							{/each}
+						</label>
+					{/each}
+					{#if destinations.length === 0}
+						<div class="rl-line rl-line--muted">no destinations known</div>
+					{/if}
+					{#if destSet && !destSet.deliverable}
+						<div class="rl-line rl-note rl-dest__note">{destSet.note ?? `no inbox known for ${ownerPk.slice(0, 8)}… and no provenance for this event — the merge request would not reach the owner`}</div>
+					{/if}
+					{#if destSet && !destSet.inbox_known}
+						<div class="rl-dest__fetch">
+							<button class="rl-btn rl-btn--mini" onclick={fetchInbox} disabled={fetchingInbox || publishing} title="One Confirm-gated fetch of the owner’s kind 10002 through the indexer relays">{fetchingInbox ? 'fetching…' : 'fetch their kind 10002 ▸'}</button>
+							<span class="rl-line rl-line--muted">their read relays are not known locally</span>
+						</div>
+					{/if}
+				</div>
+			{/if}
+
 			<details class="rl-wire" bind:open={wireOpen}>
-				<summary class="rl-label rl-wire__sum">event preview <span class="rl-label__sub">· what “sign” will sign — {preview.sections.length} section{preview.sections.length === 1 ? '' : 's'}{preview.glossary ? ' + glossary' : ''}{preview.index ? ' + index' : ''}</span></summary>
+				<summary class="rl-label rl-wire__sum">event preview <span class="rl-label__sub">· what “sign” will sign — {#if preview.derivative}{preview.derivative.sections.length} section′{preview.derivative.sections.length === 1 ? '' : 's'}{preview.glossary ? ' + glossary' : ''} + index′ + the 818{:else}{preview.sections.length} section{preview.sections.length === 1 ? '' : 's'}{preview.glossary ? ' + glossary' : ''}{preview.index ? ' + index' : ''}{/if}</span></summary>
 				<pre class="rl-wire__pre">{wireText(preview)}</pre>
 			</details>
 		{/if}
@@ -259,8 +412,16 @@
 			<button class="rl-btn" onclick={close} disabled={publishing}>cancel</button>
 			<button class="rl-btn" disabled title="later — edit the merged result before signing">open in composer</button>
 			<span class="rl-spacer"></span>
-			{#if preview && !preview.owner}
-				<button class="rl-btn" disabled title="Not your publication — the derivative + merge request path is step 4">fork + merge request (step 4)</button>
+				{#if preview && !preview.owner}
+				<button
+					class="rl-btn rl-btn--send"
+					class:rl-btn--armed-ask={armed}
+					onclick={sign}
+					disabled={!canSign || previewing || publishing || !canSend || preview.sections.length === 0}
+					title={!canSign ? 'Sign in to fork' : !preview.derivative ? 'The engine gave no derivative for this root' : !canSend ? 'No checked relay reaches the owner (inbox or found-on) — fetch their kind 10002 or check one' : 'Sign the derivative under your key and send the merge request to the checked relays'}
+				>
+					{#if publishing}signing…{:else if armed}sure? sign derivative + send 818 to {checkedDestinations.length} relay{checkedDestinations.length === 1 ? '' : 's'}{:else}sign + send merge request ▸{/if}
+				</button>
 			{:else}
 				<button
 					class="rl-btn rl-btn--go"
@@ -504,5 +665,74 @@
 	.rl-btn:disabled {
 		opacity: 0.5;
 		cursor: not-allowed;
+	}
+	.rl-btn--mini {
+		min-height: 24px;
+		padding: 1px 8px;
+	}
+	.rl-dot--ask,
+	.rl-btn--send {
+		color: var(--orange);
+	}
+	.rl-btn--armed-ask {
+		background: var(--orange);
+		color: var(--bg);
+		border-color: var(--orange);
+	}
+	.rl-mr {
+		max-height: 200px;
+	}
+	.rl-dest {
+		display: flex;
+		flex-direction: column;
+		gap: 3px;
+		font-family: var(--font-mono);
+		font-size: calc(var(--t-xs) - 1px);
+	}
+	.rl-dest__row {
+		display: flex;
+		gap: 8px;
+		align-items: center;
+		flex-wrap: wrap;
+		color: var(--fg-muted);
+		cursor: pointer;
+	}
+	.rl-dest__row input {
+		margin: 0;
+	}
+	.rl-dest__url {
+		color: var(--fg);
+	}
+	.rl-why {
+		color: var(--base5);
+		border: 1px solid var(--panel-border);
+		border-radius: 3px;
+		padding: 0 5px;
+		font-size: calc(var(--t-xs) - 2px);
+	}
+	.rl-why--inbox {
+		color: var(--orange);
+		border-color: rgba(226, 164, 120, 0.5);
+	}
+	.rl-why--found_on {
+		color: var(--cyan);
+		border-color: rgba(137, 184, 194, 0.5);
+	}
+	.rl-why--hint {
+		color: var(--yellow);
+		border-color: rgba(233, 177, 137, 0.5);
+	}
+	.rl-why--mine {
+		color: var(--blue);
+		border-color: rgba(132, 160, 198, 0.5);
+	}
+	.rl-dest__note {
+		margin-top: 2px;
+	}
+	.rl-dest__fetch {
+		display: flex;
+		gap: 8px;
+		align-items: center;
+		margin-top: 2px;
 	}
 </style>

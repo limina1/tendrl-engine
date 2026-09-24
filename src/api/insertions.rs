@@ -1326,6 +1326,37 @@ pub struct RelinkRequest {
     /// Default false: sign and keep local.
     pub broadcast: bool,
     pub relays: Option<Vec<String>>,
+    /// Non-owner + broadcast: where the kind-818 goes — the user's edited
+    /// destination list from the Confirm modal. Default: every relay of
+    /// the computed destination set when it is deliverable.
+    pub destinations: Option<Vec<String>>,
+    /// User-initiated: lets the owner's kind-10002 lookup raise the Confirm
+    /// intent instead of resolving local-only.
+    pub mode_confirm: bool,
+}
+
+/// A derivative section: the original coordinate, the coordinate it gets
+/// under the signer's key, and the unsigned copy (tags verbatim, minted `d`,
+/// `E`/`p` back-pointers, the relinked content + its `a` tags).
+#[derive(Debug, Clone, Serialize)]
+pub struct RelinkDerivativeSection {
+    pub original: String,
+    pub coordinate: String,
+    pub template: EventTemplate,
+}
+
+/// What a non-owner's relink publishes: a derivative index + sections under
+/// their key and a kind-818 merge request addressed to the owner.
+#[derive(Debug, Clone, Serialize)]
+pub struct RelinkDerivative {
+    pub index: EventTemplate,
+    pub index_coordinate: String,
+    pub sections: Vec<RelinkDerivativeSection>,
+    /// The unsigned kind-818. Its `e … source` row is a placeholder in the
+    /// preview (the derivative index's id exists only after signing); the
+    /// publish fills it.
+    pub merge_request: EventTemplate,
+    pub destinations: crate::api::merge_requests::DestinationsResponse,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -1368,7 +1399,21 @@ pub struct RelinkPreview {
     pub signer_pubkey: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub note: Option<String>,
+    /// Non-owner only: the derivative + merge request the publish would sign.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub derivative: Option<RelinkDerivative>,
 }
+
+/// The 818's content line for a relink: how many terms, plus the glossary.
+pub(crate) fn merge_request_content(terms: usize, promoted: usize) -> String {
+    let mut c = format!("Relink {terms} term{} to their definitions", if terms == 1 { "" } else { "s" });
+    if promoted > 0 {
+        c.push_str(&format!("; add a glossary ({promoted})"));
+    }
+    c
+}
+
+pub(crate) const SOURCE_PLACEHOLDER: &str = "<derivative index id — filled after signing>";
 
 fn definition_term(ev: &Value) -> String {
     event_tags(ev)
@@ -1458,6 +1503,7 @@ pub(crate) async fn relink_templates(
     let now = super::unix_now_i64();
 
     let mut sections = Vec::new();
+    let mut originals: Vec<Value> = Vec::new();
     let mut unchanged = Vec::new();
     let mut skipped = Vec::new();
     for child in index_children(&index) {
@@ -1478,7 +1524,10 @@ pub(crate) async fn relink_templates(
             continue;
         }
         match crate::publication::relink::relink_section(&ev, &defs, now) {
-            Some(r) => sections.push(r),
+            Some(r) => {
+                sections.push(r);
+                originals.push(ev);
+            }
             None => unchanged.push(child.clone()),
         }
     }
@@ -1505,6 +1554,74 @@ pub(crate) async fn relink_templates(
             }
         }
     }
+    // A non-owner's publish is a derivative under their key plus a kind-818
+    // to the owner: build it here so the preview shows exactly that.
+    let derivative = if !owner && (!sections.is_empty() || glossary.is_some()) {
+        let relay_hint = super::discussion_relay_hint(engine);
+        let mut dsections = Vec::with_capacity(sections.len());
+        let mut replacements = Vec::with_capacity(sections.len());
+        for (r, orig) in sections.iter().zip(originals.iter()) {
+            let mut t = crate::publication::merge_request::fork_section(orig, signer_pubkey, &relay_hint, now)
+                .map_err(EngineError::BadRequest)?;
+            t.content = r.template.content.clone();
+            for added in &r.tags_added {
+                if !t.tags.iter().any(|x| x.len() >= 2 && added.len() >= 2 && x[0] == added[0] && x[1] == added[1]) {
+                    t.tags.push(added.clone());
+                }
+            }
+            let d = t
+                .tags
+                .iter()
+                .find(|x| x.first().map(String::as_str) == Some("d"))
+                .and_then(|x| x.get(1).cloned())
+                .unwrap_or_default();
+            let coordinate = format!("30041:{signer_pubkey}:{d}");
+            replacements.push((r.coordinate.clone(), coordinate.clone()));
+            dsections.push(RelinkDerivativeSection { original: r.coordinate.clone(), coordinate, template: t });
+        }
+        let (ix_t, ix_d) = crate::publication::merge_request::derivative_index(
+            &index,
+            &replacements,
+            if promoted.is_empty() { None } else { glossary_coordinate.as_deref() },
+            signer_pubkey,
+            &relay_hint,
+            now,
+        )
+        .map_err(EngineError::BadRequest)?;
+        let index_coordinate = format!("30040:{signer_pubkey}:{ix_d}");
+        let base = index.get("id").and_then(Value::as_str).unwrap_or("");
+        let terms: std::collections::BTreeSet<&str> =
+            sections.iter().flat_map(|s| s.hunks.iter().map(|h| h.term.as_str())).collect();
+        let target_hint = engine.relay_hints_for_target(&root).into_iter().next().unwrap_or_default();
+        let hints = crate::publication::merge_request::MergeHints { target: target_hint, source: String::new() };
+        let mut mr = crate::publication::merge_request::template(
+            &root,
+            Some(base),
+            None,
+            &rpk,
+            &merge_request_content(terms.len(), promoted.len()),
+            &hints,
+            now,
+        )
+        .map_err(EngineError::BadRequest)?;
+        // preview only: the source row, to be filled with the signed index′ id
+        let p_at = mr.tags.iter().position(|t| t.first().map(String::as_str) == Some("p")).unwrap_or(mr.tags.len());
+        mr.tags.insert(p_at, vec!["e".into(), SOURCE_PLACEHOLDER.into(), String::new(), "source".into()]);
+        mr.pubkey = Some(signer_pubkey.to_string());
+        let destinations = crate::api::merge_requests::destinations(
+            engine,
+            &crate::api::merge_requests::DestinationsRequest {
+                target: root.clone(),
+                owner: Some(rpk.clone()),
+                policy: Some(if req.mode_confirm { "local_first".into() } else { "local_only".into() }),
+                mode_confirm: req.mode_confirm,
+            },
+        )
+        .await?;
+        Some(RelinkDerivative { index: ix_t, index_coordinate, sections: dsections, merge_request: mr, destinations })
+    } else {
+        None
+    };
     Ok(RelinkPreview {
         root: root.clone(),
         owner,
@@ -1521,6 +1638,7 @@ pub(crate) async fn relink_templates(
         sign_as: SignAs::User,
         signer_pubkey: None,
         note,
+        derivative,
     })
 }
 
@@ -1553,6 +1671,16 @@ pub async fn relink_preview_handler(
         crate::signing::ensure_client_tag(&mut i.tags);
         i.pubkey = signer_pubkey.clone();
     }
+    if let Some(d) = preview.derivative.as_mut() {
+        crate::signing::ensure_client_tag(&mut d.index.tags);
+        d.index.pubkey = signer_pubkey.clone();
+        for s in d.sections.iter_mut() {
+            crate::signing::ensure_client_tag(&mut s.template.tags);
+            s.template.pubkey = signer_pubkey.clone();
+        }
+        crate::signing::ensure_client_tag(&mut d.merge_request.tags);
+        d.merge_request.pubkey = signer_pubkey.clone();
+    }
     preview.sign_as = sign_as;
     preview.signer_pubkey = signer_pubkey;
     Ok(Json(preview))
@@ -1562,6 +1690,30 @@ pub async fn relink_preview_handler(
 pub struct RelinkedSectionEvent {
     pub coordinate: String,
     pub event: Value,
+}
+
+#[derive(Debug, Serialize)]
+pub struct RelinkDerivativeSectionEvent {
+    pub original: String,
+    pub coordinate: String,
+    pub event: Value,
+}
+
+#[derive(Debug, Serialize)]
+pub struct RelinkDerivativeResult {
+    pub index: Value,
+    pub index_coordinate: String,
+    pub sections: Vec<RelinkDerivativeSectionEvent>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct MergeRequestResult {
+    pub event: Value,
+    pub id: String,
+    /// Relays the 818 was sent to (empty when not broadcast).
+    pub destinations_used: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub broadcast_results: Option<Vec<super::BroadcastResult>>,
 }
 
 #[derive(Debug, Serialize)]
@@ -1579,13 +1731,21 @@ pub struct RelinkPublishResponse {
     pub signed_as: SignAs,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub note: Option<String>,
+    /// Non-owner: the signed derivative (index′ + sections′), ingested.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub derivative: Option<RelinkDerivativeResult>,
+    /// Non-owner: the signed kind-818, ingested (and sent when broadcast).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub merge_request: Option<MergeRequestResult>,
     #[serde(flatten)]
     pub publish: PublishResponse,
 }
 
 /// POST /api/v1/publication/relink — sign the changed sections (+ glossary
-/// and index when asked) as the named source; owner only; local until
-/// broadcast.
+/// and index when asked) as the named source; local until broadcast. An
+/// owner gets new versions under the same `d`; anyone else gets a
+/// derivative under their key plus a kind-818 to the owner, the 818 routed
+/// to the destination set (`docs/zettel/decision-asks-routing.org`).
 pub async fn relink_publish_handler(
     State(engine): State<AppState>,
     Extension(signing): Extension<crate::signing::SigningController>,
@@ -1594,14 +1754,11 @@ pub async fn relink_publish_handler(
     let sign_as = req.sign_as.unwrap_or(SignAs::User);
     let (pubkey, signer) = super::resolve_publish_signer(&engine, &signing, sign_as).await?;
     let preview = relink_templates(&engine, &req, &pubkey).await?;
-    if !preview.owner {
-        return Err(EngineError::BadRequest(format!(
-            "{} is not yours: relinking it is a derivative plus a merge request to its owner, not a new version",
-            preview.root
-        )));
-    }
     if preview.sections.is_empty() && preview.glossary.is_none() {
         return Err(EngineError::BadRequest("nothing to relink: no term occurs outside code, headings or existing links".into()));
+    }
+    if !preview.owner {
+        return relink_publish_derivative(&engine, &req, preview, pubkey, signer, sign_as).await.map(Json);
     }
     let mut sections = Vec::with_capacity(preview.sections.len());
     let mut section_events = Vec::with_capacity(preview.sections.len() + 1);
@@ -1641,8 +1798,114 @@ pub async fn relink_publish_handler(
         promoted: preview.promoted,
         signed_as: sign_as,
         note: preview.note,
+        derivative: None,
+        merge_request: None,
         publish,
     }))
+}
+
+/// The non-owner path: sign the derivative sections, the glossary (the
+/// signer's own bundle for the original root, when asked), the derivative
+/// index, then the kind-818 with `e … source` = the signed index′; ingest
+/// all. Broadcast sends the derivative to the signer's publish set and the
+/// 818 to the destination set (or the caller's edited list).
+pub(crate) async fn relink_publish_derivative(
+    engine: &AppState,
+    req: &RelinkRequest,
+    preview: RelinkPreview,
+    pubkey: String,
+    signer: Box<dyn crate::signing::Signer>,
+    sign_as: SignAs,
+) -> Result<RelinkPublishResponse, EngineError> {
+    let d = preview
+        .derivative
+        .ok_or_else(|| EngineError::BadRequest("nothing to propose: no term occurs outside code, headings or existing links".into()))?;
+    // Routing first, so a non-deliverable broadcast fails before anything is signed.
+    let destinations_used: Vec<String> = if req.broadcast {
+        match req.destinations.as_ref().filter(|v| !v.is_empty()) {
+            Some(list) => list.iter().map(|u| crate::relay_url::normalize_relay_url(u)).filter(|u| !u.is_empty()).collect(),
+            None if d.destinations.deliverable => d.destinations.destinations.iter().map(|x| x.url.clone()).collect(),
+            None => {
+                return Err(EngineError::BadRequest(
+                    d.destinations
+                        .note
+                        .clone()
+                        .unwrap_or_else(|| "no relay is known to reach the owner: pass `destinations`".into()),
+                ))
+            }
+        }
+    } else {
+        Vec::new()
+    };
+    let mut sections = Vec::with_capacity(d.sections.len());
+    let mut events = Vec::with_capacity(d.sections.len() + 1);
+    for s in d.sections {
+        let mut t = s.template;
+        t.pubkey = Some(pubkey.clone());
+        let ev = signer.sign(t).await.map_err(super::map_publish_sign_error)?;
+        sections.push(RelinkDerivativeSectionEvent {
+            original: s.original,
+            coordinate: event_coordinate(&ev).unwrap_or(s.coordinate),
+            event: ev.clone(),
+        });
+        events.push(ev);
+    }
+    let glossary = match preview.glossary {
+        Some(mut g) => {
+            g.pubkey = Some(pubkey.clone());
+            let ev = signer.sign(g).await.map_err(super::map_publish_sign_error)?;
+            events.push(ev.clone());
+            Some(ev)
+        }
+        None => None,
+    };
+    let mut ix = d.index;
+    ix.pubkey = Some(pubkey.clone());
+    let index = signer.sign(ix).await.map_err(super::map_publish_sign_error)?;
+    let index_id = index.get("id").and_then(Value::as_str).unwrap_or("").to_string();
+    let index_coordinate = event_coordinate(&index).unwrap_or(d.index_coordinate);
+    let publish = super::finalize_publish(engine, Some(index.clone()), events, req.broadcast, req.relays.clone(), true)
+        .await?
+        .0;
+    // The 818: source = the signed derivative index.
+    let mut mr = d.merge_request;
+    for t in mr.tags.iter_mut() {
+        if t.first().map(String::as_str) == Some("e") && t.get(1).map(String::as_str) == Some(SOURCE_PLACEHOLDER) {
+            t[1] = index_id.clone();
+        }
+    }
+    mr.pubkey = Some(pubkey.clone());
+    let mr_event = signer.sign(mr).await.map_err(super::map_publish_sign_error)?;
+    let mr_id = mr_event.get("id").and_then(Value::as_str).unwrap_or("").to_string();
+    let mr_publish = super::finalize_publish(
+        engine,
+        None,
+        vec![mr_event.clone()],
+        req.broadcast && !destinations_used.is_empty(),
+        Some(destinations_used.clone()),
+        true,
+    )
+    .await?
+    .0;
+    Ok(RelinkPublishResponse {
+        root: preview.root,
+        owner: false,
+        sections: Vec::new(),
+        index: None,
+        glossary,
+        hunk_count: preview.hunk_count,
+        promoted: preview.promoted,
+        signed_as: sign_as,
+        note: preview.note,
+        derivative: Some(RelinkDerivativeResult { index, index_coordinate, sections }),
+        merge_request: Some(MergeRequestResult {
+            event: mr_event,
+            id: mr_id,
+            destinations_used,
+            broadcast_results: mr_publish.broadcast_results,
+        }),
+        publish,
+    })
 }
 
 #[cfg(test)]

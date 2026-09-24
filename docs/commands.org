@@ -2515,6 +2515,53 @@ curl -s "$B/events/$(echo "$RL" | jq -r '.sections[0].event.id')" | jq -c '{cont
 # idempotent: a second preview reports no hunks (refs are protected spans)
 curl -s -X POST $B/publication/relink/preview -H "$J" -d "{\"root\":\"$ROOT\"}" | jq -c '{hunk_count, unchanged:(.unchanged|length)}'
 # a stranger: the diff, owner:false, and publish → 400
+* Merge requests (plan Phase 5c step 4, pure + routing; branch =feat/merge-requests=)
+
+Kind-818 merge requests on publications (=src/publication/merge_request.rs=:
+template · parse · status from the owner's newest kind-7 · =fork_section= ·
+=destination_set=) and the two read endpoints (=src/api/merge_requests.rs=).
+Publishing a derivative + 818 and the owner's merge / decline come with the
+relink work; nothing here signs.
+
+#+begin_src bash
+cargo test --lib -- --test-threads=4 merge_request      # 6: round-trip, 30818 fidelity, status newest-wins, fork_section, destination set, the list + destinations handlers
+B=localhost:3131/api/v1; J='Content-Type: application/json'
+# where an ask to the owner of $ROOT goes — inbox (their kind-10002 read relays) ∪ found-on (nostrdb provenance) ∪ hints ∪ my write relays, each with reasons
+curl -s -X POST $B/merge-requests/destinations -H "$J" -d "{\"target\":\"$ROOT\",\"policy\":\"local_only\"}" | jq -c '{deliverable, inbox_known, provenance_known, note, d:[.destinations[]|[.url, (.reasons|join("+"))]]}'
+# NOTE: an event ingested through POST /ingest carries no provenance — only a relay fetch or a broadcast (record_event_relay) does — so a
+# seeded scratch publication reports provenance_known: false; policy local_first would pull the owner's 10002 through the indexer composition (Confirm-gated).
+# the local 818s that concern me (owner: p = me or target mine · requester: authored by me), status from the owner's newest + / -
+curl -s "$B/merge-requests?role=all&status=all" | jq -c '.requests[]|{id:(.id|.[0:8]), role, status, target, source:(.source|.[0:8]?)}'
+#+end_src
+
+** Foreign relink → derivative + kind 818 → the owner's verdict (step 4b)
+
+A stranger's relink is never a new version of the owner's events: it is a
+*derivative* (index′ + the changed sections′ under the stranger's key,
+=E=/=p= back-pointers, the relinked content + its =a= tags) plus one
+kind-818 addressed to the owner whose =e … source= is the signed index′.
+The 818 goes to the destination set (owner's inbox ∪ where the target was
+found ∪ hints ∪ mine), the derivative to your publish set; both local until
+broadcast. The owner answers with a kind-7 (=+= merged, =-= declined);
+anyone else gets 403.
+
+#+begin_src bash
+cargo test --lib -- --test-threads=4 test_relink_foreign_publication derivative_index     # handler-level + pure
+B=localhost:3131/api/v1; J='Content-Type: application/json'
+# two keys: the OWNER made the publication (seed as usual), the USER is a stranger who logs in afterwards
+USEC2=$(nak key generate); curl -s -X POST $B/identity/login -H "$J" -d "{\"ncryptsec\":\"$(nak key encrypt $USEC2 pw)\"}"; curl -s -X POST $B/identity/unlock -H "$J" -d '{"password":"pw"}'
+# preview: owner:false, the diff, and `derivative` = index′ / sections′ / the 818 (source row is a placeholder) / destinations with reasons
+curl -s -X POST $B/publication/relink/preview -H "$J" -d "{\"root\":\"$ROOT\"}" | jq -c '{owner, note, sections:[.derivative.sections[]|{original, coordinate, E:[.template.tags[]|select(.[0]=="E")|.[1]]}], index:[.derivative.index.tags[]|select(.[0]=="a")|.[1]|split(":")[2]], mr:.derivative.merge_request.tags, deliverable:.derivative.destinations.deliverable, dest:[.derivative.destinations.destinations[]|{url, reasons}]}'
+# publish (local): three kinds land — 30041′, 30040′, 818 — the original is untouched
+RL=$(curl -s -X POST $B/publication/relink -H "$J" -d "{\"root\":\"$ROOT\",\"broadcast\":false}"); echo "$RL" | jq -c '{owner, index:.derivative.index_coordinate, sections:[.derivative.sections[].coordinate], mr:.merge_request.id, source:[.merge_request.event.tags[]|select(.[0]=="e" and .[3]=="source")|.[1]]}'
+# broadcast: `destinations` (the Confirm modal's edited list) routes the 818; without it, only a deliverable set is used, else 400 with the routing note
+curl -s -X POST $B/publication/relink -H "$J" -d "{\"root\":\"$ROOT\",\"broadcast\":true,\"destinations\":[\"wss://theforest.nostr1.com\"]}" | jq -c '{mr:.merge_request.id, used:.merge_request.destinations_used, results:.merge_request.broadcast_results}'
+# both sides list it open
+MR=$(echo "$RL" | jq -r .merge_request.id)
+curl -s "$B/merge-requests?role=requester" | jq -c '.requests[]|{id:.id[0:8], status, role, target}'
+# the owner's verdict (log the owner back in first): + merged · - declined; a stranger → 403
+curl -s -X POST $B/merge-requests/react -H "$J" -d "{\"id\":\"$MR\",\"verdict\":\"+\",\"reason\":\"thanks\"}" | jq -c '{status, id:.id[0:8], relays_used}'
+curl -s "$B/merge-requests?role=owner&status=all" | jq -c '.requests[]|{id:.id[0:8], status, verdict:(.verdict.content)}'
 #+end_src
 
 * Notifications (plan Phase 5c step 5, branch =feat/notifications=)

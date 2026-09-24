@@ -2953,6 +2953,43 @@ export interface RelinkRequest {
 	sign_as?: 'user' | 'assistant';
 	broadcast?: boolean;
 	relays?: string[];
+	/** Foreign root only: the checked destination relays the kind 818 (and the
+	 *  derivative) go to — the owner's inbox ∪ where the target was found ∪
+	 *  hints ∪ mine, as the preview listed them. */
+	destinations?: string[];
+}
+
+/** Why a relay is in the destination set (decision-asks-routing). */
+export type DestinationReason = 'inbox' | 'found_on' | 'hint' | 'mine';
+
+export interface Destination {
+	url: string;
+	reasons: DestinationReason[];
+}
+
+/** `POST /api/v1/merge-requests/destinations` — the Confirm-modal payload
+ *  for anything addressed to another pubkey. */
+export interface DestinationSet {
+	target?: string;
+	owner?: string;
+	destinations: Destination[];
+	/** At least one inbox / found-on relay is known. */
+	deliverable: boolean;
+	inbox_known: boolean;
+	provenance_known: boolean;
+	note?: string;
+}
+
+/** The derivative a non-owner's relink signs: index′ + one copy per changed
+ *  section (minted `d`, `E` → the copied version, `p` → its author). */
+export interface RelinkDerivativePreview {
+	index: UnsignedTemplate;
+	index_coordinate: string;
+	sections: { original: string; coordinate: string; template: UnsignedTemplate }[];
+	/** The unsigned kind 818 (`a` target · `e` base · `e … source` placeholder
+	 *  filled with index′'s id after signing · `p` owner). */
+	merge_request: UnsignedTemplate;
+	destinations: DestinationSet;
 }
 
 export interface RelinkHunk {
@@ -2997,6 +3034,8 @@ export interface RelinkPreview {
 	promoted?: string[];
 	sign_as?: 'user' | 'assistant';
 	signer_pubkey?: string | null;
+	/** Present when `owner` is false: the fork + merge-request path. */
+	derivative?: RelinkDerivativePreview | null;
 }
 
 export interface RelinkPublishResponse extends PublishResponse {
@@ -3006,6 +3045,79 @@ export interface RelinkPublishResponse extends PublishResponse {
 	hunk_count: number;
 	signed_as: 'user' | 'assistant';
 	promoted?: string[];
+	owner?: boolean;
+	/** Present when `owner` is false: what was signed under the requester's key. */
+	derivative?: {
+		index: NostrEvent;
+		index_coordinate: string;
+		sections: { original: string; coordinate: string; event: NostrEvent }[];
+	} | null;
+	merge_request?: { event: NostrEvent; id: string; destinations_used: string[] } | null;
+}
+
+export function getMergeRequestDestinations(body: {
+	target: string;
+	owner?: string;
+	policy?: 'local_only' | 'local_first' | 'fetch_always';
+	mode_confirm?: boolean;
+}) {
+	return fetchJson<DestinationSet>('/api/v1/merge-requests/destinations', {
+		method: 'POST',
+		body: JSON.stringify(body)
+	});
+}
+
+// ---------------------------------------------------------------------------
+// Merge requests (kind 818, decision-merge-requests-818)
+// ---------------------------------------------------------------------------
+
+export type MergeStatus = 'open' | 'merged' | 'declined';
+
+export interface MergeRequest {
+	id: string;
+	pubkey: string;
+	created_at: number;
+	content: string;
+	/** The target: a 30040 or 30041 coordinate (30818 for NIP-54 fidelity). */
+	target: string;
+	target_kind?: number;
+	target_relay_hint?: string | null;
+	/** The version the change was made against. */
+	base?: string | null;
+	/** The derivative to merge (the `e … source` row). */
+	source?: string | null;
+	source_relay_hint?: string | null;
+	/** The `p`: who is asked. */
+	owner: string;
+	status: MergeStatus;
+	role: 'owner' | 'requester' | 'both';
+	/** The newest kind 7 by the owner, when any. */
+	verdict?: NostrEvent | null;
+	event: NostrEvent;
+}
+
+export interface MergeRequestList {
+	pubkey: string;
+	open: number;
+	requests: MergeRequest[];
+}
+
+export function listMergeRequests(q: { role?: 'owner' | 'requester' | 'all'; status?: 'open' | 'all'; pubkey?: string } = {}) {
+	const p = new URLSearchParams();
+	if (q.role) p.set('role', q.role);
+	if (q.status) p.set('status', q.status);
+	if (q.pubkey) p.set('pubkey', q.pubkey);
+	const qs = p.toString();
+	return fetchJson<MergeRequestList>(`/api/v1/merge-requests${qs ? '?' + qs : ''}`);
+}
+
+/** The owner's verdict on an 818: `+` = merged (they republished under their
+ *  own `d` first), `-` = declined; `reason` rides as the reaction's content. */
+export function reactToMergeRequest(body: { id: string; verdict: '+' | '-'; reason?: string; broadcast?: boolean }) {
+	return fetchJson<{ event: NostrEvent } & Partial<PublishResponse>>('/api/v1/merge-requests/react', {
+		method: 'POST',
+		body: JSON.stringify(body)
+	});
 }
 
 export function previewRelink(req: RelinkRequest) {

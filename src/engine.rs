@@ -2696,6 +2696,59 @@ impl Engine {
             .find(|e| e.get("id").and_then(|v| v.as_str()) == Some(event_id)))
     }
 
+    /// The READ (inbox) relays of `pubkey`'s newest kind 10002 — where
+    /// others write to reach them (NIP-65). Local store first; with a
+    /// non-local policy, one pull through the indexer composition the way
+    /// `pull-user-data` does for the user's own list (Confirm-gated when
+    /// `mode_confirm`; a background caller resolves local-only). Empty when
+    /// no 10002 is known.
+    pub async fn inbox_relays_for(&self, pubkey: &str, policy: FetchPolicy, mode_confirm: bool) -> Result<Vec<String>> {
+        let filter = json!({ "kinds": [10002], "authors": [pubkey], "limit": 1 });
+        let local = self.query_local_only(&[filter.clone()])?;
+        let mut newest: Option<Value> = local.events.into_iter().max_by_key(|e| e.get("created_at").and_then(Value::as_i64).unwrap_or(0));
+        if newest.is_none() && policy != FetchPolicy::LocalOnly {
+            let composition = self.compose_discovery_phases("indexer");
+            let fetched = self
+                .fetch_with_composition(
+                    &composition,
+                    &[filter],
+                    format!("Find the inbox relays of @{}", &pubkey[..pubkey.len().min(8)]),
+                    crate::network::FetchPattern::Profile,
+                    mode_confirm,
+                )
+                .await;
+            newest = fetched.into_iter().filter(|e| e.get("kind").and_then(Value::as_u64) == Some(10002)).max_by_key(|e| e.get("created_at").and_then(Value::as_i64).unwrap_or(0));
+        }
+        Ok(newest
+            .map(|ev| {
+                let tags: Vec<Vec<String>> = ev
+                    .get("tags")
+                    .and_then(Value::as_array)
+                    .map(|ts| ts.iter().filter_map(|t| t.as_array().map(|a| a.iter().filter_map(|v| v.as_str().map(String::from)).collect())).collect())
+                    .unwrap_or_default();
+                let list = crate::user_data::RelayList::from_event_tags(&tags, ev.get("created_at").and_then(Value::as_u64).unwrap_or(0));
+                list.read_relays().into_iter().map(String::from).collect()
+            })
+            .unwrap_or_default())
+    }
+
+    /// The relays nostrdb recorded for an event — the ones it was fetched
+    /// from or broadcast to (`record_event_relay`). `target` is a
+    /// `kind:pubkey:d` coordinate (its newest local version) or a 64-hex
+    /// id. Empty for an event written locally and never on the wire.
+    pub async fn provenance_for(&self, target: &str) -> Vec<String> {
+        let is_id = target.len() == 64 && target.bytes().all(|b| b.is_ascii_hexdigit());
+        let ev = if is_id {
+            self.get_by_id(target, FetchPolicy::LocalOnly).await.ok().flatten()
+        } else if let Some((k, pk, d)) = crate::publication::insertion::coord_parts(target) {
+            self.get_addressable(k as u64, pk, d, FetchPolicy::LocalOnly).await.ok().flatten()
+        } else {
+            None
+        };
+        ev.and_then(|e| e.get("relays").and_then(Value::as_array).map(|rs| rs.iter().filter_map(|r| r.as_str()).map(|r| crate::relay_url::normalize_relay_url(r)).filter(|r| !r.is_empty()).collect()))
+            .unwrap_or_default()
+    }
+
     /// Relay hints for a target — every `ws(s)://` URL that locally stored
     /// events attach to a reference to it: NIP-22 `E`/`e` and NIP-18 `q`
     /// for an event id, `A`/`a` for a coordinate (`[name, target, relay,
