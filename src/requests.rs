@@ -117,8 +117,23 @@ fn default_output() -> String {
     "notes".into()
 }
 
-/// The three things a request can ask for.
-pub const OUTPUTS: &[&str] = &["notes", "kasten", "vocabulary"];
+/// The four things a request can ask for: `notes` (write notes on this
+/// place), `kasten` (notes plus an index), `vocabulary` (one definition
+/// per term), `ask` (a question in the user's own words).
+pub const OUTPUTS: &[&str] = &["notes", "kasten", "vocabulary", "ask"];
+
+/// The generated task for an output when the user typed none. "These
+/// events" are the request's anchor tags and whatever its scope adds.
+/// `ask` has no generated form — the question IS the task — so it yields
+/// an empty string and the caller refuses an empty one.
+pub fn generated_task(output: &str, terms: &[String]) -> String {
+    match output {
+        "vocabulary" => vocabulary_task(terms),
+        "notes" => "write notes on these events, in their context".to_string(),
+        "kasten" => "write a kasten on these events: one idea per note, native links between them, one index over them".to_string(),
+        _ => String::new(),
+    }
+}
 
 /// The generated task of a vocabulary request. "These events" are the
 /// request's anchor tags and whatever its scope adds — the ask is the
@@ -610,6 +625,15 @@ mod tests {
         r.task = vocabulary_task(&r.terms);
         assert_eq!(r.effective_title(), "Define: theory, already accepted");
         assert!(!r.effective_title().starts_with("define these words"));
+    }
+
+    #[test]
+    fn every_output_but_ask_has_a_generated_task() {
+        assert!(generated_task("notes", &[]).starts_with("write notes on these events"));
+        assert!(generated_task("kasten", &[]).contains("one index"));
+        assert_eq!(generated_task("vocabulary", &["x".into()]), "define these words in the context of these events: x");
+        assert_eq!(generated_task("ask", &[]), "");
+        assert!(OUTPUTS.contains(&"ask"));
     }
 
     #[test]

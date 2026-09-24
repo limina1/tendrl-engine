@@ -17,14 +17,6 @@
 	const canSign = $derived(identityCanSign(app.identityStatus));
 	// svelte-ignore state_referenced_locally
 	const open = app.insertionComposer;
-	/** The same anchor, in the request window, with the chosen mode — the
-	 *  one annotate window read as four modes across two forms. */
-	function askInstead(output: 'notes' | 'kasten' | 'vocabulary') {
-		if (!open) return;
-		const { placement: _p, ...anchor } = open;
-		app.insertionComposer = null;
-		app.annotationRequest = { ...anchor, output };
-	}
 
 	type Placement = 'attach' | 'before' | 'after';
 	type Format = 'markdown' | 'org' | 'asciidoc' | 'plain';
@@ -193,14 +185,6 @@
 			<button class="ins-close" onclick={() => close()} aria-label="Close">×</button>
 		</header>
 
-		<div class="ins-label">mode <span class="ins-label__sub">— write it yourself, or ask your agent for notes, a kasten, or vocabulary</span></div>
-		<div class="ins-seg" role="radiogroup" aria-label="Mode">
-			<button class="ins-seg__opt on" role="radio" aria-checked="true" title="Write the note yourself (this form)">write</button>
-			<button class="ins-seg__opt" role="radio" aria-checked="false" onclick={() => askInstead('notes')} title="Ask your agent for loose notes attached here">notes</button>
-			<button class="ins-seg__opt" role="radio" aria-checked="false" onclick={() => askInstead('kasten')} title="Ask for several notes plus an index — promotable as a sub-chapter">kasten</button>
-			<button class="ins-seg__opt" role="radio" aria-checked="false" onclick={() => askInstead('vocabulary')} title="Ask for one definition per word — highlight the words in the text">vocabulary</button>
-		</div>
-
 		<div class="ins-label">anchor</div>
 		<div class="ins-anchor">
 			{#if !topLevel && parent}
@@ -354,36 +338,6 @@
 		display: flex;
 		flex-direction: column;
 		gap: 5px;
-	}
-	.ins-seg {
-		display: inline-flex;
-		border: 1px solid var(--panel-border);
-		border-radius: var(--r-sm);
-		overflow: hidden;
-		align-self: flex-start;
-	}
-	.ins-seg__opt {
-		font-family: var(--font-mono);
-		font-size: calc(var(--t-xs) - 1px);
-		color: var(--base6);
-		background: transparent;
-		border: none;
-		border-right: 1px solid var(--panel-border);
-		padding: 4px 10px;
-		cursor: pointer;
-	}
-	.ins-seg__opt:last-child {
-		border-right: none;
-	}
-	.ins-seg__opt.on {
-		background: var(--id-remote);
-		color: var(--bg);
-	}
-	.ins-label__sub {
-		text-transform: none;
-		letter-spacing: 0;
-		font-weight: 400;
-		color: var(--base5);
 	}
 	.ins-header {
 		display: flex;

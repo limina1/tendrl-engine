@@ -3247,7 +3247,7 @@ export interface AnnotationRequest {
 	task: string;
 	scope: string[];
 	context?: string;
-	output: 'notes' | 'kasten' | 'vocabulary';
+	output: 'notes' | 'kasten' | 'vocabulary' | 'ask';
 	/** `output: vocabulary` — the words to define (the `term` tags); empty =
 	 *  "find the words these events use but never define". */
 	terms: string[];
@@ -3297,7 +3297,7 @@ export function createRequest(req: {
 	task: string;
 	scope?: string[];
 	context?: string;
-	output?: 'notes' | 'kasten' | 'vocabulary';
+	output?: 'notes' | 'kasten' | 'vocabulary' | 'ask';
 	/** `output: vocabulary` — the highlighted words; the engine generates the
 	 *  content line from them ("define these words in the context of these
 	 *  events: …"). */
@@ -3331,7 +3331,7 @@ export function previewRequest(req: {
 	task?: string;
 	scope?: string[];
 	context?: string;
-	output?: 'notes' | 'kasten' | 'vocabulary';
+	output?: 'notes' | 'kasten' | 'vocabulary' | 'ask';
 	terms?: string[];
 	style?: string;
 }) {

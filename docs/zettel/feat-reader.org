@@ -76,9 +76,11 @@ never happen in the browser.
   margin cards under their anchor section in both views (front matter /
   appendix on the index), fold to a row under 768 px, take the =sticky=
   skin from Appearance → Notes, and carry =promote=. The event menu's
-  *Annotate* (=n=) opens the request window anchored to the section or the
-  index (notes · kasten · vocabulary — the same window as annotate mode;
-  2026-09-24); *Write a note* (=q=) opens the composer to write one yourself.
+  *Annotate* (=n=) opens the annotate window anchored to the section or the
+  index — one window, four modes your agent answers with: *notes · kasten ·
+  vocabulary · ask* (a question in your own words); the same window as
+  annotate mode (2026-09-24). *Write a note* (=q=) opens the composer to
+  write one yourself.
   The Tools sheet (=M=) carries the same door: *annotate §n* opens that
   window on the current section — M → annotate → the window, every mode.
 

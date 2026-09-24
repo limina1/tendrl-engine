@@ -14,7 +14,7 @@ use crate::engine::FetchPolicy;
 use crate::error::EngineError;
 use crate::publication::insertion::{coord_parts, event_coordinate};
 use crate::requests::{
-    request_pointer, vocabulary_task, AnnotationRequest, RequestAnswer, RequestStatus, RequestStore, OUTPUTS,
+    request_pointer, AnnotationRequest, RequestAnswer, RequestStatus, RequestStore, OUTPUTS,
     REQUEST_TAG,
 };
 use axum::{
@@ -83,10 +83,14 @@ async fn build_request(engine: &AppState, req: &CreateRequest, now: i64) -> Resu
     let output = match req.output.as_deref().map(str::trim) {
         None | Some("") => "notes",
         Some(o) if OUTPUTS.contains(&o) => o,
-        Some(_) => return Err(EngineError::BadRequest("output must be notes, kasten or vocabulary".into())),
+        Some(_) => return Err(EngineError::BadRequest("output must be notes, kasten, vocabulary or ask".into())),
     };
-    let task = if output == "vocabulary" && req.task.trim().is_empty() {
-        vocabulary_task(&req.terms)
+    let task = if req.task.trim().is_empty() {
+        let generated = crate::requests::generated_task(output, &req.terms);
+        if generated.is_empty() {
+            return Err(EngineError::BadRequest("an ask needs your question — type what you want to know about this place".into()));
+        }
+        generated
     } else {
         req.task.clone()
     };

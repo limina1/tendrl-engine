@@ -37,7 +37,7 @@
 	let title = $state('');
 	let context = $state(open?.context ?? '');
 	let scope = $state<string[]>(['section']);
-	let output = $state<'notes' | 'kasten' | 'vocabulary'>(app.annotationRequest?.output ?? 'notes');
+	let output = $state<'notes' | 'kasten' | 'vocabulary' | 'ask'>(app.annotationRequest?.output ?? 'notes');
 	// A vocabulary preset (from the composer's segment) needs the section text at once.
 	let presetApplied = false;
 	$effect(() => {
@@ -94,10 +94,18 @@
 		return [...pis].sort((a, b) => a - b).map((pi) => paras[pi]).join('\n\n');
 	});
 	/** What the engine will put in `content` — mirrored here, never typed. */
+	// Mirrors the engine's `requests::generated_task` — the display only;
+	// the engine generates the real one when `task` is sent empty.
 	const generatedTask = $derived(
-		terms.length
-			? `define these words in the context of these events: ${terms.join(', ')}`
-			: 'find the words these events use but never define, and define them in their context'
+		output === 'vocabulary'
+			? terms.length
+				? `define these words in the context of these events: ${terms.join(', ')}`
+				: 'find the words these events use but never define, and define them in their context'
+			: output === 'kasten'
+				? 'write a kasten on these events: one idea per note, native links between them, one index over them'
+				: output === 'notes'
+					? 'write notes on these events, in their context'
+					: ''
 	);
 	function isMarked(i: number): boolean {
 		return marks.some((m) => i >= m.from && i <= m.to);
@@ -171,7 +179,7 @@
 		if (open?.context) premark(open.context);
 		schedulePreview();
 	}
-	function setOutput(o: 'notes' | 'kasten' | 'vocabulary') {
+	function setOutput(o: 'notes' | 'kasten' | 'vocabulary' | 'ask') {
 		output = o;
 		if (o === 'vocabulary') {
 			if (sectionContent === null) void ensureContent();
@@ -195,7 +203,7 @@
 			parent_event_id: open?.parentEventId,
 			parent_title: open?.parentTitle ?? undefined,
 			title: title.trim() || undefined,
-			task: output === 'vocabulary' ? undefined : task.trim() || undefined,
+			task: task.trim() || undefined,
 			scope,
 			context: output === 'vocabulary' ? markedContext || undefined : context.trim() || undefined,
 			output,
@@ -254,7 +262,7 @@
 	}
 	const yielding = $derived(posting && confirmState.intent?.type === 'publish_intent');
 	const canPost = $derived(
-		!posting && !!root && (output === 'vocabulary' || task.trim().length > 0) && (!sign || canSign)
+		!posting && !!root && (output !== 'ask' || task.trim().length > 0) && (!sign || canSign)
 	);
 
 	// Requests already on this place.
@@ -297,13 +305,6 @@
 		return `${Math.floor(s / 86400)}d`;
 	}
 
-	/** The same anchor, in the composer: the user writes the note instead of asking for it. */
-	function writeItYourself() {
-		if (!open) return;
-		const { content: _content, output: _output, ...anchor } = open;
-		app.annotationRequest = null;
-		app.insertionComposer = anchor;
-	}
 	function close() {
 		app.annotationRequest = null;
 	}
@@ -319,7 +320,7 @@
 				parent_title: open?.parentTitle ?? undefined,
 				title: title.trim() || undefined,
 				// vocabulary: the engine generates the content line from `terms`
-				task: output === 'vocabulary' ? generatedTask : task.trim(),
+				task: task.trim() || generatedTask,
 				scope,
 				context: output === 'vocabulary' ? markedContext || undefined : context.trim() || undefined,
 				output,
@@ -422,12 +423,12 @@
 			{/if}
 		</div>
 
-		<div class="rq-label">mode <span class="rq-label__sub">— write it yourself, or ask your agent for notes, a kasten, or vocabulary</span></div>
+		<div class="rq-label">mode <span class="rq-label__sub">— what your agent answers with: notes · a kasten · definitions · an answer to your question</span></div>
 		<div class="rq-seg" role="radiogroup" aria-label="Mode">
-			<button class="rq-seg__opt" role="radio" aria-checked="false" onclick={writeItYourself} disabled={posting} title="Write the note yourself, anchored here — the composer (signs as you)">write</button>
 			<button class="rq-seg__opt" class:on={output === 'notes'} role="radio" aria-checked={output === 'notes'} onclick={() => setOutput('notes')} disabled={posting} title="Loose notes attached to the place">notes</button>
 			<button class="rq-seg__opt" class:on={output === 'kasten'} role="radio" aria-checked={output === 'kasten'} onclick={() => setOutput('kasten')} disabled={posting} title="Several notes plus an index grouping them — promotable as a sub-chapter">kasten</button>
 			<button class="rq-seg__opt" class:on={output === 'vocabulary'} role="radio" aria-checked={output === 'vocabulary'} onclick={() => setOutput('vocabulary')} disabled={posting} title="One definition event per word, anchored here — highlight the words in the text">vocabulary</button>
+			<button class="rq-seg__opt" class:on={output === 'ask'} role="radio" aria-checked={output === 'ask'} onclick={() => setOutput('ask')} disabled={posting} title="A question in your own words about this place — answered as notes that point at it">ask</button>
 		</div>
 
 		{#if output === 'vocabulary'}
@@ -476,19 +477,34 @@
 					{generatedTask}
 				{/if}
 			</div>
-		{:else}
-			<label class="rq-label" for="rq-task">the ask</label>
+		{:else if output === 'ask'}
+			<label class="rq-label" for="rq-task">your question</label>
 			<!-- svelte-ignore a11y_autofocus -->
 			<textarea
 				id="rq-task"
 				class="rq-input rq-task"
 				data-entry
 				autofocus
-				placeholder="What should the notes be about? e.g. derive this two ways — closed form and iterative — with the fields that use each, and where the idea came from"
+				placeholder="What do you want to know about this place? e.g. where does this argument first appear, and who answered it?"
 				bind:value={task}
 				oninput={schedulePreview}
 				disabled={posting}
 			></textarea>
+		{:else}
+			<label class="rq-label" for="rq-task">the ask <span class="rq-label__sub">· optional — leave it and the content below is what gets signed</span></label>
+			<textarea
+				id="rq-task"
+				class="rq-input rq-task"
+				data-entry
+				placeholder={output === 'kasten' ? 'e.g. one note per fable, an index by moral' : 'e.g. derive this two ways — closed form and iterative — with the fields that use each'}
+				bind:value={task}
+				oninput={schedulePreview}
+				disabled={posting}
+			></textarea>
+			{#if !task.trim()}
+				<div class="rq-label">content <span class="rq-label__sub">· generated; “these events” = the anchor and scope</span></div>
+				<div class="rq-gen">{generatedTask}</div>
+			{/if}
 		{/if}
 
 		<label class="rq-label" for="rq-title">title <span class="rq-label__sub">· optional, for what gets written</span></label>

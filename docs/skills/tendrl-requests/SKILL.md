@@ -67,6 +67,9 @@ jq -r .claude_mcp_add` prints the registration line).
      the notes hang under it as plain NKBIP-01 events with no anchor. Put
      every outbound link in tags (`:a:` / `:r:` header lines in the notes;
      `links` / `tags` on `propose_insertion` for loose notes).
+     `output: ask` → the task is the user's own question about this place;
+     answer it as notes anchored here (the `notes` shape), pointing at the
+     request, and keep the answer to what was asked.
      `output: vocabulary` → the request's `terms` are the words the user
      highlighted in the section (its task reads "define these words in
      the context of these events: …"); an empty list means find the

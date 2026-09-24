@@ -117,8 +117,8 @@ let _app: ReturnType<typeof _createAppState> | null = null;
  *  insertion composer: root = publication, parent = section (absent = the
  *  index itself). */
 export type AnnotationRequestOpen = {
-	/** Preset mode when another door (the composer's segment) hands over. */
-	output?: 'notes' | 'kasten' | 'vocabulary';
+	/** Preset mode when a door hands over. */
+	output?: 'notes' | 'kasten' | 'vocabulary' | 'ask';
 	root: string;
 	rootTitle?: string | null;
 	parent?: string;
