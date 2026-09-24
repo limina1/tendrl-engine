@@ -10080,6 +10080,116 @@ mod chat_api_tests {
         );
     }
 
+    /// Definitions and the glossary (plan Phase 5c step 2): the assistant
+    /// owns a publication, writes two definitions with `role: definition`,
+    /// the load pass tags them `definition` with their term; promoting one
+    /// writes the glossary bundle + a new index version (same d, `a →
+    /// glossary` appended); the load pass then says `promoted` with the
+    /// glossary coordinate; removing it empties the bundle and drops the `a`.
+    #[tokio::test]
+    async fn test_definitions_and_per_event_glossary_promotion() {
+        use crate::identity::{encode_nsec, IdentitySession};
+        use crate::publication::insertion::{index_children, is_glossary};
+        const USER_SEC: &str = "0000000000000000000000000000000000000000000000000000000000000009";
+        const ASST_SEC: &str = "000000000000000000000000000000000000000000000000000000000000000a";
+
+        let dir = tempfile::tempdir().unwrap();
+        let mut engine = crate::engine::Engine::new(dir.path()).unwrap();
+        let user = Arc::new(Mutex::new(IdentitySession::new()));
+        let user_pk = user.lock().unwrap().login_nsec(&encode_nsec(USER_SEC).unwrap()).unwrap();
+        let asst = Arc::new(Mutex::new(IdentitySession::new()));
+        let asst_pk = asst.lock().unwrap().login_nsec(&encode_nsec(ASST_SEC).unwrap()).unwrap();
+        engine.set_user_session(user.clone());
+        engine.set_assistant_session(asst.clone());
+        engine.set_assistant_signing(crate::signing::SigningController::new(asst));
+        let engine = Arc::new(engine);
+        std::mem::forget(dir);
+        let cx = crate::tools::ToolCx { engine: engine.clone(), chat: Arc::new(Mutex::new(ChatState::new())) };
+
+        let saved = crate::tools::dispatch(&cx, "save_draft", json!({ "title": "On Method", "sections": [
+            { "title": "Against method", "content": "epistemological anarchism …" }
+        ] })).await.unwrap();
+        let out = crate::tools::dispatch(&cx, "sign_draft", json!({ "draft_id": saved["draft_id"] })).await.unwrap();
+        let index = crate::query::query_by_id(engine.ndb(), out["publication_id"].as_str().unwrap()).unwrap().unwrap();
+        let root = crate::publication::insertion::event_coordinate(&index).unwrap();
+        let sec = index_children(&index)[0].clone();
+
+        // Two definitions, role: definition → t: definition, T from the title.
+        let mut coords = Vec::new();
+        for term in ["epistemological anarchism", "incommensurability"] {
+            let d = crate::tools::dispatch(&cx, "propose_insertion", json!({
+                "root": root, "parent": sec, "role": "definition", "title": term,
+                "content": format!("{term}, as used here …")
+            })).await.unwrap();
+            assert_eq!(d["role"], "definition");
+            let ev = crate::query::query_by_id(engine.ndb(), d["id"].as_str().unwrap()).unwrap().unwrap();
+            let tags = crate::publication::insertion::event_tags(&ev);
+            assert!(tags.iter().any(|t| t[0] == "t" && t[1] == "definition"));
+            assert!(tags.iter().any(|t| t[0] == "T"));
+            coords.push(d["coordinate"].as_str().unwrap().to_string());
+        }
+        // A bad role never signs.
+        assert!(crate::tools::dispatch(&cx, "propose_insertion", json!({
+            "root": root, "role": "gloss", "title": "x", "content": "y" })).await.is_err());
+
+        let load = |engine: Arc<crate::engine::Engine>, root: String| async move {
+            insertions::load_insertions(&engine, serde_json::from_value(json!({ "root": root, "policy": "local_only" })).unwrap()).await.unwrap()
+        };
+        let l = load(engine.clone(), root.clone()).await;
+        let defs: Vec<&insertions::LoadedInsertion> = l.insertions.iter().filter(|i| i.role == insertions::InsertionRole::Definition).collect();
+        assert_eq!(defs.len(), 2);
+        assert!(defs.iter().all(|d| !d.promoted && d.glossary.is_none()));
+        assert!(defs.iter().any(|d| d.term.as_deref() == Some("incommensurability")));
+        let c = insertions::insertion_counts(&l.insertions);
+        assert_eq!(c.total, 2, "definitions count as notes");
+
+        // Promote one, as the assistant (the index owner): glossary + index.
+        let req = insertions::GlossaryRequest { root: root.clone(), add: vec![coords[0].clone()], ..Default::default() };
+        let pv = insertions::glossary_templates(&engine, &req, &asst_pk).await.unwrap();
+        assert!(pv.owner);
+        assert!(pv.previous.is_empty());
+        assert_eq!(pv.promoted, vec![coords[0].clone()]);
+        assert_eq!(pv.glossary_coordinate, format!("30040:{asst_pk}:{}-glossary", root.rsplit(':').next().unwrap()));
+        let ix = pv.index.clone().expect("the owner's index changes");
+        assert_eq!(ix.tags.iter().filter(|t| t[0] == "a").count(), 2);
+        assert_eq!(ix.tags.iter().filter(|t| t[0] == "a").last().unwrap()[1], pv.glossary_coordinate, "appendix slot");
+        // A stranger only gets the glossary.
+        let pv_user = insertions::glossary_templates(&engine, &req, &user_pk).await.unwrap();
+        assert!(!pv_user.owner && pv_user.index.is_none() && pv_user.note.is_some());
+        // A non-definition (the section itself) is refused.
+        let bad = insertions::GlossaryRequest { root: root.clone(), add: vec![sec.clone()], ..Default::default() };
+        assert!(insertions::glossary_templates(&engine, &bad, &asst_pk).await.is_err());
+
+        // Sign + store as the owner (what the publish handler does).
+        let signer = engine.assistant_signing().unwrap();
+        let mut gt = pv.glossary; gt.pubkey = Some(asst_pk.clone());
+        let glossary = signer.sign(gt).await.unwrap();
+        let mut it = ix; it.pubkey = Some(asst_pk.clone());
+        let new_index = signer.sign(it).await.unwrap();
+        let _ = finalize_publish(&engine, Some(new_index.clone()), vec![glossary.clone()], false, None, true).await.unwrap();
+        assert!(is_glossary(&glossary));
+        assert_eq!(index_children(&glossary), vec![coords[0].clone()]);
+
+        let l2 = load(engine.clone(), root.clone()).await;
+        let d0 = l2.insertions.iter().find(|i| i.coordinate == coords[0]).unwrap();
+        assert!(d0.promoted);
+        assert_eq!(d0.glossary.as_deref(), Some(pv.glossary_coordinate.as_str()));
+        let d1 = l2.insertions.iter().find(|i| i.coordinate == coords[1]).unwrap();
+        assert!(!d1.promoted);
+        assert!(l2.insertions.iter().any(|i| i.role == insertions::InsertionRole::Bundle && i.coordinate == pv.glossary_coordinate));
+
+        // Remove it: the base is the stored bundle; the glossary empties and
+        // the index drops its `a`.
+        let req2 = insertions::GlossaryRequest { root: root.clone(), remove: vec![coords[0].clone()], ..Default::default() };
+        let pv2 = insertions::glossary_templates(&engine, &req2, &asst_pk).await.unwrap();
+        assert_eq!(pv2.previous, vec![coords[0].clone()]);
+        assert!(pv2.promoted.is_empty());
+        assert!(!pv2.glossary.tags.iter().any(|t| t[0] == "a"));
+        let ix2 = pv2.index.expect("the a → glossary goes");
+        assert!(!ix2.tags.iter().any(|t| t[0] == "a" && t[1] == pv.glossary_coordinate));
+        assert_eq!(ix2.tags.iter().filter(|t| t[0] == "a").count(), 1);
+    }
+
     /// Requests end to end: an unsigned record → listed open → answered by the
     /// assistant tool (coordinates recorded, no reply event since nothing was
     /// signed); a signed request → a kind-1111 mention of the assistant in the

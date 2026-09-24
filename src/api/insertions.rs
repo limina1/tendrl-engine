@@ -11,8 +11,9 @@ use super::{AppState, PublishResponse, SignAs};
 use crate::engine::FetchPolicy;
 use crate::error::EngineError;
 use crate::publication::insertion::{
-    bind_placeholder_pubkey, build_insertion_template, coord_parts, ensure_mime_tag,
-    event_coordinate, event_tags, fork_index, index_children, is_bundle, promotion_slot,
+    bind_placeholder_pubkey, build_glossary_template, build_insertion_template, coord_parts,
+    ensure_mime_tag, event_coordinate, event_tags, fork_index, glossary_d_tag, glossary_edit,
+    index_children, index_with_glossary, is_bundle, is_definition, is_glossary, promotion_slot,
     stamp_bundle_root, InsertionAnchor, Placement,
 };
 use crate::search::TagValueCount;
@@ -58,6 +59,10 @@ pub struct InsertionBody {
     /// Coordinate of the annotation request (`30041:pk:d`, a signed
     /// `t: annotation-request`) this note answers — `["request", …]` tag.
     pub request: Option<String>,
+    /// `note` (default) or `definition` — a definition is one term's
+    /// entry (`title` = the term), tagged `t: definition`, the answer shape
+    /// of a vocabulary request.
+    pub role: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -148,6 +153,19 @@ pub(crate) async fn insertion_template(
     }
     if let Some(t) = request_tag(body.request.as_deref())? {
         extra.push(t);
+    }
+    match body.role.as_deref().map(str::trim).filter(|r| !r.is_empty()) {
+        None | Some("note") => {}
+        Some("definition") => {
+            if !body.tags.iter().any(|t| t.first().map(String::as_str) == Some("t") && t.get(1).map(String::as_str) == Some("definition")) {
+                extra.push(vec!["t".to_string(), "definition".to_string()]);
+            }
+        }
+        Some(other) => {
+            return Err(EngineError::BadRequest(format!(
+                "role must be note or definition, got `{other}`"
+            )))
+        }
     }
     extra.extend(body.tags.iter().cloned());
     let relay_hint = super::discussion_relay_hint(engine);
@@ -501,6 +519,9 @@ pub enum InsertionRole {
     /// A kind-30040 insertion: a whole NKBIP-01 tree (a kasten) attached to
     /// the publication; its `a` tags are its children.
     Bundle,
+    /// A kind-30041 tagged `t: definition`: one term's entry, the answer
+    /// shape of a vocabulary request. Counted as a note; never a request.
+    Definition,
 }
 
 /// One loaded insertion: the section event plus its parsed anchor, so the
@@ -518,6 +539,16 @@ pub struct LoadedInsertion {
     /// A bundle's children (its `a` coordinates, in order); empty otherwise.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub children: Vec<String>,
+    /// A definition's term — its `title` tag, the word as written.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub term: Option<String>,
+    /// A definition promoted into a glossary bundle on this root (by any
+    /// author) — the reader lists it in the glossary, not as a card.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub promoted: bool,
+    /// The glossary bundle's coordinate when `promoted`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub glossary: Option<String>,
 }
 
 /// Histograms over every note on a root (requests excluded), for the
@@ -602,6 +633,29 @@ pub(crate) fn insertion_counts(insertions: &[LoadedInsertion]) -> InsertionCount
     }
 }
 
+/// Join definitions against the glossary bundles the same pass loaded: a
+/// definition listed by any glossary on the root is `promoted`, with that
+/// glossary's coordinate. Pure over the loaded rows.
+pub(crate) fn mark_promoted(insertions: &mut [LoadedInsertion]) {
+    let glossaries: Vec<(String, Vec<String>)> = insertions
+        .iter()
+        .filter(|i| i.role == InsertionRole::Bundle && is_glossary(&i.event))
+        .map(|i| (i.coordinate.clone(), i.children.clone()))
+        .collect();
+    if glossaries.is_empty() {
+        return;
+    }
+    for ins in insertions.iter_mut() {
+        if ins.role != InsertionRole::Definition {
+            continue;
+        }
+        if let Some((g, _)) = glossaries.iter().find(|(_, kids)| kids.iter().any(|k| k == &ins.coordinate)) {
+            ins.promoted = true;
+            ins.glossary = Some(g.clone());
+        }
+    }
+}
+
 /// Run the `#A` pass and shape the result. Shared by the endpoint and the
 /// `list_insertions` tool.
 pub(crate) async fn load_insertions(
@@ -662,7 +716,7 @@ pub(crate) async fn load_insertions(
                 crate::network::FetchPattern::Thread,
                 "Load annotations".to_string(),
                 vec![
-                    format!("kind 30041 with A = {root}"),
+                    format!("kinds 30040 + 30041 with A = {root}"),
                     format!("by {who}"),
                     "attached notes only — the index itself is unchanged".to_string(),
                 ],
@@ -679,7 +733,10 @@ pub(crate) async fn load_insertions(
     }
 
     let mut filter = serde_json::Map::new();
-    filter.insert("kinds".into(), json!([30041]));
+    // 30041 notes / requests / definitions AND 30040 bundles (a kasten, a
+    // glossary) — everything that anchors to the root with `A`. The root
+    // index itself carries no `A`, so it never matches.
+    filter.insert("kinds".into(), json!([30040, 30041]));
     filter.insert("#A".into(), json!([root]));
     filter.insert("limit".into(), json!(limit));
     // Counting sees the whole root; the author filter is applied after.
@@ -754,6 +811,8 @@ pub(crate) async fn load_insertions(
                 InsertionRole::Bundle
             } else if crate::requests::is_request_event(&event) {
                 InsertionRole::Request
+            } else if is_definition(&event) {
+                InsertionRole::Definition
             } else {
                 InsertionRole::Note
             };
@@ -763,6 +822,14 @@ pub(crate) async fn load_insertions(
             } else {
                 Vec::new()
             };
+            let term = if role == InsertionRole::Definition {
+                event_tags(&event)
+                    .into_iter()
+                    .find(|t| t.first().map(String::as_str) == Some("title"))
+                    .and_then(|t| t.get(1).cloned())
+            } else {
+                None
+            };
             Some(LoadedInsertion {
                 event,
                 coordinate,
@@ -770,11 +837,15 @@ pub(crate) async fn load_insertions(
                 role,
                 request,
                 children,
+                term,
+                promoted: false,
+                glossary: None,
             })
         })
         .collect();
     // Spec: clients SHOULD order same-position insertions by created_at.
     insertions.sort_by_key(|i| i.event.get("created_at").and_then(Value::as_i64).unwrap_or(0));
+    mark_promoted(&mut insertions);
 
     if let Some(o) = op {
         o.complete(insertions.len());
@@ -812,6 +883,227 @@ pub async fn insertions_load_handler(
     Json(req): Json<InsertionsLoadRequest>,
 ) -> Result<Json<InsertionsLoadResponse>, EngineError> {
     Ok(Json(load_insertions(&engine, req).await?))
+}
+
+
+// ---------------------------------------------------------------------------
+// POST /api/v1/insertions/glossary  ·  /preview — per-event promotion
+//
+// A definition is promoted one event at a time into the signer's *glossary
+// bundle* for the root: a kind-30040 (`d` = `<root d>-glossary`, `t:
+// glossary`, the bundle anchor set) whose `a` tags are the promoted
+// definitions. Every edit is a new version of that bundle; when the signer
+// owns the root index, the index gets a new version too, carrying (or, once
+// the glossary is empty, no longer carrying) `a → glossary` in the appendix
+// slot. A non-owner's index change is the merge-request path (step 4).
+
+#[derive(Debug, Deserialize, Default)]
+#[serde(default)]
+pub struct GlossaryRequest {
+    /// The publication: `30040:pubkey:d`.
+    pub root: String,
+    /// Definition coordinates to promote (`30041:pk:d`, local, `t: definition`,
+    /// anchored to `root`).
+    pub add: Vec<String>,
+    /// Definition coordinates to take out of the glossary.
+    pub remove: Vec<String>,
+    pub sign_as: Option<SignAs>,
+    /// Default false: sign and keep local, like every other insertion publish.
+    pub broadcast: bool,
+    pub relays: Option<Vec<String>>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct GlossaryPreview {
+    /// The glossary bundle's next version, unsigned.
+    pub glossary: EventTemplate,
+    pub glossary_coordinate: String,
+    /// The index's next version, unsigned — only when the signer owns the
+    /// index AND its `a → glossary` needs to change.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub index: Option<EventTemplate>,
+    pub index_coordinate: String,
+    /// Whether the signer owns the index (else only the glossary is written).
+    pub owner: bool,
+    /// The glossary's entries after the edit, in order.
+    pub promoted: Vec<String>,
+    /// Entries before the edit (the newest local version of the bundle).
+    pub previous: Vec<String>,
+    pub sign_as: SignAs,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub signer_pubkey: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
+}
+
+/// Compute both templates for `signer_pubkey`.
+pub(crate) async fn glossary_templates(
+    engine: &AppState,
+    req: &GlossaryRequest,
+    signer_pubkey: &str,
+) -> Result<GlossaryPreview, EngineError> {
+    let root = req.root.trim().to_string();
+    let (rk, rpk, rd) = coord_parts(&root)
+        .filter(|(k, _, _)| *k == 30040)
+        .ok_or_else(|| {
+            EngineError::BadRequest(format!("root must be a 30040:pubkey:d coordinate, got `{root}`"))
+        })?;
+    let (rpk, rd) = (rpk.to_string(), rd.to_string());
+    // Every `add` must be a local definition anchored to this root.
+    for c in &req.add {
+        let c = c.trim();
+        let (k, pk, d) = coord_parts(c).ok_or_else(|| {
+            EngineError::BadRequest(format!("add: not a coordinate: `{c}`"))
+        })?;
+        if k != 30041 {
+            return Err(EngineError::BadRequest(format!("add: `{c}` is not a 30041")));
+        }
+        let ev = engine
+            .get_addressable(30041, pk, d, FetchPolicy::LocalOnly)
+            .await?
+            .ok_or_else(|| EngineError::NotFound(format!("add: `{c}` is not in the local store")))?;
+        if !is_definition(&ev) {
+            return Err(EngineError::BadRequest(format!(
+                "add: `{c}` is not a definition (no `t: definition`)"
+            )));
+        }
+        let anchored = InsertionAnchor::from_event(&ev).is_some_and(|a| a.root == root);
+        if !anchored {
+            return Err(EngineError::BadRequest(format!(
+                "add: `{c}` is not anchored to {root}"
+            )));
+        }
+    }
+    let anchor = InsertionAnchor::top_level(&root, Placement::Annotation).map_err(EngineError::BadRequest)?;
+    let gd = glossary_d_tag(&rd);
+    let glossary_coordinate = format!("30040:{signer_pubkey}:{gd}");
+    let previous: Vec<String> = if super::is_hex64(signer_pubkey) {
+        match engine.get_addressable(30040, signer_pubkey, &gd, FetchPolicy::LocalOnly).await? {
+            Some(ev) if is_glossary(&ev) => index_children(&ev),
+            _ => Vec::new(),
+        }
+    } else {
+        Vec::new()
+    };
+    let promoted = glossary_edit(&previous, &req.add, &req.remove);
+    let relay_hint = super::discussion_relay_hint(engine);
+    let now = super::unix_now_i64();
+    let glossary = build_glossary_template(&anchor, &promoted, &relay_hint, now).map_err(EngineError::BadRequest)?;
+    let owner = signer_pubkey == rpk;
+    let mut note = None;
+    let index = if owner {
+        let idx = engine
+            .get_addressable(rk as u64, &rpk, &rd, FetchPolicy::LocalFirst)
+            .await?
+            .ok_or_else(|| EngineError::NotFound(format!("index {root} not found")))?;
+        index_with_glossary(&idx, &glossary_coordinate, !promoted.is_empty(), &relay_hint, now)
+            .map_err(EngineError::BadRequest)?
+    } else {
+        note = Some(format!(
+            "you do not own {root}: only your glossary bundle is written; folding it into the index is a merge request to its owner"
+        ));
+        None
+    };
+    Ok(GlossaryPreview {
+        glossary,
+        glossary_coordinate,
+        index,
+        index_coordinate: root,
+        owner,
+        promoted,
+        previous,
+        sign_as: SignAs::User,
+        signer_pubkey: None,
+        note,
+    })
+}
+
+/// POST /api/v1/insertions/glossary/preview — both next versions, unsigned.
+pub async fn glossary_preview_handler(
+    State(engine): State<AppState>,
+    Extension(signing): Extension<crate::signing::SigningController>,
+    Json(req): Json<GlossaryRequest>,
+) -> Result<Json<GlossaryPreview>, EngineError> {
+    let sign_as = req.sign_as.unwrap_or(SignAs::User);
+    let signer_pubkey = preview_pubkey(&engine, &signing, sign_as).await;
+    let mut preview = glossary_templates(
+        &engine,
+        &req,
+        signer_pubkey
+            .as_deref()
+            .unwrap_or(crate::publication::insertion::PUBKEY_PLACEHOLDER),
+    )
+    .await?;
+    crate::signing::ensure_client_tag(&mut preview.glossary.tags);
+    preview.glossary.pubkey = signer_pubkey.clone();
+    if let Some(ix) = preview.index.as_mut() {
+        crate::signing::ensure_client_tag(&mut ix.tags);
+        ix.pubkey = signer_pubkey.clone();
+    }
+    preview.sign_as = sign_as;
+    preview.signer_pubkey = signer_pubkey;
+    Ok(Json(preview))
+}
+
+#[derive(Debug, Serialize)]
+pub struct GlossaryPublishResponse {
+    /// The signed glossary bundle, ingested.
+    pub glossary: Value,
+    pub glossary_coordinate: String,
+    /// The signed index (new version), when one was needed.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub index: Option<Value>,
+    pub index_coordinate: String,
+    pub owner: bool,
+    pub promoted: Vec<String>,
+    pub signed_as: SignAs,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
+    #[serde(flatten)]
+    pub publish: PublishResponse,
+}
+
+/// POST /api/v1/insertions/glossary — sign the glossary (and the index when
+/// owned and changed) as the named source; local until broadcast.
+pub async fn glossary_publish_handler(
+    State(engine): State<AppState>,
+    Extension(signing): Extension<crate::signing::SigningController>,
+    Json(req): Json<GlossaryRequest>,
+) -> Result<Json<GlossaryPublishResponse>, EngineError> {
+    let sign_as = req.sign_as.unwrap_or(SignAs::User);
+    let (pubkey, signer) = super::resolve_publish_signer(&engine, &signing, sign_as).await?;
+    let preview = glossary_templates(&engine, &req, &pubkey).await?;
+    let mut gt = preview.glossary;
+    gt.pubkey = Some(pubkey.clone());
+    let glossary = signer.sign(gt).await.map_err(super::map_publish_sign_error)?;
+    let index = match preview.index {
+        Some(mut it) => {
+            it.pubkey = Some(pubkey.clone());
+            Some(signer.sign(it).await.map_err(super::map_publish_sign_error)?)
+        }
+        None => None,
+    };
+    let publish = super::finalize_publish(
+        &engine,
+        index.clone(),
+        vec![glossary.clone()],
+        req.broadcast,
+        req.relays.clone(),
+        true,
+    )
+    .await?
+    .0;
+    Ok(Json(GlossaryPublishResponse {
+        glossary_coordinate: event_coordinate(&glossary).unwrap_or(preview.glossary_coordinate),
+        glossary,
+        index,
+        index_coordinate: preview.index_coordinate,
+        owner: preview.owner,
+        promoted: preview.promoted,
+        signed_as: sign_as,
+        note: preview.note,
+        publish,
+    }))
 }
 
 // ---------------------------------------------------------------------------
@@ -1007,6 +1299,32 @@ pub async fn fork_publish_handler(
 mod tests {
     use super::*;
 
+    #[test]
+    fn mark_promoted_joins_definitions_to_glossaries_and_counts_them_as_notes() {
+        let root = format!("30040:{}:book", "r".repeat(64));
+        let pk = "a".repeat(64);
+        let mut rows = vec![
+            loaded("d1", &pk, &root, "30041:x:s1", InsertionRole::Definition),
+            loaded("d2", &pk, &root, "30041:x:s1", InsertionRole::Definition),
+            loaded("n1", &pk, &root, "30041:x:s2", InsertionRole::Note),
+            loaded("q1", &pk, &root, "30041:x:s2", InsertionRole::Request),
+        ];
+        let d1 = rows[0].coordinate.clone();
+        let mut gl = loaded("gl", &pk, &root, &root, InsertionRole::Bundle);
+        gl.coordinate = format!("30040:{pk}:book-glossary");
+        gl.event = json!({ "id": "gl", "pubkey": pk, "kind": 30040, "created_at": 2,
+            "tags": [["d", "book-glossary"], ["t", "glossary"], ["A", root], ["a", d1]] });
+        gl.children = vec![d1.clone()];
+        rows.push(gl);
+        mark_promoted(&mut rows);
+        assert!(rows[0].promoted);
+        assert_eq!(rows[0].glossary.as_deref(), Some(format!("30040:{pk}:book-glossary").as_str()));
+        assert!(!rows[1].promoted && rows[1].glossary.is_none());
+        assert!(!rows[2].promoted);
+        let c = insertion_counts(&rows);
+        assert_eq!(c.total, 4, "2 definitions + 1 note + the glossary bundle; the request excluded");
+    }
+
     fn loaded(id: &str, pubkey: &str, root: &str, parent: &str, role: InsertionRole) -> LoadedInsertion {
         // Fixture coordinates use short pubkeys; only `anchor.parent` is read.
         let parent_pubkey = parent.split(':').nth(1).unwrap_or_default();
@@ -1026,6 +1344,9 @@ mod tests {
             role,
             request: None,
             children: Vec::new(),
+            term: None,
+            promoted: false,
+            glossary: None,
         }
     }
 

@@ -2440,6 +2440,36 @@ curl -s -X POST $B/api/v1/annotations/requests/preview -H "$J" -d "{\"root\":\"$
 curl -s -X POST $B/mcp -H "$J" -H "$A" -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"list_requests","arguments":{}}}' | jq -c '.result.structuredContent.requests[]|{id, output, terms}'
 #+end_src
 
+** Definitions (plan Phase 5c step 2, branch =feat/vocab-definitions=)
+
+A definition is a 30041 insertion with =role: definition= (=t:
+definition=, =title= = the term); the load pass tags it =role:
+definition= with its =term=. Promotion is *per event* into the signer's
+glossary bundle — a 30040 (=d= = =<root d>-glossary=, =t: glossary=, the
+bundle anchor set) whose =a= tags are the promoted definitions; the
+owner's index gets a new version (same =d=) with =a → glossary= in the
+appendix slot, dropped again when the glossary empties. A non-owner
+only writes the glossary (folding it into someone else's index is step
+4's merge request). The =#A= pass now loads 30040 bundles too (it only
+said so in its DSL before).
+
+#+begin_src bash
+cargo test --lib -- --test-threads=4 insertion glossary definition   # pure fns + the end-to-end handler test
+B=localhost:3131/api/v1; J='Content-Type: application/json'
+# two definitions on §1, as the assistant (or drop sign_as for the user)
+D1=$(curl -s -X POST $B/insertions -H "$J" -d "{\"anchor\":{\"root\":\"$ROOT\",\"parent\":\"$S1\"},\"role\":\"definition\",\"title\":\"newcomer\",\"content\":\"The theory that arrives second…\",\"sign_as\":\"assistant\",\"broadcast\":false}" | jq -r .coordinate)
+D2=$(curl -s -X POST $B/insertions -H "$J" -d "{\"anchor\":{\"root\":\"$ROOT\",\"parent\":\"$S1\"},\"role\":\"definition\",\"title\":\"consistency condition\",\"content\":\"The rule that…\",\"sign_as\":\"assistant\",\"broadcast\":false}" | jq -r .coordinate)
+curl -s -X POST $B/insertions/load -H "$J" -d "{\"root\":\"$ROOT\",\"policy\":\"local_only\"}" | jq -c '.insertions[]|{role, term, promoted, glossary}'
+# promote one (the user owns $ROOT here): preview = glossary + index templates, then publish (local until broadcast)
+curl -s -X POST $B/insertions/glossary/preview -H "$J" -d "{\"root\":\"$ROOT\",\"add\":[\"$D1\"]}" | jq -c '{owner, promoted, glossary_coordinate, index_a:[.index.tags[]?|select(.[0]=="a")|.[1]], note}'
+curl -s -X POST $B/insertions/glossary -H "$J" -d "{\"root\":\"$ROOT\",\"add\":[\"$D1\"]}" | jq -c '{glossary_coordinate, promoted, index:(.index!=null), ingested}'
+curl -s -X POST $B/insertions/load -H "$J" -d "{\"root\":\"$ROOT\",\"policy\":\"local_only\"}" | jq -c '.insertions[]|select(.role=="definition" or .role=="bundle")|{role, term, promoted, glossary, children}'   # D1 promoted → glossary coord; the bundle row lists it
+# take it out again: empty glossary republished, the index's a → glossary removed
+curl -s -X POST $B/insertions/glossary -H "$J" -d "{\"root\":\"$ROOT\",\"remove\":[\"$D1\"]}" | jq -c '{promoted, index:(.index!=null)}'
+# refusals: a plain section is not a definition; a 30040 cannot be added
+curl -s -X POST $B/insertions/glossary/preview -H "$J" -d "{\"root\":\"$ROOT\",\"add\":[\"$S1\"]}" | jq -r .error
+#+end_src
+
 * Kasten bundle delivery (answer a request whose output is kasten)
 
 One insertion for the whole kasten: the root 30040, anchored to the
