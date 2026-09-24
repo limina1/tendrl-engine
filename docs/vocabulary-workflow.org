@@ -590,7 +590,7 @@ digraph agentasks {
 
   subgraph cluster_mr { label="merge request (targets my publication)"; style="rounded"; color="#bbb"; fontsize=10;
     m1 [label="get_ask_diff\nbase · source · hunks · index changes"];
-    m2 [label="review_ask\nassistant-signed 1111 on the 818:\nfindings, recommendation\n(local until publish)", fillcolor="#d1e7dd"];
+    m2 [label="review_ask\na structured RESULT, not an event:\nfindings · per-hunk notes · recommendation\n(kept as a local record beside the ask)", fillcolor="#d1e7dd"];
     m3 [label="prepare_merge (optional)\nthe owner's next version as a DRAFT\n(DraftStore, unsigned)", fillcolor="#cfe2ff"];
     m1 -> m2 -> m3;
   }
@@ -619,12 +619,21 @@ digraph agentasks {
 |------------------+--------------+------------------------------------------------------------------------------------------------------+-------------|
 | =list_asks=      | Read         | The inbox list under the user's preference: acts (818s for me, verdicts on mine, signed requests) then opted-in activity; =list_requests= stays for records | —           |
 | =get_ask_diff=   | Read         | The engine's structured diff for an 818 (same payload the review screen renders)                     | —           |
-| =review_ask=     | ComposeWrite | A NIP-22 comment on the 818: what changed, what the agent recommends; local until =publish=          | assistant   |
+| =review_ask=     | Read         | Returns a structured review of an 818 — findings, per-hunk notes, recommendation — and stores it as a local record beside the ask (=<data_dir>/asks/=). *Not an event*: nothing is signed, nothing can be broadcast | —           |
 | =prepare_merge=  | ComposeWrite | Base + source → the owner's next version(s) as an unsigned draft in =DraftStore=; nothing is signed  | —           |
 | =fetch_asks=     | Network      | Pull =#p me= from my *read* (inbox) relays; Confirm-gated like every fetch, only when the user asks   | —           |
 
 Not added: =merge_ask= / =decline_ask=. A merge is the owner's new
 version under the owner's key plus a reaction from the owner's key.
+
+Not an event either: the review. Its audience is the owner, so it is
+a tool result the review screen renders (and the harness prints), kept
+as a local record like a request record. The assistant does not
+comment on other people's merge requests under its own identity. If
+the owner wants to tell the requester /why/, that is their own words:
+the content of their kind-7 (NIP-25 allows it) or a NIP-22 comment
+from the *user's* key on the 818 through the existing comment path —
+never the agent's.
 The assistant signs only as itself
 ([[file:zettel/decision-assistant-signs-own-key.org][decision]]), so
 those are the user's press in the review screen. =sign_draft= is not a
