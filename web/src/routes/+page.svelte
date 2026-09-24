@@ -252,12 +252,8 @@
 	// Redirect AppState navigation calls to spawn buffers in the shell
 	// instead of route-navigating away from the single-page app.
 	app.setNavigationHandlers({
-		onMergeRequestReview: (id) => {
-			store.openBuffer({
-				className: 'work',
-				buffer: { id: `review:${id}`, kind: 'review', label: 'review', kicker: id.slice(0, 8) }
-			});
-		},
+		onMergeRequestReview: (id) => openMergeRequestReview(id),
+		onAnnotationsTable: (root) => openAnnotationsTable(root),
 		onPublication: (pubkey, d_tag) => {
 			store.openBuffer({
 				className: 'work',
@@ -1143,18 +1139,22 @@
 	// Track 0 wiring: resolves the root from the focused reader buffer's id and
 	// opens the table buffer. Track B refines desktop into a split beside the
 	// reader (store.splitFocused) and keeps openBuffer for the mobile shell.
-	function openAnnotationsTable() {
+	// `rootArg` = a caller that already knows the publication (a reader
+	// card's "≡ row", the review's "← ledger"); absent, the focused reader.
+	function openAnnotationsTable(rootArg?: string) {
 		const fb = focusedBuffer;
-		const root = fb?.kind === 'reader' ? rootFromReaderId(fb.id) : null;
+		const root = rootArg ?? (fb?.kind === 'reader' ? rootFromReaderId(fb.id) : null);
 		if (!root) {
 			app.pushToast('Open a publication in a reader first', 'info');
 			return;
 		}
-		const buf = {
+		const known = store.openBuffers.find((b) => b.buffer.id === annotationsBufferId(root))?.buffer;
+		const reader = store.openBuffers.find((b) => b.buffer.id === `reader:${root}`)?.buffer;
+		const buf = known ?? {
 			id: annotationsBufferId(root),
 			kind: 'annotations',
 			label: 'annotations',
-			kicker: fb?.kicker || fb?.label || 'table'
+			kicker: (rootArg ? reader?.kicker : fb?.kicker || fb?.label) || 'table'
 		};
 		// Mobile: the table is the focused work buffer, listed in the drawer.
 		if (shell.mode === 'mobile') {
@@ -1187,6 +1187,42 @@
 		}
 		// 'v' is the side-by-side split here (`.split--v` = row; 'h' stacks).
 		store.splitFocused(buf, 'v');
+	}
+
+	// The merge-request review (`review:<id>`). From the ledger split beside
+	// a reader it takes the READER's leaf (docs/annotations-ledger-contract.org,
+	// "Review buffer") — the ledger stays, the review's "← reader" puts the
+	// reader back. Anywhere else it opens as an ordinary work buffer.
+	function openMergeRequestReview(id: string) {
+		const buf = { id: `review:${id}`, kind: 'review', label: 'review', kicker: id.slice(0, 8) };
+		if (shell.mode !== 'mobile') {
+			const pos = store.focusedSlot;
+			const tree = store.slotTrees[pos];
+			type Node = { type: 'leaf'; buffer: { id: string; kind: string } } | { type: 'split'; children: Node[] };
+			// The reader leaf whose split also holds an `annotations:` leaf.
+			const readerPath = (n: Node, prefix: number[]): number[] | null => {
+				if (n.type === 'leaf') return null;
+				const hasLedger = n.children.some((c) => c.type === 'leaf' && c.buffer.id.startsWith('annotations:'));
+				const r = n.children.findIndex((c) => c.type === 'leaf' && c.buffer.kind === 'reader');
+				if (hasLedger && r >= 0) return [...prefix, r];
+				for (let i = 0; i < n.children.length; i++) {
+					const p = readerPath(n.children[i], [...prefix, i]);
+					if (p) return p;
+				}
+				return null;
+			};
+			const path = tree ? readerPath(tree as Node, []) : null;
+			if (path) {
+				if (!store.openBuffers.some((b) => b.buffer.id === buf.id)) {
+					store.openBuffers = [...store.openBuffers, { className: 'work', buffer: buf }];
+				}
+				store.focusedLeafPath = { ...store.focusedLeafPath, [pos]: path };
+				store.setLeaf(pos, buf);
+				store.flash(pos);
+				return;
+			}
+		}
+		store.openBuffer({ className: 'work', buffer: buf });
 	}
 
 	function openLeader() {

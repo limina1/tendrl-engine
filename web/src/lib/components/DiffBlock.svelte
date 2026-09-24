@@ -11,7 +11,8 @@
 		hunks,
 		tagsAdded = [],
 		tagsRemoved = [],
-		coordinate = ''
+		coordinate = '',
+		bare = false
 	}: {
 		title: string;
 		/** The head's grey line (kind · d · "same d, new version"). */
@@ -20,6 +21,9 @@
 		tagsAdded?: string[][];
 		tagsRemoved?: string[][];
 		coordinate?: string;
+		/** No head row — the caller draws its own (the review's collapsible
+		 *  section summary). */
+		bare?: boolean;
 	} = $props();
 
 	const lineCount = $derived(hunks.reduce((n, h) => n + h.filter((l) => l.kind !== 'context').length, 0));
@@ -41,12 +45,14 @@
 	const sign = (k: DiffHunk['kind']) => (k === 'added' ? '+' : k === 'removed' ? '-' : ' ');
 </script>
 
-<div class="diff" data-section={coordinate}>
-	<div class="diff__head">
-		<b>{title}</b>
-		{#if sub}<span>{sub}</span>{/if}
-		<span class="diff__n">{hunks.length} hunk{hunks.length === 1 ? '' : 's'} · {lineCount} line{lineCount === 1 ? '' : 's'}</span>
-	</div>
+<div class="diff" class:diff--bare={bare} data-section={coordinate}>
+	{#if !bare}
+		<div class="diff__head">
+			<b>{title}</b>
+			{#if sub}<span>{sub}</span>{/if}
+			<span class="diff__n">{hunks.length} hunk{hunks.length === 1 ? '' : 's'} · {lineCount} line{lineCount === 1 ? '' : 's'}</span>
+		</div>
+	{/if}
 	{#each hunks as hunk, i (i)}
 		{#if i > 0}<div class="diff__sep">…</div>{/if}
 		{#each hunk as l, j (j)}
@@ -69,6 +75,10 @@
 		font-family: var(--font-mono);
 		font-size: calc(var(--t-xs) - 1px);
 		line-height: 1.5;
+	}
+	.diff--bare {
+		border-top: 0;
+		border-radius: 0 0 var(--r-sm, 3px) var(--r-sm, 3px);
 	}
 	.diff__head {
 		background: var(--bg-surface);
