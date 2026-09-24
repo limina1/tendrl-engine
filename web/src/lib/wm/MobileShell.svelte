@@ -46,7 +46,9 @@
 		onServicesRefresh,
 		savedChats = 0,
 		activeChatTitle = null,
-		onOpenSavedChats
+		onOpenSavedChats,
+		notifications = null,
+		onOpenNotifications
 	}: {
 		store: BufferStore;
 		onCommands: () => void;
@@ -88,6 +90,10 @@
 		activeChatTitle?: string | null;
 		/** Focus the chat slot with its saved-chats list open. */
 		onOpenSavedChats?: () => void;
+		/** The 🔔 counts for the status row: asks need an act; fresh = the
+		 *  activity kinds set to count. */
+		notifications?: { asks: number; fresh: number } | null;
+		onOpenNotifications?: () => void;
 	} = $props();
 
 	const svcRows = $derived(serviceRows(services));
@@ -366,6 +372,20 @@
 							<span class="mshell__status-go" aria-hidden="true">›</span>
 						</button>
 					{/if}
+				{/if}
+				{#if onOpenNotifications}
+					<button
+						class="mshell__status-row"
+						onclick={() => {
+							mobileNav.drawerOpen = false;
+							onOpenNotifications?.();
+						}}
+						title="Notifications — what is for you: asks that need an act, and the activity kinds you chose in Settings › Notifications"
+					>
+						<span class="mshell__status-label">🔔 notifications</span>
+						<span class="pill {notifications && (notifications.asks || notifications.fresh) ? 'pill--notif' : 'pill--ghost'}">{notifications?.asks ?? 0} ask{(notifications?.asks ?? 0) === 1 ? '' : 's'}{#if notifications?.fresh} · {notifications.fresh} new{/if}</span>
+						<span class="mshell__status-go" aria-hidden="true">›</span>
+					</button>
 				{/if}
 				{#if onOpenSavedChats}
 					<button

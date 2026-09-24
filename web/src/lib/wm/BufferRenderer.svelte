@@ -16,6 +16,7 @@
 	import DiscussionViewBuffer from './renderers/DiscussionViewBuffer.svelte';
 	import RepositoryBuffer from './renderers/RepositoryBuffer.svelte';
 	import AnnotationsBuffer from './renderers/AnnotationsBuffer.svelte';
+import NotificationsBuffer from './renderers/NotificationsBuffer.svelte';
 
 	let { buffer }: { buffer: Buffer } = $props();
 </script>
@@ -53,6 +54,8 @@
 		<RepositoryBuffer {buffer} />
 	{:else if buffer.kind === 'annotations'}
 		<AnnotationsBuffer {buffer} />
+	{:else if buffer.kind === 'notifications'}
+		<NotificationsBuffer {buffer} />
 	{:else}
 		<div class="missing">no renderer registered for kind {buffer.kind}</div>
 	{/if}

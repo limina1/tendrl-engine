@@ -27,6 +27,9 @@
 	// fetch-events self-starts the SSE subscription at module scope; we
 	// only need confirmState here to render the modal.
 	import { confirmState } from '$lib/network/fetch-events.svelte';
+	// notifications self-starts its store-stream subscription at module scope;
+	// importing it here is what boots the 🔔 counts.
+	import '$lib/notifications.svelte';
 	import { trigger as triggerTip, setWalkthroughWorld } from '$lib/wm/discovery.svelte';
 	import { identityCanSign } from '$lib/identity/signer';
 	import type { NostrEvent, SearchResult } from '$lib/types';

@@ -20,6 +20,39 @@
 	import { trigger as triggerTip } from '$lib/wm/discovery.svelte';
 	import { discovery, rearmDiscovery, rearmFeatureTours, setWalkthroughEnabled } from '$lib/wm/discovery.svelte';
 	import * as api from '$lib/api';
+	import { notifications as notifStore } from '$lib/notifications.svelte';
+	// Settings › Notifications: the engine's rule rows; a change PUTs at once
+	// (debounced) and the 🔔 store re-reads the list.
+	let notifRules = $state<api.NotificationRule[]>([]);
+	let notifErr = $state<string | null>(null);
+	let notifTimer: ReturnType<typeof setTimeout> | null = null;
+	let notifPending: Record<string, { on: boolean; how: 'count' | 'list' }> = {};
+	$effect(() => {
+		void (async () => {
+			try {
+				notifRules = await notifStore.reloadPrefs();
+				notifErr = null;
+			} catch (e) {
+				notifErr = e instanceof Error ? e.message : String(e);
+			}
+		})();
+	});
+	function setNotif(key: string, entry: { on: boolean; how: 'count' | 'list' }) {
+		notifRules = notifRules.map((r) => (r.key === key ? { ...r, ...entry } : r));
+		notifPending[key] = entry;
+		if (notifTimer) clearTimeout(notifTimer);
+		notifTimer = setTimeout(() => {
+			notifTimer = null;
+			const batch = notifPending;
+			notifPending = {};
+			void notifStore.savePrefs(batch).then(
+				(rules) => {
+					notifRules = rules;
+				},
+				(e) => app.pushToast(`notifications: ${e instanceof Error ? e.message : String(e)}`, 'error')
+			);
+		}, 250);
+	}
 	import { serviceRows } from '$lib/services';
 	import { entryDrafts } from '$lib/wm/entry-drafts';
 	import {
@@ -1386,6 +1419,67 @@
 		</div>
 	</details>
 
+	<details class="settings-group" open data-tour="settings-notifications">
+		<summary class="settings-group-title">Notifications</summary>
+		<div class="settings-group-body">
+		<p class="settings-hint">
+			What tendrl tells you about — a checkable list of the events it has a
+			verb for. What you check is what the 🔔 pill counts on desktop and what
+			the ☰ drawer's status row shows on the phone. Never a push: the number
+			waits until you open the list.
+		</p>
+		{#if notifRules.length === 0}
+			<p class="settings-hint">{notifErr ?? 'loading the rules…'}</p>
+		{:else}
+			<div class="notif-table" role="table" aria-label="Notification kinds">
+				<div class="notif-row notif-row--head" role="row">
+					<span></span><span>kind</span><span>addressed to you when…</span><span>verb</span><span></span>
+				</div>
+				{#each notifRules.filter((r) => r.fixed) as r (r.key)}
+					<div class="notif-row notif-row--fixed" role="row">
+						<input type="checkbox" checked disabled aria-label={`${r.label} (always on)`} />
+						<span class="notif-kind">{r.kind}</span>
+						<span class="notif-rule">{r.label}</span>
+						<span class="notif-how">{r.verb === 'read' ? 'read' : r.verb}</span>
+						<span class="notif-def">default</span>
+					</div>
+				{/each}
+				<div class="notif-sep" aria-hidden="true"></div>
+				{#each notifRules.filter((r) => !r.fixed) as r (r.key)}
+					<div class="notif-row" role="row">
+						<input
+							type="checkbox"
+							id={`notif-${r.key}`}
+							checked={r.on}
+							onchange={(e) => setNotif(r.key, { on: (e.currentTarget as HTMLInputElement).checked, how: r.how })}
+							aria-label={r.label}
+						/>
+						<label class="notif-kind" for={`notif-${r.key}`}>{r.kind}</label>
+						<label class="notif-rule" for={`notif-${r.key}`}>{r.label}</label>
+						<span class="notif-how">
+							<select
+								value={r.how}
+								disabled={!r.on}
+								onchange={(e) => setNotif(r.key, { on: r.on, how: (e.currentTarget as HTMLSelectElement).value as 'count' | 'list' })}
+								aria-label={`How “${r.label}” shows`}
+							>
+								<option value="count">count</option>
+								<option value="list">list</option>
+							</select>
+						</span>
+						<span class="notif-def">{r.verb === 'read' ? 'read' : r.verb}</span>
+					</div>
+				{/each}
+			</div>
+		{/if}
+		<p class="settings-hint">
+			count = adds to the pill number · list = shows in the list only · the
+			rule per kind is the engine's, the web never builds the filter · saved
+			in <code>notifications.json</code>, never a Nostr event.
+		</p>
+		</div>
+	</details>
+
 	<details class="settings-group">
 		<summary class="settings-group-title">Network</summary>
 		<div class="settings-group-body">
@@ -2640,5 +2734,66 @@
 		overflow: hidden;
 		text-overflow: ellipsis;
 		white-space: nowrap;
+	}
+
+	/* Settings › Notifications */
+	.notif-table {
+		display: flex;
+		flex-direction: column;
+		gap: 2px;
+		font: var(--t-xs) / 1.4 var(--font-mono);
+	}
+	.notif-row {
+		display: grid;
+		grid-template-columns: 24px 52px 1fr 70px 64px;
+		gap: var(--s-2);
+		align-items: center;
+		padding: var(--s-1) var(--s-2);
+		border-bottom: 1px solid var(--panel-border);
+	}
+	.notif-row--head {
+		color: var(--base5);
+		font-size: var(--t-3xs);
+		letter-spacing: 0.08em;
+		text-transform: uppercase;
+		border-bottom: 0;
+	}
+	.notif-row--fixed {
+		color: var(--base6);
+	}
+	.notif-kind {
+		color: var(--base7);
+	}
+	.notif-rule {
+		color: var(--fg-alt);
+		font-family: var(--font-sans);
+	}
+	.notif-how select {
+		font: var(--t-3xs) / 1.2 var(--font-mono);
+		padding: 1px 4px;
+		background: var(--panel-bg-soft);
+		color: var(--fg);
+		border: 1px solid var(--panel-border);
+		border-radius: 3px;
+	}
+	.notif-how,
+	.notif-def {
+		color: var(--base5);
+		font-size: var(--t-3xs);
+	}
+	.notif-sep {
+		height: 1px;
+		background: var(--panel-border-strong);
+		margin: var(--s-1) 0;
+	}
+	@media (max-width: 720px) {
+		.notif-row {
+			grid-template-columns: 24px 44px 1fr;
+		}
+		.notif-row .notif-how,
+		.notif-row .notif-def,
+		.notif-row--head span:nth-child(n + 4) {
+			display: none;
+		}
 	}
 </style>

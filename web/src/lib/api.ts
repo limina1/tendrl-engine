@@ -3141,6 +3141,109 @@ export function previewRequest(req: {
 	});
 }
 
+// ---------------------------------------------------------------------------
+// Notifications — what is for the user, chosen by kind (plan Phase 5c step 5;
+// docs/zettel/feat-notifications.org). Rules are the engine's, per kind:
+// "addressed to me" is a tag, never a search the web builds.
+// ---------------------------------------------------------------------------
+
+/** The stable id of an engine rule row. */
+export type NotificationKey =
+	| '818'
+	| '7-on-my-818'
+	| 'request-on-mine'
+	| '1111'
+	| '9802'
+	| '7'
+	| '9735'
+	| '30045'
+	| 'any-p'
+	| (string & {});
+
+export interface NotificationRow {
+	key: NotificationKey;
+	kind: number;
+	id: string;
+	pubkey: string;
+	created_at: number;
+	/** The publication (`root`) and section (`parent`) it is anchored to,
+	 *  when the event names them (A/a, or an 818's target). */
+	anchor: { root?: string; parent?: string };
+	/** Engine-built one-liner ("npub1… highlighted §2 of On Method"). */
+	summary: string;
+	event: NostrEvent;
+	/** For asks: open | answered | merged | declined … (engine-derived);
+	 *  null until the engine resolves it. */
+	status?: string | null;
+	/** The verdict event (a kind 7 on my 818), when any. */
+	verdict?: unknown;
+}
+
+export interface NotificationCounts {
+	/** Rows that need an act from me (the fixed rules). */
+	acts: number;
+	/** Activity rows whose rule is set to `count` — the modeline's "M new". */
+	activity_count: number;
+	/** Activity rows whose rule is set to `list` — shown in the list only. */
+	activity_list: number;
+}
+
+export interface NotificationsResponse {
+	acts: NotificationRow[];
+	activity: NotificationRow[];
+	/** My own asks (the 818s I sent) with their verdicts. */
+	mine: NotificationRow[];
+	counts: NotificationCounts;
+}
+
+export interface NotificationRule {
+	key: NotificationKey;
+	kind: number;
+	/** The engine's one-line rule ("a highlight of one of your sections"). */
+	label: string;
+	/** `read`, or the act's verb for a fixed row. */
+	verb: 'read' | (string & {});
+	/** True for the rows that need an act (always on, fixed). */
+	act: boolean;
+	fixed: boolean;
+	on: boolean;
+	how: 'count' | 'list';
+}
+
+export interface NotificationPrefs {
+	rules: NotificationRule[];
+}
+
+export function getNotifications(status: 'open' | 'all' = 'open'): Promise<NotificationsResponse> {
+	return fetchJson<NotificationsResponse>(`/api/v1/notifications?status=${status}`);
+}
+
+export function getNotificationPrefs(): Promise<NotificationPrefs> {
+	return fetchJson<NotificationPrefs>('/api/v1/notifications/prefs');
+}
+
+export function putNotificationPrefs(
+	entries: Record<string, { on: boolean; how: 'count' | 'list' }>
+): Promise<NotificationPrefs> {
+	return fetchJson<NotificationPrefs>('/api/v1/notifications/prefs', {
+		method: 'PUT',
+		body: JSON.stringify({ entries })
+	});
+}
+
+/** One Confirm-gated relay pull: a filter per enabled rule on my read relays
+ *  ∪ the provenance relays of my own events. Returns the refreshed list. */
+export function fetchNotifications(body: {
+	policy?: 'local_first' | 'fetch_always';
+	relays?: string[];
+	mode_confirm?: boolean;
+} = {}): Promise<NotificationsResponse> {
+	return fetchJson<NotificationsResponse>('/api/v1/notifications/fetch', {
+		method: 'POST',
+		body: JSON.stringify(body)
+	});
+}
+
 export function listRequests(q: { root?: string; parent?: string; status?: 'open' | 'answered' | 'all' } = {}) {
 	const p = new URLSearchParams();
 	if (q.root) p.set('root', q.root);

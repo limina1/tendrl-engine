@@ -38,6 +38,7 @@
 	import { rendererFor, toursForClass } from '$lib/wm/registry';
 	import { getAppState, type ModalNavEntry } from '$lib/state.svelte';
 	import * as api from '$lib/api';
+	import { notifications } from '$lib/notifications.svelte';
 	import { resolveStatus } from '$lib/nostr/resolve-status.svelte';
 	import { themeById } from '$lib/themes';
 	import {
@@ -380,6 +381,16 @@
 	// the standalone 5 s poll that used to run here was a duplicate, and it
 	// wasn't document.hidden-gated. A fast local poll runs ONLY while the
 	// popover is open (visible by definition) so the fetch list stays live.
+	// Notifications pill: what is for the user — asks (need an act) and the
+	// activity kinds chosen in Settings › Notifications. One pill, one buffer.
+	const notif = $derived(notifications.state);
+	const notifZero = $derived(notif.counts.acts === 0 && notif.counts.activity_count === 0);
+	function openNotifications() {
+		store.openBuffer({
+			className: 'work',
+			buffer: { id: 'notifications', kind: 'notifications', label: 'notifications', kicker: '🔔' }
+		});
+	}
 	// Agent services pill (desktop twin of the drawer's "agent services"
 	// section): the pill reads the active service + balance; its popover lists
 	// every service with the same dot-to-switch / open-to-manage rows.
@@ -1117,7 +1128,8 @@
 				}
 			}),
 		openCompose,
-		openAnnotationsTable
+		openAnnotationsTable,
+		openNotifications
 		});
 	}
 
@@ -1496,6 +1508,8 @@
 				openChat();
 				app.openSavedChats();
 			}}
+			notifications={{ asks: notif.counts.acts, fresh: notif.counts.activity_count }}
+			onOpenNotifications={openNotifications}
 			searchRows={app.searchHistory.map((e) => ({
 				key: entryKey(e),
 				kind: e.kind,
@@ -1722,6 +1736,15 @@
 					{/if}
 				</span>
 			{/if}
+			<button
+				class="pill pill--btn pill--notif"
+				class:pill--notif-zero={notifZero}
+				class:pill--notif-asks={notif.counts.acts > 0}
+				onclick={openNotifications}
+				title="Notifications — what is for you: asks that need an act, and the activity kinds you chose in Settings › Notifications · SPC b o n"
+				aria-label="Notifications"
+				data-tour="ml-notifications"
+			>🔔 {notif.counts.acts} ask{notif.counts.acts === 1 ? '' : 's'}{#if notif.counts.activity_count} · <span class="pill__new">{notif.counts.activity_count} new</span>{/if}</button>
 			{#if app.providersState}
 				<span class="agent-pill-wrap" bind:this={agentWrapEl} data-tour="ml-agent">
 					{#if svcActive}
@@ -2856,6 +2879,17 @@
 		.pill--act-live .act-ind { animation: none; }
 	}
 	/* Agent services pill + popover (twin of the drawer section). */
+	.pill--notif {
+		color: var(--orange);
+		border-color: rgba(226, 164, 120, 0.5);
+	}
+	.pill--notif-zero {
+		color: var(--base5);
+		border-color: var(--panel-border);
+	}
+	.pill__new {
+		color: var(--cyan);
+	}
 	.agent-pill-wrap {
 		position: relative;
 		display: inline-flex;
