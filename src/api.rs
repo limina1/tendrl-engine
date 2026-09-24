@@ -10295,6 +10295,139 @@ mod chat_api_tests {
         assert_eq!(ix.tags.iter().filter(|t| t[0] == "a").last().unwrap()[1], pv3.glossary_coordinate.clone().unwrap());
     }
 
+    /// A stranger's relink: the diff plus a derivative (index′ + sections′
+    /// under their key, `E`/`p` back-pointers) and a kind-818 to the owner
+    /// whose `source` is the signed index′; listed open for both sides; the
+    /// owner's `+` marks it merged; anyone else reacting is refused.
+    #[tokio::test]
+    async fn test_relink_foreign_publication_makes_a_derivative_and_an_818() {
+        use crate::identity::{encode_nsec, IdentitySession};
+        use crate::publication::insertion::{coord_parts, event_tags, index_children};
+        use crate::publication::merge_request::MergeStatus;
+        const USER_SEC: &str = "000000000000000000000000000000000000000000000000000000000000000d";
+        const ASST_SEC: &str = "000000000000000000000000000000000000000000000000000000000000000e";
+
+        let dir = tempfile::tempdir().unwrap();
+        let mut engine = crate::engine::Engine::new(dir.path()).unwrap();
+        let user = Arc::new(Mutex::new(IdentitySession::new()));
+        let user_pk = user.lock().unwrap().login_nsec(&encode_nsec(USER_SEC).unwrap()).unwrap();
+        let asst = Arc::new(Mutex::new(IdentitySession::new()));
+        let asst_pk = asst.lock().unwrap().login_nsec(&encode_nsec(ASST_SEC).unwrap()).unwrap();
+        engine.set_user_session(user.clone());
+        engine.set_assistant_session(asst.clone());
+        engine.set_assistant_signing(crate::signing::SigningController::new(asst));
+        let engine = Arc::new(engine);
+        std::mem::forget(dir);
+        let signing = crate::signing::SigningController::new(user);
+        let cx = crate::tools::ToolCx { engine: engine.clone(), chat: Arc::new(Mutex::new(ChatState::new())) };
+
+        // The assistant (A) owns the index; the user (B) is a stranger to it.
+        let saved = crate::tools::dispatch(&cx, "save_draft", json!({ "title": "On Method", "sections": [
+            { "title": "The consistency condition", "content": "A new theory must agree with the theories already accepted." },
+            { "title": "Against method", "content": "What the textbook calls epistemological anarchism is only the record.\n\nTheir incommensurability is not a failure of care." }
+        ] })).await.unwrap();
+        let out = crate::tools::dispatch(&cx, "sign_draft", json!({ "draft_id": saved["draft_id"] })).await.unwrap();
+        let index = crate::query::query_by_id(engine.ndb(), out["publication_id"].as_str().unwrap()).unwrap().unwrap();
+        let index_id = index["id"].as_str().unwrap().to_string();
+        let root = crate::publication::insertion::event_coordinate(&index).unwrap();
+        let children = index_children(&index);
+        let (s1, s2) = (children[0].clone(), children[1].clone());
+        let mut coords = Vec::new();
+        for term in ["epistemological anarchism", "incommensurability"] {
+            let d = crate::tools::dispatch(&cx, "propose_insertion", json!({
+                "root": root, "parent": s2, "role": "definition", "title": term, "content": format!("{term}, as used here.")
+            })).await.unwrap();
+            coords.push(d["coordinate"].as_str().unwrap().to_string());
+        }
+
+        // Preview as B: the same diff, owner:false, and the derivative.
+        let req = insertions::RelinkRequest {
+            root: root.clone(),
+            glossary: Some(insertions::RelinkGlossaryEdit { add: vec![coords[0].clone()], remove: vec![] }),
+            ..Default::default()
+        };
+        let pv = insertions::relink_templates(&engine, &req, &user_pk).await.unwrap();
+        assert!(!pv.owner && pv.hunk_count == 2 && pv.sections.len() == 1);
+        assert!(pv.index.is_none(), "a stranger never gets a new version of the owner's index");
+        assert!(pv.glossary.is_some(), "the glossary is the stranger's own bundle for the original root");
+        let d = pv.derivative.as_ref().expect("derivative for a non-owner");
+        assert_eq!(d.sections.len(), 1);
+        let ds = &d.sections[0];
+        assert_eq!(ds.original, s2);
+        let (dk, dpk, dd) = coord_parts(&ds.coordinate).unwrap();
+        assert_eq!((dk, dpk), (30041, user_pk.as_str()));
+        assert!(ds.template.tags.iter().any(|t| t[0] == "d" && t[1] == dd), "minted d");
+        let s2_id = engine.get_addressable(30041, &asst_pk, coord_parts(&s2).unwrap().2, crate::engine::FetchPolicy::LocalOnly).await.unwrap().unwrap()["id"].as_str().unwrap().to_string();
+        assert!(ds.template.tags.iter().any(|t| t[0] == "E" && t[1] == s2_id), "E → the copied section version");
+        assert!(ds.template.tags.iter().any(|t| t[0] == "p" && t[1] == asst_pk), "p → its author");
+        assert_eq!(ds.template.content.matches("{{ref:").count(), 2, "the relinked content");
+        for c in &coords {
+            assert!(ds.template.tags.iter().any(|t| t[0] == "a" && &t[1] == c), "a → {c}");
+        }
+        assert!(ds.template.tags.iter().any(|t| t[0] == "T" && t[1] == "against-method"), "tags verbatim");
+        // index′: s1 kept, s2 → s2′, glossary appended, E → the original index
+        let ia: Vec<&Vec<String>> = d.index.tags.iter().filter(|t| t[0] == "a").collect();
+        assert_eq!(ia.len(), 3);
+        assert_eq!(ia[0][1], s1);
+        assert_eq!(ia[1][1], ds.coordinate);
+        assert_eq!(ia[2][1], pv.glossary_coordinate.clone().unwrap());
+        assert!(d.index.tags.iter().any(|t| t[0] == "E" && t[1] == index_id));
+        assert!(d.index_coordinate.starts_with(&format!("30040:{user_pk}:")));
+        // the 818: a original root · e base · e <placeholder> source · p A
+        let mt = &d.merge_request;
+        assert_eq!(mt.kind, 818);
+        assert!(mt.tags.iter().any(|t| t[0] == "a" && t[1] == root));
+        assert!(mt.tags.iter().any(|t| t[0] == "e" && t[1] == index_id && t.len() == 2), "base");
+        assert!(mt.tags.iter().any(|t| t[0] == "e" && t[1] == insertions::SOURCE_PLACEHOLDER && t.get(3).map(String::as_str) == Some("source")));
+        assert!(mt.tags.iter().any(|t| t[0] == "p" && t[1] == asst_pk));
+        assert_eq!(mt.content, "Relink 2 terms to their definitions; add a glossary (1)");
+        assert!(!d.destinations.deliverable, "nothing on the wire: no inbox, no provenance");
+        assert!(d.destinations.note.is_some());
+
+        // Publish as B (broadcast false): derivative + glossary + 818 land.
+        let (pubkey, signer) = resolve_publish_signer(&engine, &signing, SignAs::User).await.unwrap();
+        let pv = insertions::relink_templates(&engine, &req, &user_pk).await.unwrap();
+        let resp = insertions::relink_publish_derivative(&engine, &req, pv, pubkey, signer, SignAs::User).await.unwrap();
+        assert!(!resp.owner && resp.sections.is_empty() && resp.index.is_none());
+        let dr = resp.derivative.as_ref().unwrap();
+        let mr = resp.merge_request.as_ref().unwrap();
+        assert!(mr.destinations_used.is_empty());
+        let src = mr.event["tags"].as_array().unwrap().iter().find(|t| t[0] == "e" && t.get(3).map(|m| m == "source").unwrap_or(false)).unwrap();
+        assert_eq!(src[1], dr.index["id"], "source = the signed index′");
+        assert_eq!(dr.index["pubkey"], user_pk);
+        assert_eq!(dr.sections[0].event["pubkey"], user_pk);
+        assert!(resp.glossary.as_ref().unwrap()["pubkey"] == user_pk);
+        tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+        let stored_ix = engine.get_by_id(dr.index["id"].as_str().unwrap(), crate::engine::FetchPolicy::LocalOnly).await.unwrap();
+        assert!(stored_ix.is_some(), "index′ ingested");
+        let stored_mr = engine.get_by_id(&mr.id, crate::engine::FetchPolicy::LocalOnly).await.unwrap().unwrap();
+        assert_eq!(stored_mr["kind"], 818);
+        // the original is untouched: the owner's index is still the same version
+        let cur = engine.get_addressable(30040, &asst_pk, coord_parts(&root).unwrap().2, crate::engine::FetchPolicy::LocalOnly).await.unwrap().unwrap();
+        assert_eq!(cur["id"], index_id);
+
+        // Both sides list it open.
+        let mine = merge_requests::list(&engine, &user_pk, "requester", "open").await.unwrap();
+        assert_eq!(mine.requests.len(), 1);
+        assert_eq!(mine.requests[0].request.source.as_deref(), dr.index["id"].as_str());
+        let theirs = merge_requests::list(&engine, &asst_pk, "owner", "open").await.unwrap();
+        assert_eq!(theirs.requests.len(), 1);
+        assert_eq!(theirs.requests[0].role, "owner");
+
+        // B cannot answer their own ask; A can.
+        let refused = merge_requests::reaction_for(&engine, &mr.id, '+', None, &user_pk).await;
+        assert!(matches!(refused, Err(EngineError::Forbidden(_))), "{refused:?}");
+        let (_, mut t) = merge_requests::reaction_for(&engine, &mr.id, '+', Some("thanks"), &asst_pk).await.unwrap();
+        t.pubkey = Some(asst_pk.clone());
+        let reaction = engine.assistant_signing().unwrap().sign(t).await.unwrap();
+        assert_eq!(reaction["content"], "+ thanks");
+        let _ = finalize_publish(&engine, None, vec![reaction], false, None, true).await.unwrap();
+        let after = merge_requests::list(&engine, &user_pk, "requester", "all").await.unwrap();
+        assert_eq!(after.requests[0].status, MergeStatus::Merged);
+        assert!(merge_requests::list(&engine, &asst_pk, "owner", "open").await.unwrap().requests.is_empty());
+        let _ = event_tags(&index);
+    }
+
     /// Requests end to end: an unsigned record → listed open → answered by the
     /// assistant tool (coordinates recorded, no reply event since nothing was
     /// signed); a signed request → a kind-1111 mention of the assistant in the

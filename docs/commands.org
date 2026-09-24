@@ -2534,6 +2534,36 @@ curl -s -X POST $B/merge-requests/destinations -H "$J" -d "{\"target\":\"$ROOT\"
 curl -s "$B/merge-requests?role=all&status=all" | jq -c '.requests[]|{id:(.id|.[0:8]), role, status, target, source:(.source|.[0:8]?)}'
 #+end_src
 
+** Foreign relink → derivative + kind 818 → the owner's verdict (step 4b)
+
+A stranger's relink is never a new version of the owner's events: it is a
+*derivative* (index′ + the changed sections′ under the stranger's key,
+=E=/=p= back-pointers, the relinked content + its =a= tags) plus one
+kind-818 addressed to the owner whose =e … source= is the signed index′.
+The 818 goes to the destination set (owner's inbox ∪ where the target was
+found ∪ hints ∪ mine), the derivative to your publish set; both local until
+broadcast. The owner answers with a kind-7 (=+= merged, =-= declined);
+anyone else gets 403.
+
+#+begin_src bash
+cargo test --lib -- --test-threads=4 test_relink_foreign_publication derivative_index     # handler-level + pure
+B=localhost:3131/api/v1; J='Content-Type: application/json'
+# two keys: the OWNER made the publication (seed as usual), the USER is a stranger who logs in afterwards
+USEC2=$(nak key generate); curl -s -X POST $B/identity/login -H "$J" -d "{\"ncryptsec\":\"$(nak key encrypt $USEC2 pw)\"}"; curl -s -X POST $B/identity/unlock -H "$J" -d '{"password":"pw"}'
+# preview: owner:false, the diff, and `derivative` = index′ / sections′ / the 818 (source row is a placeholder) / destinations with reasons
+curl -s -X POST $B/publication/relink/preview -H "$J" -d "{\"root\":\"$ROOT\"}" | jq -c '{owner, note, sections:[.derivative.sections[]|{original, coordinate, E:[.template.tags[]|select(.[0]=="E")|.[1]]}], index:[.derivative.index.tags[]|select(.[0]=="a")|.[1]|split(":")[2]], mr:.derivative.merge_request.tags, deliverable:.derivative.destinations.deliverable, dest:[.derivative.destinations.destinations[]|{url, reasons}]}'
+# publish (local): three kinds land — 30041′, 30040′, 818 — the original is untouched
+RL=$(curl -s -X POST $B/publication/relink -H "$J" -d "{\"root\":\"$ROOT\",\"broadcast\":false}"); echo "$RL" | jq -c '{owner, index:.derivative.index_coordinate, sections:[.derivative.sections[].coordinate], mr:.merge_request.id, source:[.merge_request.event.tags[]|select(.[0]=="e" and .[3]=="source")|.[1]]}'
+# broadcast: `destinations` (the Confirm modal's edited list) routes the 818; without it, only a deliverable set is used, else 400 with the routing note
+curl -s -X POST $B/publication/relink -H "$J" -d "{\"root\":\"$ROOT\",\"broadcast\":true,\"destinations\":[\"wss://theforest.nostr1.com\"]}" | jq -c '{mr:.merge_request.id, used:.merge_request.destinations_used, results:.merge_request.broadcast_results}'
+# both sides list it open
+MR=$(echo "$RL" | jq -r .merge_request.id)
+curl -s "$B/merge-requests?role=requester" | jq -c '.requests[]|{id:.id[0:8], status, role, target}'
+# the owner's verdict (log the owner back in first): + merged · - declined; a stranger → 403
+curl -s -X POST $B/merge-requests/react -H "$J" -d "{\"id\":\"$MR\",\"verdict\":\"+\",\"reason\":\"thanks\"}" | jq -c '{status, id:.id[0:8], relays_used}'
+curl -s "$B/merge-requests?role=owner&status=all" | jq -c '.requests[]|{id:.id[0:8], status, verdict:(.verdict.content)}'
+#+end_src
+
 * Kasten bundle delivery (answer a request whose output is kasten)
 
 One insertion for the whole kasten: the root 30040, anchored to the

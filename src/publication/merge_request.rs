@@ -288,6 +288,90 @@ pub fn fork_section(section: &Value, signer_pubkey: &str, relay_hint: &str, crea
     })
 }
 
+/// The copy process for an index whose sections were rewritten: every tag
+/// verbatim, each `a` in `replacements` (original → derivative coordinate)
+/// swapped in place (hint column kept), `glossary` appended after the last
+/// `a` when given and not already listed, a minted `d`, any earlier `E`
+/// dropped, `p` to the index author and `E` to the copied version. Returns
+/// the template and the minted `d`.
+pub fn derivative_index(
+    index: &Value,
+    replacements: &[(String, String)],
+    glossary: Option<&str>,
+    signer_pubkey: &str,
+    relay_hint: &str,
+    created_at: i64,
+) -> Result<(EventTemplate, String), String> {
+    if index.get("kind").and_then(Value::as_u64) != Some(30040) {
+        return Err("only a kind-30040 index can be forked".into());
+    }
+    let author = index.get("pubkey").and_then(Value::as_str).ok_or("index has no pubkey")?;
+    let id = index.get("id").and_then(Value::as_str).ok_or("index has no id")?;
+    let mut tags = event_tags(index);
+    let mut has_glossary = false;
+    for t in tags.iter_mut() {
+        if t.first().map(String::as_str) != Some("a") {
+            continue;
+        }
+        if let Some(v) = t.get(1).cloned() {
+            if let Some((_, to)) = replacements.iter().find(|(from, _)| *from == v) {
+                t[1] = to.clone();
+            }
+            if glossary == Some(t[1].as_str()) {
+                has_glossary = true;
+            }
+        }
+    }
+    if let Some(g) = glossary {
+        if !has_glossary {
+            let mut a = vec!["a".to_string(), g.to_string()];
+            if !relay_hint.is_empty() {
+                a.push(relay_hint.to_string());
+            }
+            let at = tags
+                .iter()
+                .rposition(|t| t.first().map(String::as_str) == Some("a"))
+                .map(|p| p + 1)
+                .unwrap_or(tags.len());
+            tags.insert(at, a);
+        }
+    }
+    let d = crate::publication::mint_d_tag();
+    let mut had_d = false;
+    for t in tags.iter_mut() {
+        if t.first().map(String::as_str) == Some("d") {
+            if t.len() >= 2 {
+                t[1] = d.clone();
+            } else {
+                t.push(d.clone());
+            }
+            had_d = true;
+        }
+    }
+    if !had_d {
+        tags.insert(0, vec!["d".to_string(), d.clone()]);
+    }
+    tags.retain(|t| t.first().map(String::as_str) != Some("E"));
+    if signer_pubkey != author
+        && !tags
+            .iter()
+            .any(|t| t.first().map(String::as_str) == Some("p") && t.get(1).map(String::as_str) == Some(author))
+    {
+        tags.push(vec!["p".to_string(), author.to_string()]);
+    }
+    tags.push(vec!["E".to_string(), id.to_string(), relay_hint.to_string(), author.to_string()]);
+    Ok((
+        EventTemplate {
+            kind: 30040,
+            created_at,
+            tags,
+            content: index.get("content").and_then(Value::as_str).unwrap_or("").to_string(),
+            pubkey: Some(signer_pubkey.to_string()),
+        },
+        d,
+    ))
+}
+
 // ---------------------------------------------------------------------------
 // Routing: the destination set
 // ---------------------------------------------------------------------------
@@ -484,5 +568,35 @@ mod tests {
         assert!(!is_deliverable(&[]));
         let json = serde_json::to_value(&set[1]).unwrap();
         assert_eq!(json["reasons"], json!(["inbox", "found_on"]));
+    }
+
+    #[test]
+    fn derivative_index_swaps_sections_appends_glossary_and_points_back() {
+        let owner = "a".repeat(64);
+        let me = "b".repeat(64);
+        let s1 = format!("30041:{owner}:s1");
+        let s2 = format!("30041:{owner}:s2");
+        let index = serde_json::json!({ "id": "c".repeat(64), "pubkey": owner, "kind": 30040, "created_at": 1, "content": "",
+            "tags": [["d", "book"], ["title", "On Method"], ["a", s1, "wss://hint"], ["a", s2], ["t", "x"]] });
+        let s2p = format!("30041:{me}:s2prime");
+        let gl = format!("30040:{me}:book-glossary");
+        let (t, d) = derivative_index(&index, &[(s2.clone(), s2p.clone())], Some(&gl), &me, "wss://mine", 5).unwrap();
+        assert_ne!(d, "book");
+        let a: Vec<&Vec<String>> = t.tags.iter().filter(|t| t[0] == "a").collect();
+        assert_eq!(a.len(), 3);
+        assert_eq!(a[0][1], s1);
+        assert_eq!(a[0][2], "wss://hint", "hint column kept");
+        assert_eq!(a[1][1], s2p, "rewritten in place");
+        assert_eq!(a[2][1], gl, "glossary appended after the last a");
+        assert!(t.tags.iter().any(|t| t[0] == "title" && t[1] == "On Method"));
+        assert!(t.tags.iter().any(|t| t[0] == "p" && t[1] == owner));
+        let e = t.tags.iter().find(|t| t[0] == "E").unwrap();
+        assert_eq!(e[1], "c".repeat(64));
+        assert_eq!(e[3], owner);
+        assert_eq!(t.pubkey.as_deref(), Some(me.as_str()));
+        // the glossary already listed is not appended twice
+        let index2 = serde_json::json!({ "id": "c".repeat(64), "pubkey": owner, "kind": 30040, "created_at": 1, "tags": [["d", "book"], ["a", s1], ["a", gl]] });
+        let (t2, _) = derivative_index(&index2, &[], Some(&gl), &me, "", 5).unwrap();
+        assert_eq!(t2.tags.iter().filter(|t| t[0] == "a").count(), 2);
     }
 }

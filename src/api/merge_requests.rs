@@ -14,7 +14,7 @@
 //!   kind-7 (`publication::merge_request::resolve_status`).
 
 use axum::extract::{Query, State};
-use axum::Json;
+use axum::{Extension, Json};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
@@ -22,7 +22,7 @@ use crate::api::AppState;
 use crate::engine::FetchPolicy;
 use crate::error::EngineError;
 use crate::publication::insertion::coord_parts;
-use crate::publication::merge_request::{destination_set, is_deliverable, resolve_status, Destination, MergeRequest, MergeStatus};
+use crate::publication::merge_request::{destination_set, is_deliverable, reaction_template, resolve_status, verdict_of, Destination, MergeRequest, MergeStatus};
 
 #[derive(Debug, Deserialize)]
 pub struct DestinationsRequest {
@@ -42,7 +42,7 @@ pub struct DestinationsRequest {
     pub mode_confirm: bool,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct DestinationsResponse {
     pub target: String,
     pub owner: String,
@@ -228,6 +228,122 @@ pub async fn list_handler(State(engine): State<AppState>, Query(q): Query<ListQu
         return Err(EngineError::BadRequest("status must be open or all".into()));
     }
     Ok(Json(list(&engine, &me, role, status).await?))
+}
+
+
+// ---------------------------------------------------------------------------
+// The owner's verdict
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Deserialize)]
+pub struct ReactRequest {
+    /// The kind-818's event id.
+    pub id: String,
+    /// `+` (merged) or `-` (declined).
+    pub verdict: String,
+    /// Optional one-line reason, appended after the sign.
+    #[serde(default)]
+    pub reason: Option<String>,
+    /// Default false: sign and keep local.
+    #[serde(default)]
+    pub broadcast: bool,
+    /// Extra relays; the requester's inbox and the 818's provenance are
+    /// always unioned in when broadcasting.
+    #[serde(default)]
+    pub relays: Option<Vec<String>>,
+    #[serde(default)]
+    pub mode_confirm: bool,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ReactResponse {
+    pub merge_request_id: String,
+    pub status: MergeStatus,
+    /// The signed kind-7, ingested.
+    pub reaction: Value,
+    pub id: String,
+    pub relays_used: Vec<String>,
+    #[serde(flatten)]
+    pub publish: crate::api::PublishResponse,
+}
+
+/// The owner's unsigned kind-7 on the local 818 `id`, or why not: 404 when
+/// the 818 is not local, 403 when `pubkey` is neither the `p` the request
+/// names nor the target's author.
+pub(crate) async fn reaction_for(
+    engine: &AppState,
+    id: &str,
+    verdict: char,
+    reason: Option<&str>,
+    pubkey: &str,
+) -> Result<(MergeRequest, crate::signing::EventTemplate), EngineError> {
+    let ev = engine
+        .get_by_id(id, FetchPolicy::LocalOnly)
+        .await?
+        .ok_or_else(|| EngineError::NotFound(format!("no local kind-818 with id {id}")))?;
+    let mr = MergeRequest::from_event(&ev).ok_or_else(|| EngineError::BadRequest(format!("{id} is not a merge request")))?;
+    if pubkey != mr.owner && pubkey != mr.target_pubkey() {
+        return Err(EngineError::Forbidden(format!(
+            "only the owner the merge request is addressed to can answer it ({}…)",
+            &mr.owner[..12]
+        )));
+    }
+    let t = reaction_template(&mr, verdict, reason, super::unix_now_i64()).map_err(EngineError::BadRequest)?;
+    Ok((mr, t))
+}
+
+/// POST /api/v1/merge-requests/react — the target owner's kind-7 on an
+/// 818: `+` merged, `-` declined. Anyone else gets 403. The republish that
+/// a merge means is the review endpoint's job; this is only the verdict.
+pub async fn react_handler(
+    State(engine): State<AppState>,
+    Extension(signing): Extension<crate::signing::SigningController>,
+    Json(req): Json<ReactRequest>,
+) -> Result<Json<ReactResponse>, EngineError> {
+    let id = req.id.trim();
+    if !super::is_hex64(id) {
+        return Err(EngineError::BadRequest("id must be the 818's 64-hex event id".into()));
+    }
+    let verdict = match req.verdict.trim() {
+        "+" => '+',
+        "-" => '-',
+        other => return Err(EngineError::BadRequest(format!("verdict must be + or -, got `{other}`"))),
+    };
+    let (pubkey, signer) = super::resolve_publish_signer(&engine, &signing, crate::api::SignAs::User).await?;
+    let (mr, mut t) = reaction_for(&engine, id, verdict, req.reason.as_deref(), &pubkey).await?;
+    t.pubkey = Some(pubkey.clone());
+    let reaction = signer.sign(t).await.map_err(super::map_publish_sign_error)?;
+    let rid = reaction.get("id").and_then(Value::as_str).unwrap_or("").to_string();
+    let relays_used: Vec<String> = if req.broadcast {
+        let mut urls: Vec<String> = req.relays.clone().unwrap_or_default();
+        let policy = if req.mode_confirm { FetchPolicy::LocalFirst } else { FetchPolicy::LocalOnly };
+        urls.extend(engine.inbox_relays_for(&mr.pubkey, policy, req.mode_confirm).await.unwrap_or_default());
+        urls.extend(engine.provenance_for(&mr.id).await);
+        let mut out: Vec<String> = Vec::new();
+        for u in urls {
+            let n = crate::relay_url::normalize_relay_url(&u);
+            if !n.is_empty() && !out.contains(&n) {
+                out.push(n);
+            }
+        }
+        if out.is_empty() {
+            out = engine.publish_relays().to_vec();
+        }
+        out
+    } else {
+        Vec::new()
+    };
+    let publish = super::finalize_publish(&engine, None, vec![reaction.clone()], req.broadcast, Some(relays_used.clone()), true)
+        .await?
+        .0;
+    Ok(Json(ReactResponse {
+        merge_request_id: mr.id,
+        status: verdict_of(&reaction).unwrap_or_default(),
+        reaction,
+        id: rid,
+        relays_used,
+        publish,
+    }))
 }
 
 #[cfg(test)]
