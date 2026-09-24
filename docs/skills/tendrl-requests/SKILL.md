@@ -66,10 +66,13 @@ jq -r .claude_mcp_add` prints the registration line).
      is used in the anchored text* — the sense here first, then the
      background a reader needs, then where the word comes from — in
      the request's style (the default is a glossary voice: no bullet
-     lists, name the source of the term), `tags` = `[["t",
-     "definition"]]`, `request` = the coordinate, `style` = the
-     request's style. Do not write side notes; one event per term holds
-     it all. Do not define the same term twice.
+     lists, name the source of the term), **`role`: `definition`** (the
+     engine tags it `t: definition`; the reader shows a definition card
+     the user can promote, per event, into the publication's glossary),
+     `request` = the coordinate, `style` = the request's style. Do not
+     write side notes; one event per term holds it all. Do not define
+     the same term twice. `list_insertions` shows each definition's
+     `term`, and `promoted` / `glossary` once the user has folded it in.
    - **Close.** For a record (`rq_…`): `answer_request` with `request_id`,
      a one-paragraph `summary` (what you wrote, what you read, what you
      could not find) and `coordinates` — every `30041:…` you stored, or

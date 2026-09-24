@@ -270,7 +270,7 @@ pub fn catalog() -> Vec<ToolDef> {
         },
         ToolDef {
             name: "propose_insertion",
-            description: "Write a new note ATTACHED to a place in a publication, signed AS THE ASSISTANT with its own key (never the user's) and kept local. This is the right shape for 'write more notes from this section': the note is a kind-30041 section anchored to the section (or the index) you name, with an optional position claim (before / after) the curator can promote it into. It does NOT change the publication — the human folds it in later via promote_insertion or the reader. Sending it to relays is the separate `publish` step. For a request whose `output` is `vocabulary`, write one note PER TERM: `title` = the term, `content` = the definition in the context of the anchored section (sense here, background, origin — everything about the word in one event), `tags` including [\"t\", \"definition\"], and `request` set.",
+            description: "Write a new note ATTACHED to a place in a publication, signed AS THE ASSISTANT with its own key (never the user's) and kept local. This is the right shape for 'write more notes from this section': the note is a kind-30041 section anchored to the section (or the index) you name, with an optional position claim (before / after) the curator can promote it into. It does NOT change the publication — the human folds it in later via promote_insertion or the reader. Sending it to relays is the separate `publish` step. For a request whose `output` is `vocabulary`, write one note PER TERM with `role: definition`: `title` = the term, `content` = the definition in the context of the anchored section (sense here, background, origin — everything about the word in one event), and `request` set.",
             category: ToolCategory::ComposeWrite,
             input_schema: schema_propose_insertion,
         },
@@ -607,6 +607,7 @@ fn schema_propose_insertion() -> Value {
             "context": { "type": "string", "description": "Optional excerpt of the parent this note responds to." },
             "replace": { "type": "string", "description": "Coordinate (30041:pk:d) of YOUR earlier note to replace — the new event reuses its d-tag, so it is a new version, not a second note." },
             "request": { "type": "string", "description": "The `coordinate` of the annotation request this note answers (30041:pk:d, from list_requests). Pass it on every note written for a request — it is what marks the request answered and lets the reader thread the note under it." },
+            "role": { "type": "string", "enum": ["note", "definition"], "description": "note (default), or definition: ONE term's entry — `title` = the term exactly as written in the text, `content` = everything about it as used there (the sense here first, then the background a reader needs, then where the word comes from). Tagged `t: definition`; the reader shows it as a definition card and can promote it, per event, into the publication's glossary. For a vocabulary request write one propose_insertion per term with role: definition." },
             "style": { "type": "string", "description": "Coordinate of the style event (30078:pk:d) this note follows — copy it from the request's `style`. Stamped as a `style` tag so everything written in that style is one search." },
             "links": { "type": "array", "items": { "type": "string" }, "description": "Web URLs the note cites, one `r` tag each — the note's outbound links live in its tags, so a tag-walking reader lists them without parsing the prose." },
             "tags": { "type": "array", "items": { "type": "array", "items": { "type": "string" } }, "description": "Extra tag rows, e.g. [[\"a\", \"30041:pk:d\"]] for a cited coordinate. Anchor, d, title and request rows are set by the engine and cannot be overridden here." }
@@ -1311,6 +1312,10 @@ async fn list_insertions(engine: &Arc<Engine>, input: Value) -> Result<Value> {
                 "parent": i.anchor.parent,
                 "top_level": i.anchor.is_top_level(),
                 "placement": i.anchor.placement,
+                "role": i.role,
+                "term": i.term,
+                "promoted": i.promoted,
+                "glossary": i.glossary,
                 "snippet": snippet,
             })
         })
@@ -1425,6 +1430,7 @@ async fn propose_insertion(cx: &ToolCx, input: Value) -> Result<Value> {
         },
         replace: input.get("replace").and_then(Value::as_str).map(String::from),
         request: input.get("request").and_then(Value::as_str).map(String::from),
+        role: input.get("role").and_then(Value::as_str).map(String::from),
     };
     let (mut template, resolved) =
         crate::api::insertions::insertion_template(&cx.engine, &anchor, &body).await?;
@@ -1445,6 +1451,7 @@ async fn propose_insertion(cx: &ToolCx, input: Value) -> Result<Value> {
         "id": signed.get("id"),
         "coordinate": coordinate,
         "anchor": resolved,
+        "role": body.role.as_deref().unwrap_or("note"),
         "request": body.request,
         "ingested": v["ingested"],
         "note": "Attached and stored locally — not in the index. `publish` broadcasts it; promote_insertion (or the reader's promote) folds it into the structure.",

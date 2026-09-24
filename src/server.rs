@@ -927,6 +927,14 @@ pub async fn start(opts: ServeOptions) -> anyhow::Result<RunningServer> {
             post(api::insertions::insertions_load_handler),
         )
         .route(
+            "/api/v1/insertions/glossary",
+            post(api::insertions::glossary_publish_handler),
+        )
+        .route(
+            "/api/v1/insertions/glossary/preview",
+            post(api::insertions::glossary_preview_handler),
+        )
+        .route(
             "/api/v1/publication/fork",
             post(api::insertions::fork_publish_handler),
         )

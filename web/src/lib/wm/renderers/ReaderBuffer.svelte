@@ -442,11 +442,19 @@
 			}
 		});
 	}
-	function onInsertionPromoted(resp: api.ForkPublishResponse) {
+	function onInsertionPromoted(resp: api.PromotionResponse) {
 		// The owner's promotion is a new version of this very index — reload
 		// so the note renders as a section. A derivative is another
-		// publication; it shows up in the feed under your key.
-		if (resp.derivative || !publication) return;
+		// publication; it shows up in the feed under your key. A glossary
+		// change republishes the index only when it is the owner's (`index`
+		// set); otherwise the glossary lives under their key alone and the
+		// definition card just re-reads its `promoted` flag.
+		if (!publication) return;
+		if ('derivative' in resp && resp.derivative) return;
+		if ('glossary' in resp && !resp.index) {
+			void loadInsertionsNow('local_only');
+			return;
+		}
 		// load() restores a seen focus from focusCache without re-streaming;
 		// the index just changed, so evict it first.
 		focusCache.delete(focusKey(publication.addr.pubkey, publication.addr.d_tag));

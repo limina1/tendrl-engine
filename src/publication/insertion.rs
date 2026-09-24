@@ -613,8 +613,212 @@ pub fn fork_index(
     })
 }
 
+// ---------------------------------------------------------------------------
+// Definitions and the glossary bundle (plan Phase 5c, step 2)
+
+/// A definition: a kind-30041 insertion tagged `t: definition` — one term,
+/// everything about it as used in the anchored text. An annotation request
+/// is never a definition even if both tags are present.
+pub fn is_definition(ev: &Value) -> bool {
+    if ev.get("kind").and_then(Value::as_u64) != Some(30041) {
+        return false;
+    }
+    let tags = event_tags(ev);
+    let has = |v: &str| {
+        tags.iter()
+            .any(|t| t.first().map(String::as_str) == Some("t") && t.get(1).map(String::as_str) == Some(v))
+    };
+    has("definition") && !has(crate::requests::REQUEST_TAG)
+}
+
+/// A glossary bundle: a kind-30040 anchored to a publication (`A`) and
+/// tagged `t: glossary`; its `a` tags are the promoted definitions.
+pub fn is_glossary(ev: &Value) -> bool {
+    is_bundle(ev)
+        && event_tags(ev)
+            .iter()
+            .any(|t| t.first().map(String::as_str) == Some("t") && t.get(1).map(String::as_str) == Some("glossary"))
+}
+
+/// The `d` of a signer's glossary bundle for a root: derived from the
+/// root's `d`, so there is exactly one per signer per publication.
+pub fn glossary_d_tag(root_d: &str) -> String {
+    format!("{root_d}-glossary")
+}
+
+/// Edit a glossary's entry list: keep the existing order, drop `remove`,
+/// append `add` (first occurrence wins; blanks and repeats are dropped).
+pub fn glossary_edit(existing: &[String], add: &[String], remove: &[String]) -> Vec<String> {
+    let rm = |c: &str| remove.iter().any(|r| r.trim() == c);
+    let mut out: Vec<String> = Vec::new();
+    for c in existing.iter().chain(add.iter()) {
+        let c = c.trim();
+        if c.is_empty() || rm(c) || out.iter().any(|o| o == c) {
+            continue;
+        }
+        out.push(c.to_string());
+    }
+    out
+}
+
+/// The glossary bundle template: a 30040 whose `a` tags are `entries`,
+/// anchored to the root with the bundle set (uppercase only). An empty
+/// `entries` is a valid (and deliberate) empty glossary — the new version
+/// that retires every promotion.
+pub fn build_glossary_template(
+    anchor: &InsertionAnchor,
+    entries: &[String],
+    relay_hint: &str,
+    created_at: i64,
+) -> Result<EventTemplate, String> {
+    if anchor.root_kind != 30040 {
+        return Err("a glossary bundle anchors to a 30040 publication".into());
+    }
+    let (_, _, root_d) = coord_parts(&anchor.root).ok_or("root is not a coordinate")?;
+    let mut tags: Vec<Vec<String>> = vec![
+        vec!["d".to_string(), glossary_d_tag(root_d)],
+        vec!["title".to_string(), "Glossary".to_string()],
+        vec!["T".to_string(), "glossary".to_string()],
+        vec!["t".to_string(), "glossary".to_string()],
+        vec!["m".to_string(), "application/json".to_string()],
+    ];
+    for c in entries {
+        coord_parts(c)
+            .filter(|(k, _, _)| *k == 30041)
+            .ok_or_else(|| format!("glossary entry is not a 30041 coordinate: `{c}`"))?;
+        let mut a = vec!["a".to_string(), c.to_string()];
+        if !relay_hint.is_empty() {
+            a.push(relay_hint.to_string());
+        }
+        tags.push(a);
+    }
+    tags.extend(anchor.bundle_tags(relay_hint));
+    Ok(EventTemplate {
+        kind: 30040,
+        created_at,
+        tags,
+        content: String::new(),
+        pubkey: None,
+    })
+}
+
+/// A new version of the owner's index (same `d`, every tag verbatim) with
+/// `a → glossary` present in the appendix slot (after the last `a`) or
+/// absent, as `present` says. `None` when the index already agrees — no
+/// version is minted for nothing. Ownership is the caller's check.
+pub fn index_with_glossary(
+    index: &Value,
+    glossary_coord: &str,
+    present: bool,
+    relay_hint: &str,
+    created_at: i64,
+) -> Result<Option<EventTemplate>, String> {
+    if index.get("kind").and_then(Value::as_u64) != Some(30040) {
+        return Err("only a kind-30040 index carries a glossary".into());
+    }
+    let mut tags = event_tags(index);
+    let pos = tags
+        .iter()
+        .position(|t| t.first().map(String::as_str) == Some("a") && t.get(1).map(String::as_str) == Some(glossary_coord));
+    match (present, pos) {
+        (true, Some(_)) | (false, None) => return Ok(None),
+        (true, None) => {
+            let mut a = vec!["a".to_string(), glossary_coord.to_string()];
+            if !relay_hint.is_empty() {
+                a.push(relay_hint.to_string());
+            }
+            let at = tags
+                .iter()
+                .rposition(|t| t.first().map(String::as_str) == Some("a"))
+                .map(|p| p + 1)
+                .unwrap_or(tags.len());
+            tags.insert(at, a);
+        }
+        (false, Some(p)) => {
+            tags.remove(p);
+        }
+    }
+    Ok(Some(EventTemplate {
+        kind: 30040,
+        created_at,
+        tags,
+        content: index.get("content").and_then(Value::as_str).unwrap_or("").to_string(),
+        pubkey: None,
+    }))
+}
+
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn glossary_edit_keeps_order_dedups_and_removes() {
+        use super::glossary_edit;
+        let existing = vec!["a".to_string(), "b".to_string()];
+        let out = glossary_edit(&existing, &["c".into(), "a".into(), " ".into(), "c".into()], &["b".into()]);
+        assert_eq!(out, vec!["a", "c"]);
+        assert!(glossary_edit(&[], &[], &[]).is_empty());
+        assert!(glossary_edit(&existing, &[], &["a".into(), "b".into()]).is_empty());
+    }
+
+    #[test]
+    fn glossary_template_is_an_anchored_bundle_of_definitions() {
+        use super::*;
+        let pk = "a".repeat(64);
+        let root = format!("30040:{pk}:book");
+        let anchor = InsertionAnchor::top_level(&root, Placement::Annotation).unwrap();
+        let entries = vec![format!("30041:{pk}:def1"), format!("30041:{pk}:def2")];
+        let t = build_glossary_template(&anchor, &entries, "wss://r", 7).unwrap();
+        assert_eq!(t.kind, 30040);
+        assert_eq!(t.tags[0], vec!["d", "book-glossary"]);
+        assert!(t.tags.iter().any(|x| x[0] == "t" && x[1] == "glossary"));
+        let a: Vec<&str> = t.tags.iter().filter(|x| x[0] == "a").map(|x| x[1].as_str()).collect();
+        assert_eq!(a, entries.iter().map(String::as_str).collect::<Vec<_>>());
+        assert!(t.tags.iter().any(|x| x[0] == "A" && x[1] == root));
+        assert!(t.tags.iter().any(|x| x[0] == "K" && x[1] == "30040"));
+        assert!(!t.tags.iter().any(|x| x[0] == "k" || x[0] == "p" || x[0] == "insert"));
+        let ev = serde_json::json!({ "kind": 30040, "pubkey": pk, "tags": t.tags, "content": "" });
+        assert!(is_glossary(&ev));
+        assert!(is_bundle(&ev));
+        // an empty glossary is legal — it retires every promotion
+        let empty = build_glossary_template(&anchor, &[], "", 7).unwrap();
+        assert!(!empty.tags.iter().any(|x| x[0] == "a"));
+        // a non-30041 entry is refused
+        assert!(build_glossary_template(&anchor, &[format!("30040:{pk}:x")], "", 7).is_err());
+    }
+
+    #[test]
+    fn index_with_glossary_adds_at_the_appendix_removes_and_is_idempotent() {
+        use super::*;
+        let pk = "a".repeat(64);
+        let gl = format!("30040:{pk}:book-glossary");
+        let index = serde_json::json!({
+            "kind": 30040, "pubkey": pk, "content": "",
+            "tags": [["d", "book"], ["title", "Book"], ["a", "30041:x:s1"], ["a", "30041:x:s2"], ["t", "fables"]]
+        });
+        let with = index_with_glossary(&index, &gl, true, "wss://r", 9).unwrap().expect("a change");
+        let names: Vec<&str> = with.tags.iter().map(|t| t[0].as_str()).collect();
+        assert_eq!(names, vec!["d", "title", "a", "a", "a", "t"], "spliced after the last a");
+        assert_eq!(with.tags[4][1], gl);
+        assert_eq!(with.tags[0][1], "book", "same d — a new version, not a derivative");
+        // already present → nothing to do; absent + present:false → nothing to do
+        let ev2 = serde_json::json!({ "kind": 30040, "pubkey": pk, "content": "", "tags": with.tags });
+        assert!(index_with_glossary(&ev2, &gl, true, "", 9).unwrap().is_none());
+        assert!(index_with_glossary(&index, &gl, false, "", 9).unwrap().is_none());
+        let without = index_with_glossary(&ev2, &gl, false, "", 9).unwrap().expect("removed");
+        assert!(!without.tags.iter().any(|t| t[0] == "a" && t[1] == gl));
+        assert_eq!(without.tags.len(), 5);
+    }
+
+    #[test]
+    fn a_definition_is_a_30041_tagged_definition_but_never_a_request() {
+        use super::*;
+        let def = serde_json::json!({ "kind": 30041, "tags": [["d", "x"], ["t", "definition"]] });
+        assert!(is_definition(&def));
+        let req = serde_json::json!({ "kind": 30041, "tags": [["t", "definition"], ["t", "annotation-request"]] });
+        assert!(!is_definition(&req));
+        let idx = serde_json::json!({ "kind": 30040, "tags": [["t", "definition"]] });
+        assert!(!is_definition(&idx));
+    }
     #[test]
     fn bundle_anchor_parent_is_root_and_children_untouched() {
         use super::*;
