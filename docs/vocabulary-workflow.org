@@ -61,7 +61,7 @@ digraph workflow {
   subgraph cluster_reader { label="Reader (web, annotate mode)"; style="rounded"; color="#bbb"; fontsize=10;
     read   [label="reading a section\n(30041 in a 30040)"];
     select [label="selects undefined words\n(or leaves the list empty:\n\"find the vocabulary\")"];
-    ask    [label="Ask → AnnotationRequestModal\noutput = vocabulary\nterm… · context · style"];
+    ask    [label="annotate → AnnotationRequestModal\noutput = vocabulary\nterm… · context · style"];
     record [label="request record\n(local, unsigned)\n<data_dir>/requests/", fillcolor="#fff3cd"];
     signed [label="signed request\n30041 · t: annotation-request\noutput: vocabulary · term…", fillcolor="#fff3cd"];
     read -> select -> ask -> record;
