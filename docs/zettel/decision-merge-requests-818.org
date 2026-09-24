@@ -1,0 +1,82 @@
+#+TITLE: Decision: merge requests on publications are NIP-54's kind 818, not NIP-34
+#+TYPE: decision
+#+STATUS: current
+#+DATE: 2026-09-24
+
+* The decision
+
+When someone wants an owner to take their change to a publication —
+a relinked section, a glossary, a promoted insertion — they publish a
+*derivative* under their own key and one *kind-818 merge request*
+addressed to the owner. Kind 818 is NIP-54's: =a= the target, =e= the
+base version, =e … source= the event to merge, =p= the owner; the
+owner answers with a NIP-25 reaction (=+= merged, =-= declined, content
+optional). The one extension: NIP-54 says the source MUST be a 30818;
+here the target and source may be a 30040 or a 30041 of the same
+kind, stated in [[file:../../nips/NKBIP-01-insertions.org][NKBIP-01
+insertions]] § Merge requests.
+
+*Merge* is the owner republishing their own version under their own
+=d= from base + source, then reacting =+=. *Decline* is =-= with a
+reason. "Partial" is not a third verb: the owner opens the computed
+merged result in the composer, edits, signs, and the engine reacts =+=.
+Status is derived on every read from the newest kind-7 by the target
+owner (the =git.rs= pattern); nothing is recorded. Anyone may fork or
+relink; the 818 is a request, not a claim. The derivative stays on
+relays as the requester's fork.
+
+* Why not NIP-34
+
+- Its payload is git: a patch is =git format-patch= bytes, a PR a
+  commit id on a clone URL. A publication has no repository; the
+  version *is* the signed event, so NIP-34 would need a fake 30617 per
+  publication or an invented diff format.
+- Its status machinery assumes a maintainer set from a repo
+  announcement; a publication's maintainer is the signer of the index,
+  which the engine already knows.
+- The fork half already exists: =fork_index= mints a derivative with
+  =E=/=p= back-pointers. Only "please merge this" was missing, and 818
+  is that event.
+
+* Why 818 fits 30041s better than it fits wikis
+
+NIP-54's =d= is the slug, so a fork is the same =d= under another key
+and 818 exists to fold it back. A 30041 has an opaque =d=; two versions
+by two people are two events, and an 818 between them says exactly
+which one the owner is asked to take.
+
+* Built (2026-09-24)
+
+=src/publication/merge_request.rs= (818 template/parse, status from the
+newest kind-7 by the owner, =fork_section=, =derivative_index=,
+=destination_set=, =line_diff= / =index_diff=), =src/api/merge_requests.rs=
+(=GET /merge-requests=, =POST /merge-requests/destinations=, =/react=,
+=GET /:id/diff= — the owner's *next versions* computed against their current
+version — =POST /:id/merge=, =/:id/decline=, =GET /:id/review=). A foreign
+relink (=POST /publication/relink=) signs the derivative sections and index
+and the 818 (source = index′). Web: the relink modal's fork path (the 818
+preview, destination chips with reasons, the armed send) and the review
+buffer (diff, event preview, decline − / merge + armed, verdict badges).
+
+* Consequences
+
+- The review is engine work: pair source with base (the 818's =e=, else
+  the newest local version; say so when the target moved on), a content
+  diff per section (line hunks, word marks), a structural diff of the
+  index's =a= list, and — the point — *the owner's next version*, which
+  is what the diff shows and what the armed button signs. Derivative
+  sections therefore carry =E= to the copied version so they pair.
+- Routing is inbox-side ([[file:decision-asks-routing.org][decision]]).
+- An 818 for you is an *ask* ([[file:feat-notifications.org][notifications]]);
+  it renders as an ordinary annotation card, ask colour, anchored to
+  its target.
+- The agent may review (=get_ask_diff= → =review_ask=, a local record)
+  and prepare the merged draft; merge, decline, relink and the 818
+  itself are always the user's key
+  ([[file:decision-assistant-signs-own-key.org][decision]]).
+
+* Related
+- [[file:index.org][Index]]
+- [[file:idea-vocabulary-requests.org][Vocabulary requests]] — the first use
+- [[file:feat-insertions.org][Insertions]] — promotion by a non-owner is the same 818
+- [[file:../vocabulary-workflow.org][The design]] § Merge requests

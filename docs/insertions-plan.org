@@ -514,6 +514,111 @@ beside the reader rather than a plain open, requests as badged cards.
 - [ ] decide =d3-force= only after a real 100-card set is on screen
       (→ Open follow-ups)
 
+** Phase 5c — Vocabulary requests, merge requests, notifications        :medium:
+Design approved 2026-09-24 in [[file:vocabulary-workflow.org][vocabulary-workflow]]
+(prototype artifact =JFf3nz9UQjPLew6oBj96oB= v5); zettels
+[[file:zettel/idea-vocabulary-requests.org][idea-vocabulary-requests]],
+[[file:zettel/decision-merge-requests-818.org][decision-merge-requests-818]],
+[[file:zettel/feat-notifications.org][feat-notifications]],
+[[file:zettel/decision-asks-routing.org][decision-asks-routing]]. Built 2026-09-24 in
+order on a chain of branches (=feat/vocab-request= → =feat/vocab-definitions= →
+=feat/vocab-relink= (+ =feat/merge-requests=) → =feat/notifications=), each
+live-verified with the =scripts/verify/= harnesses listed in =docs/commands.org=;
+the chain merges back onto =feat/annotations-table=.
+
+*Step 1 — the ask* (=feat/vocab-request=, built 2026-09-24: engine =4a75507=, web =a21ec5e=, harness =scripts/verify/vocab-request.mjs= 15/15 live)
+- [X] =requests.rs=: =output: vocabulary= + =terms: Vec<String>= on the record
+      and as =term= tags on the signed 30041; =content= generated engine-side
+      ("define these words in the context of these events: a, b" / the
+      empty form); =context= = the paragraphs the terms fall in
+- [X] =tools.rs::list_requests= hands =terms= to the agent; skill branch
+      =output: vocabulary= → one =propose_insertion= per term with
+      =role: definition=
+- [X] =AnnotationRequestModal=: third output seg; the section content
+      rendered word by word (hover · drag-highlight · click a highlight
+      removes it); generated content line; *event preview* (unsigned JSON
+      + tags) at the foot — the general pattern for every event-creating
+      modal (=feat-ui-patterns=)
+- [X] capture action reads *annotate*; annotate mode + a selection opens
+      the modal with the selection pre-highlighted (≤ 4 words)
+
+*Step 2 — definitions* (=feat/vocab-definitions=, built 2026-09-24: engine =d0a0404=, web =cfb598f=; live API 8/8 + GUI harness)
+- [X] =insertion.rs::InsertionRole::Definition= from =t: definition=;
+      =propose_insertion= gains =role= (sets =t=, =T= from title);
+      =insertions/load= tags =role: definition=
+- [X] =InsertionCard= "def" badge, term chip; table =role= filter; hover on
+      a ={{ref}}= to a definition shows its first lines
+- [X] promotion *per definition event*: card button → the glossary bundle
+      (a 30040 in the appendix slot) gains/loses that =a=; index republished;
+      glossary lists exactly the promoted ones
+      Note: a promoted definition renders through the reader's nested-index
+      row ("▸ Glossary · N items", collapsed by default) — the glossary bundle
+      is an ordinary sub-index. Follow-up: expand a =t: glossary= sub-index by
+      default. Found on the way: the =#A= load filter only asked for 30041, so
+      bundles never loaded — fixed in =d0a0404=.
+
+*Step 3 — relink, own publication* (=feat/vocab-relink=, built 2026-09-24: =link_terms= =8a124e6=, engine =35e703e=, web =a383179=; live API 8/8 + GUI 10/10)
+- [X] =nostrdown::link_terms(content, format, &[(term, coord)]) -> (String, Vec<Hunk>)=,
+      pure: first occurrence per section, skip code / headings / existing
+      links / anything inside ={{ }}=; display keeps the author's wording
+- [X] =POST /publication/relink/preview= + =/relink=: per-section hunks +
+      =a= tags, index structural diff, per-definition glossary selection;
+      publish = new versions under the same =d= (sign_as user), local
+      until broadcast
+- [X] reader: the request card's "relink N terms ▸" → diff gate → armed
+      sign; refs render as links
+      Also: a definition ref resolves with its first sentence as =summary=
+      (=9fb4d74=), so the hover card shows the sense. =link_terms= skips a
+      term the text already references (idempotent). "open in composer" is a
+      disabled placeholder in the modal.
+
+*Step 4 — foreign publication: derivative + 818* (=feat/merge-requests= =4642f2f= + =feat/vocab-relink= =d7d904d= / web =5ae99dc=; built 2026-09-24, two-key API 14/14; GUI of the foreign modal pending a two-key harness)
+- [X] section copy process (=fork_section=): every tag verbatim, minted
+      =d=, =E= to the copied version, =p= to its author; =fork_index=
+      reused for the index
+- [X] =publication/merge_request.rs=: 818 template + parse (=a= target
+      30040/30041, =e= base, =e … source=, =p= owner), status from the
+      newest kind-7 by the target owner; spec clause in
+      =nips/NKBIP-01-insertions.org=
+- [X] routing: =engine.inbox_relays_for(pubkey)= (10002 via the indexer
+      composition → =read_relays()=), =destination_set(target, owner)= =
+      inbox ∪ provenance (=note.relays()=) ∪ =a=-tag hints ∪ mine, each
+      with a reason; refuse when inbox and provenance are both unknown;
+      the Confirm modal lists relay + reason
+- [X] =/relink= on a foreign root → derivative + 818 (+ 818 event preview)
+
+*Step 5 — notifications + review* (=feat/notifications=: rules/prefs/list/fetch =333b4ea=, web bell/list/settings =e92b061=, live API 7/7 + GUI 7/7 2026-09-24; review =17e8a59= / web =68bcbb5=; live API 14/14 + GUI 11/11 2026-09-24)
+- [X] =notifications.rs=: =Rule= per kind (tag → mine), defaults (818 /
+      7-on-my-818 / signed requests on mine) + optional kinds (1111, 9802,
+      7, 9735, 30045, any =p=); prefs in =<data_dir>/notifications.json=;
+      =GET /api/v1/notifications= (asks · activity · mine), =GET/PUT
+      /notifications/prefs=, =POST /notifications/fetch= (Confirm-gated,
+      one filter per rule, my read relays ∪ my provenance relays)
+- [X] =GET /notifications/:id/diff=: base pairing (the 818's =e=, else
+      newest local; say when the target moved on), content hunks, index
+      structural diff, *the owner's next version*
+- [X] =POST /notifications/:id/merge= (sign next versions, same =d= + kind
+      7 =+= + broadcast) · =/decline= (kind 7 =-=, reason as content)
+- [X] web: Settings › Notifications (checkable kinds, count | list); 🔔
+      modeline pill (desktop) / ☰ drawer status row (phone) → the list
+      (=AnnotationsList= across publications, ask colour); an 818 as an
+      ordinary card under its target (=role: ask= in the load pass);
+      =MergeRequestReview= on the diff-gate primitive: decline − · open
+      merged result in composer · merge + (armed)
+
+*Step 6 — the agent* (on =feat/notifications= =3fc4a6c=, 2026-09-24)
+- [X] tools: =list_asks= · =get_ask_diff= · =review_ask= (a structured
+      RESULT kept as a local record — not an event) · =prepare_merge=
+      (the owner's next version as an unsigned draft) · =fetch_asks=
+      (Network); no =merge_ask= / =decline_ask=
+- [X] =/tendrl-requests= skill: vocabulary branch; merge-request branch
+      (=get_ask_diff= → =review_ask=; =prepare_merge= only when asked);
+      verdicts reported; ends with what still needs the user's key
+
+*Follow-ups (not in 5c)*
+- [ ] nostrdown multi-target ref ={{ref:a,b|display}}= → chooser
+- [ ] live relay subscription for =#p me= (engine-held; the agent still pulls)
+
 ** Phase 6 — Docs and kasten                                               :small:
 - [ ] =feat-assistant= → context set, MCP surface, signing: shipped
 - [ ] =feat-discussions= → insertions as the third member: shipped

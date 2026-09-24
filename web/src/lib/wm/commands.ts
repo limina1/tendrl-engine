@@ -69,6 +69,7 @@ export const commands: Command[] = [
 	{ id: 'tendrl-show-event-json', name: 'tendrl-show-event-json', hiddenByDefault: true, description: 'Show the raw JSON of the focused event', category: 'View', scope: 'contextual', context: 'a focused buffer carrying an event' },
 	{ id: 'tendrl-highlight-mode', name: 'tendrl-highlight-mode', hiddenByDefault: true, description: 'Toggle highlight mode — select text in a reader/doc to publish a NIP-84 highlight', category: 'View', scope: 'contextual', context: 'a reader or doc buffer, then a text selection' },
 	{ id: 'tendrl-annotations-table', name: 'tendrl-annotations-table', description: "Open the annotations table for the focused reader's publication — beside it on desktop, as its own view on mobile", category: 'View', scope: 'contextual', context: 'a reader buffer', keybinding: 'SPC b o t' },
+	{ id: 'tendrl-notifications', name: 'tendrl-notifications', description: 'Open notifications — what is for you: asks that need an act, and the activity kinds you chose in Settings › Notifications', category: 'View', scope: 'opener', keybinding: 'SPC b o n' },
 	// Versioning
 	{ id: 'tendrl-undo', name: 'tendrl-undo', hiddenByDefault: true, description: 'Undo the last action', category: 'Versioning', scope: 'contextual', context: 'an editable buffer', deferred: true },
 	{ id: 'tendrl-redo', name: 'tendrl-redo', hiddenByDefault: true, description: 'Redo', category: 'Versioning', scope: 'contextual', context: 'an editable buffer', deferred: true },

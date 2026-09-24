@@ -37,10 +37,183 @@
 	let title = $state('');
 	let context = $state(open?.context ?? '');
 	let scope = $state<string[]>(['section']);
-	let output = $state<'notes' | 'kasten'>('notes');
+	let output = $state<'notes' | 'kasten' | 'vocabulary'>('notes');
 	let sign = $state(false);
 	let broadcast = $state(false);
 	let posting = $state(false);
+
+	// ---- vocabulary: mark words in the section's own content -------------
+	// The words to define are highlights on the text, not a typed list. The
+	// engine generates the request's content line from them; this window
+	// shows the same line so what is signed is what is seen.
+	type Word = { w: string; pi: number };
+	type Mark = { from: number; to: number };
+	const clean = (w: string) => w.replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$/gu, '');
+	function paragraphsOf(content: string): string[] {
+		return content
+			.split(/\n\s*\n/)
+			.map((p) => p.replace(/\s+/g, ' ').trim())
+			.filter(Boolean);
+	}
+	function wordsOf(content: string): Word[] {
+		const out: Word[] = [];
+		paragraphsOf(content).forEach((p, pi) => p.split(' ').forEach((w) => out.push({ w, pi })));
+		return out;
+	}
+	let sectionContent = $state<string | null>(open?.content ?? null);
+	let loadingContent = $state(false);
+	const words = $derived(sectionContent ? wordsOf(sectionContent) : []);
+	let marks = $state<Mark[]>([]);
+	let drag = $state<number | null>(null);
+	let dragTo = $state<number | null>(null);
+	const terms = $derived(
+		marks
+			.slice()
+			.sort((x, y) => x.from - y.from)
+			.map((m) =>
+				words
+					.slice(m.from, m.to + 1)
+					.map((x) => clean(x.w))
+					.join(' ')
+			)
+			.filter(Boolean)
+	);
+	/** The paragraphs the marks fall in — the sense in this text. */
+	const markedContext = $derived.by(() => {
+		if (!sectionContent) return '';
+		const paras = paragraphsOf(sectionContent);
+		const pis = new Set(marks.map((m) => words[m.from]?.pi).filter((x) => x !== undefined));
+		if (pis.size === 0) return '';
+		return [...pis].sort((a, b) => a - b).map((pi) => paras[pi]).join('\n\n');
+	});
+	/** What the engine will put in `content` — mirrored here, never typed. */
+	const generatedTask = $derived(
+		terms.length
+			? `define these words in the context of these events: ${terms.join(', ')}`
+			: 'find the words these events use but never define, and define them in their context'
+	);
+	function isMarked(i: number): boolean {
+		return marks.some((m) => i >= m.from && i <= m.to);
+	}
+	function inDrag(i: number): boolean {
+		if (drag === null || dragTo === null) return false;
+		return i >= Math.min(drag, dragTo) && i <= Math.max(drag, dragTo);
+	}
+	function markDown(i: number) {
+		if (posting) return;
+		drag = i;
+		dragTo = i;
+	}
+	function markOver(i: number) {
+		if (drag !== null) dragTo = i;
+	}
+	function markUp(i: number) {
+		if (drag === null) return;
+		const from = Math.min(drag, i);
+		const to = Math.max(drag, i);
+		drag = null;
+		dragTo = null;
+		const hit = marks.findIndex((m) => !(to < m.from || from > m.to));
+		if (hit >= 0 && from === to) {
+			// A click on a highlighted word removes that highlight.
+			marks = marks.filter((_, k) => k !== hit);
+		} else {
+			// A new phrase replaces any it overlaps.
+			marks = [...marks.filter((m) => to < m.from || from > m.to), { from, to }];
+		}
+		schedulePreview();
+	}
+	function dragCancel() {
+		drag = null;
+		dragTo = null;
+	}
+	function clearMarks() {
+		marks = [];
+		schedulePreview();
+	}
+	/** Pre-highlight a short selection (≤ 4 words) as one phrase. */
+	function premark(phrase: string) {
+		const parts = phrase
+			.trim()
+			.split(/\s+/)
+			.map((x) => clean(x).toLowerCase())
+			.filter(Boolean);
+		if (parts.length === 0 || parts.length > 4) return;
+		for (let i = 0; i + parts.length <= words.length; i++) {
+			if (parts.every((pt, k) => clean(words[i + k].w).toLowerCase() === pt)) {
+				marks = [{ from: i, to: i + parts.length - 1 }];
+				return;
+			}
+		}
+	}
+	async function ensureContent() {
+		if (sectionContent !== null || loadingContent) return;
+		const coord = topLevel ? root : parent;
+		const [k, pk, ...d] = coord.split(':');
+		if (!k || !pk || d.length === 0) return;
+		loadingContent = true;
+		try {
+			const r = await api.getAddressable(Number(k), pk, d.join(':'), 'local_first');
+			const ev = r.event as { content?: string } | null;
+			sectionContent = ev?.content ?? '';
+		} catch {
+			sectionContent = '';
+		} finally {
+			loadingContent = false;
+		}
+		if (open?.context) premark(open.context);
+		schedulePreview();
+	}
+	function setOutput(o: 'notes' | 'kasten' | 'vocabulary') {
+		output = o;
+		if (o === 'vocabulary') {
+			if (sectionContent === null) void ensureContent();
+			else if (marks.length === 0 && open?.context) premark(open.context);
+		}
+		schedulePreview();
+	}
+
+	// ---- event preview: the unsigned 30041 this window would sign --------
+	// Refreshed from the handlers that change the form (debounced), not from
+	// an $effect over the whole form — an async read of $state inside an
+	// effect loops (project_effect_async_state_loop).
+	let preview = $state<api.RequestPreview['event'] | null>(null);
+	let previewOpen = $state(true);
+	let previewTimer: ReturnType<typeof setTimeout> | null = null;
+	let previewSeq = 0;
+	function previewBody() {
+		return {
+			root,
+			parent: topLevel ? undefined : parent,
+			parent_event_id: open?.parentEventId,
+			parent_title: open?.parentTitle ?? undefined,
+			title: title.trim() || undefined,
+			task: output === 'vocabulary' ? undefined : task.trim() || undefined,
+			scope,
+			context: output === 'vocabulary' ? markedContext || undefined : context.trim() || undefined,
+			output,
+			terms: output === 'vocabulary' ? terms : undefined,
+			style: style || undefined
+		};
+	}
+	function schedulePreview() {
+		if (previewTimer) clearTimeout(previewTimer);
+		previewTimer = setTimeout(() => void refreshPreview(), 250);
+	}
+	async function refreshPreview() {
+		if (!root) return;
+		const seq = ++previewSeq;
+		try {
+			const r = await api.previewRequest(previewBody());
+			if (seq === previewSeq) preview = r.event;
+		} catch {
+			if (seq === previewSeq) preview = null;
+		}
+	}
+	function tagLine(t: string[]): string {
+		return JSON.stringify(t);
+	}
+	schedulePreview();
 
 	// Writing style: one of the local style events, or a new one written
 	// here (signed by you when you can sign, else by the assistant — a style
@@ -73,7 +246,9 @@
 		}
 	}
 	const yielding = $derived(posting && confirmState.intent?.type === 'publish_intent');
-	const canPost = $derived(!posting && !!root && task.trim().length > 0 && (!sign || canSign));
+	const canPost = $derived(
+		!posting && !!root && (output === 'vocabulary' || task.trim().length > 0) && (!sign || canSign)
+	);
 
 	// Requests already on this place.
 	let existing = $state<api.AnnotationRequest[]>([]);
@@ -105,6 +280,7 @@
 	function toggleScope(id: string) {
 		scope = scope.includes(id) ? scope.filter((s) => s !== id) : [...scope, id];
 		if (scope.length === 0) scope = ['section'];
+		schedulePreview();
 	}
 	function relTime(ts: number): string {
 		const s = Math.max(0, Math.floor(Date.now() / 1000 - ts));
@@ -128,10 +304,12 @@
 				parent_event_id: open?.parentEventId,
 				parent_title: open?.parentTitle ?? undefined,
 				title: title.trim() || undefined,
-				task: task.trim(),
+				// vocabulary: the engine generates the content line from `terms`
+				task: output === 'vocabulary' ? generatedTask : task.trim(),
 				scope,
-				context: context.trim() || undefined,
+				context: output === 'vocabulary' ? markedContext || undefined : context.trim() || undefined,
 				output,
+				terms: output === 'vocabulary' ? terms : undefined,
 				style: style || undefined,
 				sign,
 				broadcast: sign && broadcast
@@ -201,7 +379,7 @@
 		<header class="rq-header">
 			<h3 class="rq-title">
 				<span class="rq-dot" aria-hidden="true">●</span>
-				ask for notes
+				annotate
 				{#if topLevel}
 					<span class="rq-title__on">— on the publication</span>
 				{:else if open?.parentTitle}
@@ -230,20 +408,76 @@
 			{/if}
 		</div>
 
-		<label class="rq-label" for="rq-task">the ask</label>
-		<!-- svelte-ignore a11y_autofocus -->
-		<textarea
-			id="rq-task"
-			class="rq-input rq-task"
-			data-entry
-			autofocus
-			placeholder="What should the notes be about? e.g. derive this two ways — closed form and iterative — with the fields that use each, and where the idea came from"
-			bind:value={task}
-			disabled={posting}
-		></textarea>
+		<div class="rq-label">output</div>
+		<div class="rq-seg" role="radiogroup" aria-label="Output">
+			<button class="rq-seg__opt" class:on={output === 'notes'} role="radio" aria-checked={output === 'notes'} onclick={() => setOutput('notes')} disabled={posting} title="Loose notes attached to the place">notes</button>
+			<button class="rq-seg__opt" class:on={output === 'kasten'} role="radio" aria-checked={output === 'kasten'} onclick={() => setOutput('kasten')} disabled={posting} title="Several notes plus an index grouping them — promotable as a sub-chapter">kasten</button>
+			<button class="rq-seg__opt" class:on={output === 'vocabulary'} role="radio" aria-checked={output === 'vocabulary'} onclick={() => setOutput('vocabulary')} disabled={posting} title="One definition event per word, anchored here — highlight the words in the text">vocabulary</button>
+		</div>
+
+		{#if output === 'vocabulary'}
+			<div class="rq-label">
+				words
+				<span class="rq-label__sub">· drag over a word or phrase to highlight it, click a highlight to remove it · {terms.length ? `${terms.length} highlighted` : 'none = find the vocabulary this section leaves undefined'}</span>
+				{#if terms.length}
+					<button class="rq-mini rq-mini--inline" onclick={clearMarks} disabled={posting}>clear</button>
+				{/if}
+			</div>
+			{#if loadingContent}
+				<div class="rq-help">loading the section…</div>
+			{:else if words.length === 0}
+				<div class="rq-help">no section content to mark — the request will ask for the undefined vocabulary of this place</div>
+			{:else}
+				<!-- svelte-ignore a11y_no_static_element_interactions -->
+				<div class="rq-words" onmouseleave={dragCancel} role="group" aria-label="Section content — highlight the words to define">
+					{#each paragraphsOf(sectionContent ?? '') as _p, pi (pi)}
+						<p>
+							{#each words as w, i (i)}
+								{#if w.pi === pi}
+									<!-- svelte-ignore a11y_no_static_element_interactions -->
+									<!-- svelte-ignore a11y_mouse_events_have_key_events -->
+									<span
+										class="rq-word"
+										class:on={isMarked(i)}
+										class:drag={inDrag(i)}
+										onmousedown={(e) => {
+											e.preventDefault();
+											markDown(i);
+										}}
+										onmouseover={() => markOver(i)}
+										onmouseup={() => markUp(i)}
+									>{w.w}</span>{' '}
+								{/if}
+							{/each}
+						</p>
+					{/each}
+				</div>
+			{/if}
+			<div class="rq-label">content <span class="rq-label__sub">· generated from the highlights; “these events” = the anchor and scope</span></div>
+			<div class="rq-gen" class:rq-gen--empty={terms.length === 0}>
+				{#if terms.length}
+					define these words in the context of these events: <span class="rq-gen__words">{terms.join(', ')}</span>
+				{:else}
+					{generatedTask}
+				{/if}
+			</div>
+		{:else}
+			<label class="rq-label" for="rq-task">the ask</label>
+			<!-- svelte-ignore a11y_autofocus -->
+			<textarea
+				id="rq-task"
+				class="rq-input rq-task"
+				data-entry
+				autofocus
+				placeholder="What should the notes be about? e.g. derive this two ways — closed form and iterative — with the fields that use each, and where the idea came from"
+				bind:value={task}
+				oninput={schedulePreview}
+				disabled={posting}
+			></textarea>
+		{/if}
 
 		<label class="rq-label" for="rq-title">title <span class="rq-label__sub">· optional, for what gets written</span></label>
-		<input id="rq-title" class="rq-input" data-entry bind:value={title} disabled={posting} placeholder="Linear regression, two ways" />
+		<input id="rq-title" class="rq-input" data-entry bind:value={title} oninput={schedulePreview} disabled={posting} placeholder="Linear regression, two ways" />
 
 		<div class="rq-label">scope <span class="rq-label__sub">· hints for whoever answers</span></div>
 		<div class="rq-chips">
@@ -258,15 +492,9 @@
 			{/each}
 		</div>
 
-		<div class="rq-label">output</div>
-		<div class="rq-seg" role="radiogroup" aria-label="Output">
-			<button class="rq-seg__opt" class:on={output === 'notes'} role="radio" aria-checked={output === 'notes'} onclick={() => (output = 'notes')} disabled={posting} title="Loose notes attached to the place">notes</button>
-			<button class="rq-seg__opt" class:on={output === 'kasten'} role="radio" aria-checked={output === 'kasten'} onclick={() => (output = 'kasten')} disabled={posting} title="Several notes plus an index grouping them — promotable as a sub-chapter">kasten</button>
-		</div>
-
 		<div class="rq-label">style <span class="rq-label__sub">· how the notes should be written</span></div>
 		<div class="rq-style">
-			<select class="rq-select" bind:value={style} disabled={posting}>
+			<select class="rq-select" bind:value={style} onchange={schedulePreview} disabled={posting}>
 				<option value="">— none —</option>
 				{#each stylesList() as s (s.coordinate)}
 					<option value={s.coordinate}>{s.title}</option>
@@ -290,9 +518,14 @@
 			</div>
 		{/if}
 
-		{#if context.trim()}
+		{#if output === 'vocabulary'}
+			{#if markedContext}
+				<div class="rq-label">context <span class="rq-label__sub">· the paragraphs the highlights fall in travel with the request</span></div>
+				<div class="rq-style-preview">{markedContext}</div>
+			{/if}
+		{:else if context.trim()}
 			<label class="rq-label" for="rq-context">from your selection</label>
-			<textarea id="rq-context" class="rq-input rq-context" data-entry bind:value={context} disabled={posting}></textarea>
+			<textarea id="rq-context" class="rq-input rq-context" data-entry bind:value={context} oninput={schedulePreview} disabled={posting}></textarea>
 		{/if}
 
 		<div class="rq-sign">
@@ -315,12 +548,21 @@
 			{/if}
 		</div>
 
+		<details class="rq-preview" bind:open={previewOpen}>
+			<summary class="rq-label rq-preview__sum">event preview <span class="rq-label__sub">· the unsigned kind-30041 “sign” will sign — tags as they will be emitted</span></summary>
+			{#if preview}
+				<pre class="rq-preview__pre">{`{ "kind": ${preview.kind},\n  "content": ${JSON.stringify(preview.content)},\n  "tags": [\n${preview.tags.map((t) => '    ' + tagLine(t)).join(',\n')}\n  ] }`}</pre>
+			{:else}
+				<div class="rq-help">preview unavailable — the engine builds this from the same fields the request is saved with</div>
+			{/if}
+		</details>
+
 		<footer class="rq-foot">
 			<span class="rq-hint">Ctrl-Enter</span>
 			<span class="rq-spacer"></span>
 			<button class="rq-btn" onclick={close} disabled={posting}>Cancel</button>
 			<button class="rq-btn rq-btn--post" onclick={submit} disabled={!canPost}>
-				{posting ? 'Saving…' : sign ? 'sign · ask' : 'ask'}
+				{posting ? 'Saving…' : sign ? 'sign · keep local' : 'save request'}
 			</button>
 		</footer>
 
@@ -663,5 +905,91 @@
 	.rq-mini:hover {
 		color: var(--fg);
 		border-color: var(--base5);
+	}
+	.rq-mini--inline {
+		margin-left: 6px;
+		text-transform: none;
+		letter-spacing: 0;
+	}
+	/* vocabulary: the section's content, word by word */
+	.rq-words {
+		font-family: var(--font-serif);
+		font-size: var(--t-md);
+		line-height: 1.6;
+		color: var(--fg);
+		background: var(--bg-surface);
+		border: 1px solid var(--panel-border);
+		border-radius: var(--r-sm);
+		padding: 8px 12px;
+		max-height: 240px;
+		overflow: auto;
+		user-select: none;
+		cursor: crosshair;
+	}
+	.rq-words p {
+		margin: 0 0 8px;
+	}
+	.rq-words p:last-child {
+		margin-bottom: 0;
+	}
+	.rq-word {
+		border-radius: 2px;
+		padding: 0 1px;
+		transition: background 0.08s;
+	}
+	.rq-word:hover {
+		background: color-mix(in srgb, var(--id-diverged) 28%, transparent);
+	}
+	.rq-word.drag {
+		background: color-mix(in srgb, var(--id-diverged) 28%, transparent);
+	}
+	.rq-word.on {
+		background: color-mix(in srgb, var(--green) 32%, transparent);
+		color: var(--base8);
+		box-shadow: 0 1px 0 var(--green);
+	}
+	.rq-word.on:hover {
+		background: color-mix(in srgb, var(--red) 30%, transparent);
+		box-shadow: 0 1px 0 var(--red);
+	}
+	.rq-gen {
+		font-family: var(--font-serif);
+		font-size: var(--t-md);
+		line-height: 1.5;
+		color: var(--fg);
+		background: var(--bg-surface);
+		border: 1px solid var(--panel-border);
+		border-left: 3px solid var(--id-remote);
+		border-radius: var(--r-sm);
+		padding: 6px 10px;
+	}
+	.rq-gen--empty {
+		color: var(--base5);
+		font-style: italic;
+	}
+	.rq-gen__words {
+		color: var(--green);
+	}
+	.rq-preview {
+		margin-top: 6px;
+	}
+	.rq-preview__sum {
+		cursor: pointer;
+		margin-top: 0;
+	}
+	.rq-preview__pre {
+		margin: 4px 0 0;
+		font-family: var(--font-mono);
+		font-size: calc(var(--t-xs) - 1px);
+		line-height: 1.5;
+		color: var(--base7);
+		background: var(--bg-surface);
+		border: 1px solid var(--panel-border);
+		border-radius: var(--r-sm);
+		padding: 6px 10px;
+		max-height: 260px;
+		overflow: auto;
+		white-space: pre-wrap;
+		word-break: break-word;
 	}
 </style>

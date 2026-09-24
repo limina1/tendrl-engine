@@ -1421,6 +1421,7 @@ body { font-size: var(--t-base); }
   white-space: nowrap;
 }
 .pill--ghost { border: 1px solid var(--base3); color: var(--base6); }
+.pill--notif { border: 1px solid rgba(226, 164, 120, 0.5); color: var(--orange); }
 .pill--local { background: color-mix(in srgb, var(--id-local) 12%, transparent); color: var(--id-local); }
 /* `json` action pill — clickable, opens the row's underlying event in
    the structured EventViewModal. Tinted with --id-yours to match the

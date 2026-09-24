@@ -182,6 +182,55 @@ as a publication. Promotion is NKBIP-01 nesting: the curator adds the
 bundle's coordinate as an =a= in their own index, and the bundle
 becomes a sub-chapter without any event being re-authored.
 
+* Definitions: a vocabulary request and its answers
+
+An annotation request whose =output= is =vocabulary= carries one
+=["term", <word or phrase>]= per word to define (none = "find the
+words these events use but never define") and, as content, the
+generated line =define these words in the context of these events:
+<terms>= — "these events" being its anchor tags and whatever =scope=
+adds. Each answer is an ordinary insertion tagged =["t", "definition"]=
+with =title= = the term and =T= its slug, anchored like any insertion,
+=["request", <coordinate>]= pointing at the ask. One event per term
+holds everything relevant to it. Because =d= is an opaque nanoid, any
+number of definitions of one word may coexist; this specification
+deliberately does not use NIP-54's slug-as-=d= convention for them.
+
+A client that relinks the text writes the first occurrence of each
+term per section as a nostrdown ={{ref:<definition coordinate>|<term as
+written>}}= — a pointer to one event, never a wikilink — and emits the
+corresponding =a= tag. Promotion of a definition is per event, into a
+glossary bundle (a 30040 in the appendix slot) or directly, and is
+never required for the reference to resolve.
+
+* Merge requests (kind 818)
+
+To ask the owner of a publication to take a change — relinked
+sections, a glossary, an insertion promoted into their index — the
+proposer publishes a *derivative* under their own key (the copy
+process above, applied to the index and to every changed section, each
+copied section carrying =E= to the version it was copied from and =p=
+to its author) and one NIP-54 kind-818 merge request:
+
+#+begin_example
+{ "kind": 818, "content": "<why>",
+  "tags": [ ["a", "30040:<owner>:<d>", "<relay-url>"],   // the target: a 30040 or a 30041
+            ["e", "<base version id>"],                    // the version the change was made against
+            ["e", "<source id>", "<relay-url>", "source"], // the derivative to merge, same kind as the target
+            ["p", "<owner>"] ] }
+#+end_example
+
+This extends NIP-54, which requires the source to be a kind 30818: here
+the target and the source are the same kind, 30040 or 30041. The owner
+answers as NIP-54 says — a NIP-25 reaction on the 818, =+= to merge, =-=
+to decline, content optional — and *merging means republishing their
+own version* under their own =d= with the source's content, after which
+the reaction is sent. The newest reaction by the target owner is the
+status; nothing else records it. The derivative remains on relays as
+the proposer's fork. The 818 is sent to the owner's read relays and to
+the relays the target was found on, not merely to the proposer's write
+relays.
+
 * Relationship to comments and highlights
 
 | kind        | what it does to a place    | content is           | promotable?                |

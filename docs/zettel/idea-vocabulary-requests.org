@@ -1,0 +1,79 @@
+#+TITLE: Idea: vocabulary requests — unpack the words a text leaves undefined
+#+TYPE: idea
+#+STATUS: BUILT 2026-09-24 (plan Phase 5c, six steps, live-verified; chain feat/vocab-request → … → feat/notifications)
+#+DATE: 2026-09-23
+
+A reader hits a word the text uses but never defines. Today they can
+ask for /notes/ on the passage; a *vocabulary request* is the same ask
+with a third =output=: "define these words in the context of these
+events". Full design with diagrams:
+[[file:../vocabulary-workflow.org][vocabulary-workflow]]; prototype
+(no engine, fake data): artifact =JFf3nz9UQjPLew6oBj96oB= (v5).
+
+* The ask
+
+- Annotate mode → the *annotate* modal shows the *section's own
+  content* and the user marks words in it: hover shows the word, a
+  drag over a word or phrase highlights it, a click on a highlight
+  removes it. No term list. The highlights are the request's =term=
+  tags; nothing highlighted means "find the words these events use
+  but never define".
+- The event's =content= is *generated*, not typed:
+  =define these words in the context of these events: a, b= — "these
+  events" are the anchor tags (=A=/=a=/=e=) plus whatever =scope= adds.
+  The paragraphs the highlights fall in travel as =context=.
+- The modal ends in the unsigned event JSON it will sign. This is the
+  general pattern for every event-creating modal
+  ([[file:feat-ui-patterns.org][UI patterns]]).
+
+* The answer: definitions are 30041s, not 30818s
+
+One kind-30041 insertion per term — =t: definition=, =title= = the
+term, =T= = its slug, an opaque nanoid =d=, anchored =A=/=a=/=e= like
+any insertion, =request= → the ask, =style= → the writing style. One
+event per term holds everything relevant: the sense in this text,
+background, expansion. Several definitions of one word coexist
+because the =d= is opaque. NIP-54's slug-as-=d= gives every author one
+article per word and makes two people's definitions relate only by
+accident of slug — that is the plurality problem the user is moving
+away from, so there is *no global 30818* in this design.
+
+* Findability: the relink, by coordinate
+
+The text is relinked: the first occurrence of each term per section
+becomes ={{ref:<definition coordinate>|term as written}}= — never
+=[[term]]=, which unpacks to any 30818 whose =d= matches or any
+sibling whose title slug matches. A coordinate ref names one event,
+resolves sibling-first then as a direct pointer (the 2026-09-15 scope
+rule, [[file:feat-nostrdown.org][nostrdown]]), and =reference_tags=
+emits an =a= per definition, so =a:<coord>= finds every section that
+cites it. The transform is engine-side and pure: =nostrdown::link_terms=
+(skip code, headings, existing links, anything already inside ={{ }}=).
+
+Promotion into a glossary bundle is *offered, never required, and per
+definition event*: the ref resolves without it; promoting puts the
+definition into the reading order and the TOC.
+
+* Own text vs someone else's
+
+- Own: new versions of the relinked sections and the index under the
+  same =d=. No request event.
+- Foreign: a derivative (the =fork_index= copy process, extended to
+  sections with =E=/=p= back-pointers) plus one *kind-818 merge
+  request* ([[file:decision-merge-requests-818.org][decision]]).
+
+* Open follow-up
+
+- *nostrdown multi-target ref* ={{ref:a,b|display}}= resolving to a
+  list, rendered as a chooser — needed the moment two definitions
+  answer one term. Until then the relink cites the definition
+  answering this request.
+
+* Related
+- [[file:index.org][Index]]
+- [[file:feat-insertions.org][Insertions]] — the definition role, per-event promotion
+- [[file:decision-merge-requests-818.org][Merge requests are NIP-54's 818]]
+- [[file:feat-notifications.org][Notifications]] — where an 818 for you shows up
+- [[file:decision-wikilinks-30818-only.org][Wikilinks resolve to 30818 only]] — the ambiguity a coordinate ref avoids
+- [[file:decision-requests-are-events.org][Requests are records, never a harness]]
+- [[file:../vocabulary-workflow.org][The design]] · [[file:../insertions-plan.org][Plan]] § Phase 5c

@@ -123,6 +123,8 @@
 							<span class="acard__t">
 								{#if card.kind === 'request'}
 									<span class="badge" class:answered={card.status === 'answered'}>{card.status === 'answered' ? '✓' : '?'} request</span>
+								{:else if card.role === 'definition'}
+									<span class="badge def">def</span>
 								{/if}
 								{card.title}
 							</span>
@@ -353,5 +355,9 @@
 	.badge.answered {
 		color: var(--blue);
 		border-color: color-mix(in srgb, var(--blue) 50%, transparent);
+	}
+	.badge.def {
+		color: var(--green);
+		border-color: color-mix(in srgb, var(--green) 50%, transparent);
 	}
 </style>

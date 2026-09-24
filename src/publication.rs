@@ -17,6 +17,8 @@ use serde_json::Value;
 
 pub mod compose;
 pub mod insertion;
+pub mod relink;
+pub mod merge_request;
 pub mod tree_emit;
 
 /// Kind constants for NKBIP-01 publications
@@ -3355,7 +3357,17 @@ fn apply_event(
     resolved.summary = first_tag_value(event, "summary")
         .or_else(|| first_tag_value(event, "description"))
         .filter(|s| !s.is_empty())
-        .map(|s| cap_chars(&s, 280));
+        .map(|s| cap_chars(&s, 280))
+        // A definition (a `t: definition` 30041, the vocabulary answer)
+        // carries no summary tag; its hover card wants the sense it gives,
+        // so the first sentence of its content stands in.
+        .or_else(|| {
+            if crate::publication::insertion::is_definition(event) {
+                event.get("content").and_then(Value::as_str).and_then(first_sentence)
+            } else {
+                None
+            }
+        });
     resolved.author = first_tag_value(event, "author").filter(|a| !a.is_empty());
     resolved.image = first_tag_value(event, "image")
         .or_else(|| first_tag_value(event, "thumb"))
@@ -3370,6 +3382,30 @@ fn apply_event(
             .get("content")
             .and_then(Value::as_str)
             .map(str::to_string);
+    }
+}
+
+/// The first sentence of `content` (up to the first `.`, `!` or `?` that ends
+/// a word, or the first blank line), whitespace collapsed, capped at 280
+/// chars. `None` when there is no prose.
+fn first_sentence(content: &str) -> Option<String> {
+    let para = content.trim().split("\n\n").next().unwrap_or("").trim();
+    if para.is_empty() {
+        return None;
+    }
+    let mut end = para.len();
+    let bytes = para.as_bytes();
+    for (i, b) in bytes.iter().enumerate() {
+        if matches!(b, b'.' | b'!' | b'?') && (i + 1 == bytes.len() || bytes[i + 1].is_ascii_whitespace()) {
+            end = i + 1;
+            break;
+        }
+    }
+    let one: String = para[..end].split_whitespace().collect::<Vec<_>>().join(" ");
+    if one.is_empty() {
+        None
+    } else {
+        Some(cap_chars(&one, 280))
     }
 }
 
@@ -5982,5 +6018,28 @@ mod tests {
         assert_eq!(diff.added.len(), 1);
         assert_eq!(diff.removed.len(), 1);
         assert!(diff.section_d_tag_by_t.is_empty());
+    }
+
+    fn blank_resolved() -> crate::nostrdown::ResolvedRef {
+        crate::nostrdown::ResolvedRef { kind: crate::nostrdown::RefKind::Ref, start: 0, end: 0, target: String::new(), label: String::new(), found: false, pending: false, naddr: None, coord: None, event_id: None, event_kind: None, content: None, title: None, summary: None, image: None, author: None, author_pubkey: None, created_at: None }
+    }
+
+    #[test]
+    fn a_definition_ref_resolves_with_its_first_sentence_as_summary() {
+        let ev = serde_json::json!({
+            "kind": 30041, "pubkey": "f".repeat(64), "created_at": 1, "content": "Two theories are incommensurable when the terms of one cannot be translated into the other. Background: Kuhn and Feyerabend, 1962.",
+            "tags": [["d", "b9w1qe"], ["title", "Incommensurability"], ["t", "definition"]]
+        });
+        let mut r = blank_resolved();
+        apply_event(&mut r, &ev, false, false);
+        assert_eq!(r.title.as_deref(), Some("Incommensurability"));
+        assert_eq!(r.summary.as_deref(), Some("Two theories are incommensurable when the terms of one cannot be translated into the other."));
+        // a plain section keeps the old behaviour: no summary without a tag
+        let plain = serde_json::json!({ "kind": 30041, "content": "Body. More.", "tags": [["d", "x"], ["title", "Plain"]] });
+        let mut r2 = blank_resolved();
+        apply_event(&mut r2, &plain, false, false);
+        assert!(r2.summary.is_none());
+        assert_eq!(first_sentence("  one two!  three"), Some("one two!".into()));
+        assert_eq!(first_sentence("\n\n"), None);
     }
 }

@@ -320,6 +320,8 @@ fn git_branch() -> Option<String> {
 
 use crate::nip19;
 pub mod insertions;
+pub mod notifications;
+pub mod merge_requests;
 pub mod requests;
 pub mod styles;
 
@@ -5982,7 +5984,7 @@ fn map_assistant_sign_error(e: crate::signing::SigningError) -> EngineError {
 /// Who signs a publish: the user's active source (the controller) or the
 /// assistant's in-process key. Returns the pubkey the templates must carry
 /// and the signer.
-async fn resolve_publish_signer(
+pub(crate) async fn resolve_publish_signer(
     engine: &AppState,
     signing: &crate::signing::SigningController,
     sign_as: SignAs,
@@ -10080,6 +10082,454 @@ mod chat_api_tests {
         );
     }
 
+    /// Definitions and the glossary (plan Phase 5c step 2): the assistant
+    /// owns a publication, writes two definitions with `role: definition`,
+    /// the load pass tags them `definition` with their term; promoting one
+    /// writes the glossary bundle + a new index version (same d, `a →
+    /// glossary` appended); the load pass then says `promoted` with the
+    /// glossary coordinate; removing it empties the bundle and drops the `a`.
+    #[tokio::test]
+    async fn test_definitions_and_per_event_glossary_promotion() {
+        use crate::identity::{encode_nsec, IdentitySession};
+        use crate::publication::insertion::{index_children, is_glossary};
+        const USER_SEC: &str = "0000000000000000000000000000000000000000000000000000000000000009";
+        const ASST_SEC: &str = "000000000000000000000000000000000000000000000000000000000000000a";
+
+        let dir = tempfile::tempdir().unwrap();
+        let mut engine = crate::engine::Engine::new(dir.path()).unwrap();
+        let user = Arc::new(Mutex::new(IdentitySession::new()));
+        let user_pk = user.lock().unwrap().login_nsec(&encode_nsec(USER_SEC).unwrap()).unwrap();
+        let asst = Arc::new(Mutex::new(IdentitySession::new()));
+        let asst_pk = asst.lock().unwrap().login_nsec(&encode_nsec(ASST_SEC).unwrap()).unwrap();
+        engine.set_user_session(user.clone());
+        engine.set_assistant_session(asst.clone());
+        engine.set_assistant_signing(crate::signing::SigningController::new(asst));
+        let engine = Arc::new(engine);
+        std::mem::forget(dir);
+        let cx = crate::tools::ToolCx { engine: engine.clone(), chat: Arc::new(Mutex::new(ChatState::new())) };
+
+        let saved = crate::tools::dispatch(&cx, "save_draft", json!({ "title": "On Method", "sections": [
+            { "title": "Against method", "content": "epistemological anarchism …" }
+        ] })).await.unwrap();
+        let out = crate::tools::dispatch(&cx, "sign_draft", json!({ "draft_id": saved["draft_id"] })).await.unwrap();
+        let index = crate::query::query_by_id(engine.ndb(), out["publication_id"].as_str().unwrap()).unwrap().unwrap();
+        let root = crate::publication::insertion::event_coordinate(&index).unwrap();
+        let sec = index_children(&index)[0].clone();
+
+        // Two definitions, role: definition → t: definition, T from the title.
+        let mut coords = Vec::new();
+        for term in ["epistemological anarchism", "incommensurability"] {
+            let d = crate::tools::dispatch(&cx, "propose_insertion", json!({
+                "root": root, "parent": sec, "role": "definition", "title": term,
+                "content": format!("{term}, as used here …")
+            })).await.unwrap();
+            assert_eq!(d["role"], "definition");
+            let ev = crate::query::query_by_id(engine.ndb(), d["id"].as_str().unwrap()).unwrap().unwrap();
+            let tags = crate::publication::insertion::event_tags(&ev);
+            assert!(tags.iter().any(|t| t[0] == "t" && t[1] == "definition"));
+            assert!(tags.iter().any(|t| t[0] == "T"));
+            coords.push(d["coordinate"].as_str().unwrap().to_string());
+        }
+        // A bad role never signs.
+        assert!(crate::tools::dispatch(&cx, "propose_insertion", json!({
+            "root": root, "role": "gloss", "title": "x", "content": "y" })).await.is_err());
+
+        let load = |engine: Arc<crate::engine::Engine>, root: String| async move {
+            insertions::load_insertions(&engine, serde_json::from_value(json!({ "root": root, "policy": "local_only" })).unwrap()).await.unwrap()
+        };
+        let l = load(engine.clone(), root.clone()).await;
+        let defs: Vec<&insertions::LoadedInsertion> = l.insertions.iter().filter(|i| i.role == insertions::InsertionRole::Definition).collect();
+        assert_eq!(defs.len(), 2);
+        assert!(defs.iter().all(|d| !d.promoted && d.glossary.is_none()));
+        assert!(defs.iter().any(|d| d.term.as_deref() == Some("incommensurability")));
+        let c = insertions::insertion_counts(&l.insertions);
+        assert_eq!(c.total, 2, "definitions count as notes");
+
+        // Promote one, as the assistant (the index owner): glossary + index.
+        let req = insertions::GlossaryRequest { root: root.clone(), add: vec![coords[0].clone()], ..Default::default() };
+        let pv = insertions::glossary_templates(&engine, &req, &asst_pk).await.unwrap();
+        assert!(pv.owner);
+        assert!(pv.previous.is_empty());
+        assert_eq!(pv.promoted, vec![coords[0].clone()]);
+        assert_eq!(pv.glossary_coordinate, format!("30040:{asst_pk}:{}-glossary", root.rsplit(':').next().unwrap()));
+        let ix = pv.index.clone().expect("the owner's index changes");
+        assert_eq!(ix.tags.iter().filter(|t| t[0] == "a").count(), 2);
+        assert_eq!(ix.tags.iter().filter(|t| t[0] == "a").last().unwrap()[1], pv.glossary_coordinate, "appendix slot");
+        // A stranger only gets the glossary.
+        let pv_user = insertions::glossary_templates(&engine, &req, &user_pk).await.unwrap();
+        assert!(!pv_user.owner && pv_user.index.is_none() && pv_user.note.is_some());
+        // A non-definition (the section itself) is refused.
+        let bad = insertions::GlossaryRequest { root: root.clone(), add: vec![sec.clone()], ..Default::default() };
+        assert!(insertions::glossary_templates(&engine, &bad, &asst_pk).await.is_err());
+
+        // Sign + store as the owner (what the publish handler does).
+        let signer = engine.assistant_signing().unwrap();
+        let mut gt = pv.glossary; gt.pubkey = Some(asst_pk.clone());
+        let glossary = signer.sign(gt).await.unwrap();
+        let mut it = ix; it.pubkey = Some(asst_pk.clone());
+        let new_index = signer.sign(it).await.unwrap();
+        let _ = finalize_publish(&engine, Some(new_index.clone()), vec![glossary.clone()], false, None, true).await.unwrap();
+        assert!(is_glossary(&glossary));
+        assert_eq!(index_children(&glossary), vec![coords[0].clone()]);
+
+        let l2 = load(engine.clone(), root.clone()).await;
+        let d0 = l2.insertions.iter().find(|i| i.coordinate == coords[0]).unwrap();
+        assert!(d0.promoted);
+        assert_eq!(d0.glossary.as_deref(), Some(pv.glossary_coordinate.as_str()));
+        let d1 = l2.insertions.iter().find(|i| i.coordinate == coords[1]).unwrap();
+        assert!(!d1.promoted);
+        assert!(l2.insertions.iter().any(|i| i.role == insertions::InsertionRole::Bundle && i.coordinate == pv.glossary_coordinate));
+
+        // Remove it: the base is the stored bundle; the glossary empties and
+        // the index drops its `a`.
+        let req2 = insertions::GlossaryRequest { root: root.clone(), remove: vec![coords[0].clone()], ..Default::default() };
+        let pv2 = insertions::glossary_templates(&engine, &req2, &asst_pk).await.unwrap();
+        assert_eq!(pv2.previous, vec![coords[0].clone()]);
+        assert!(pv2.promoted.is_empty());
+        assert!(!pv2.glossary.tags.iter().any(|t| t[0] == "a"));
+        let ix2 = pv2.index.expect("the a → glossary goes");
+        assert!(!ix2.tags.iter().any(|t| t[0] == "a" && t[1] == pv.glossary_coordinate));
+        assert_eq!(ix2.tags.iter().filter(|t| t[0] == "a").count(), 1);
+    }
+
+    /// Relink (plan Phase 5c step 3): the owner's sections get new versions
+    /// under the same `d` whose first occurrence of each defined term is a
+    /// `{{ref:<definition>|term}}`, with one `a` per definition; a section
+    /// with no occurrence is untouched; a stranger sees the diff but may not
+    /// publish; a second relink is a no-op because refs are protected spans.
+    #[tokio::test]
+    async fn test_relink_own_publication_to_definitions() {
+        use crate::identity::{encode_nsec, IdentitySession};
+        use crate::publication::insertion::{event_tags, index_children};
+        const USER_SEC: &str = "000000000000000000000000000000000000000000000000000000000000000b";
+        const ASST_SEC: &str = "000000000000000000000000000000000000000000000000000000000000000c";
+
+        let dir = tempfile::tempdir().unwrap();
+        let mut engine = crate::engine::Engine::new(dir.path()).unwrap();
+        let user = Arc::new(Mutex::new(IdentitySession::new()));
+        let user_pk = user.lock().unwrap().login_nsec(&encode_nsec(USER_SEC).unwrap()).unwrap();
+        let asst = Arc::new(Mutex::new(IdentitySession::new()));
+        let asst_pk = asst.lock().unwrap().login_nsec(&encode_nsec(ASST_SEC).unwrap()).unwrap();
+        engine.set_user_session(user.clone());
+        engine.set_assistant_session(asst.clone());
+        engine.set_assistant_signing(crate::signing::SigningController::new(asst));
+        let engine = Arc::new(engine);
+        std::mem::forget(dir);
+        let cx = crate::tools::ToolCx { engine: engine.clone(), chat: Arc::new(Mutex::new(ChatState::new())) };
+
+        // The assistant owns a two-section index; only §2 uses the terms.
+        let saved = crate::tools::dispatch(&cx, "save_draft", json!({ "title": "On Method", "sections": [
+            { "title": "The consistency condition", "content": "A new theory must agree with the theories already accepted." },
+            { "title": "Against method", "content": "What the textbook calls epistemological anarchism is only the record.\n\nTheir incommensurability is not a failure of care; incommensurability again." }
+        ] })).await.unwrap();
+        let out = crate::tools::dispatch(&cx, "sign_draft", json!({ "draft_id": saved["draft_id"] })).await.unwrap();
+        let index = crate::query::query_by_id(engine.ndb(), out["publication_id"].as_str().unwrap()).unwrap().unwrap();
+        let root = crate::publication::insertion::event_coordinate(&index).unwrap();
+        let children = index_children(&index);
+        let (s1, s2) = (children[0].clone(), children[1].clone());
+
+        let mut coords = Vec::new();
+        for term in ["epistemological anarchism", "incommensurability"] {
+            let d = crate::tools::dispatch(&cx, "propose_insertion", json!({
+                "root": root, "parent": s2, "role": "definition", "title": term, "content": format!("{term}, as used here.")
+            })).await.unwrap();
+            coords.push(d["coordinate"].as_str().unwrap().to_string());
+        }
+
+        // Preview as the owner: §2 changes with two hunks, §1 is unchanged.
+        let req = insertions::RelinkRequest { root: root.clone(), ..Default::default() };
+        let pv = insertions::relink_templates(&engine, &req, &asst_pk).await.unwrap();
+        assert!(pv.owner);
+        assert_eq!(pv.definitions.len(), 2, "defaults to every local definition on the root");
+        assert_eq!(pv.hunk_count, 2);
+        assert_eq!(pv.sections.len(), 1);
+        assert_eq!(pv.unchanged, vec![s1.clone()]);
+        assert!(pv.skipped.is_empty());
+        let sec = &pv.sections[0];
+        assert_eq!(sec.coordinate, s2);
+        assert_eq!(sec.hunks.len(), 2);
+        assert!(sec.hunks[0].line_after.contains(&format!("{{{{ref:{}|epistemological anarchism}}}}", coords[0])));
+        assert_eq!(sec.template.content.matches("{{ref:").count(), 2);
+        assert_eq!(sec.tags_added.len(), 2);
+        assert!(sec.template.tags.iter().any(|t| t[0] == "d"), "same d");
+        // A stranger sees the same diff but is told it is not theirs.
+        let pv_user = insertions::relink_templates(&engine, &req, &user_pk).await.unwrap();
+        assert!(!pv_user.owner && pv_user.note.is_some() && pv_user.hunk_count == 2);
+        // Naming a non-definition is refused.
+        let bad = insertions::RelinkRequest { root: root.clone(), definitions: Some(vec![s1.clone()]), ..Default::default() };
+        assert!(insertions::relink_templates(&engine, &bad, &asst_pk).await.is_err());
+
+        // Sign + store as the owner (what the publish handler does).
+        let signer = engine.assistant_signing().unwrap();
+        let mut t = pv.sections.into_iter().next().unwrap().template;
+        t.pubkey = Some(asst_pk.clone());
+        let new_s2 = signer.sign(t).await.unwrap();
+        let _ = finalize_publish(&engine, None, vec![new_s2.clone()], false, None, true).await.unwrap();
+        let (_, pk, d) = crate::publication::insertion::coord_parts(&s2).unwrap();
+        let stored = engine.get_addressable(30041, pk, d, crate::engine::FetchPolicy::LocalOnly).await.unwrap().unwrap();
+        assert_eq!(stored["id"], new_s2["id"], "the new version is the newest");
+        let content = stored["content"].as_str().unwrap();
+        assert_eq!(content.matches("{{ref:").count(), 2);
+        assert!(content.contains("care; incommensurability again."), "only the first occurrence is linked");
+        let tags = event_tags(&stored);
+        for c in &coords {
+            assert!(tags.iter().any(|t| t[0] == "a" && &t[1] == c), "a → {c}");
+        }
+        assert!(tags.iter().any(|t| t[0] == "T" && t[1] == "against-method"));
+
+        // Idempotent: the refs are protected spans.
+        let pv2 = insertions::relink_templates(&engine, &req, &asst_pk).await.unwrap();
+        assert_eq!(pv2.hunk_count, 0);
+        assert!(pv2.sections.is_empty());
+        assert_eq!(pv2.unchanged.len(), 2);
+
+        // Glossary in the same call: the index gains a → glossary.
+        let req3 = insertions::RelinkRequest {
+            root: root.clone(),
+            glossary: Some(insertions::RelinkGlossaryEdit { add: vec![coords[1].clone()], remove: vec![] }),
+            ..Default::default()
+        };
+        let pv3 = insertions::relink_templates(&engine, &req3, &asst_pk).await.unwrap();
+        assert_eq!(pv3.promoted, vec![coords[1].clone()]);
+        assert!(pv3.glossary.is_some());
+        let ix = pv3.index.expect("owner's index changes");
+        assert_eq!(ix.tags.iter().filter(|t| t[0] == "a").last().unwrap()[1], pv3.glossary_coordinate.clone().unwrap());
+    }
+
+    /// A stranger's relink: the diff plus a derivative (index′ + sections′
+    /// under their key, `E`/`p` back-pointers) and a kind-818 to the owner
+    /// whose `source` is the signed index′; listed open for both sides; the
+    /// owner's `+` marks it merged; anyone else reacting is refused.
+    #[tokio::test]
+    async fn test_relink_foreign_publication_makes_a_derivative_and_an_818() {
+        use crate::identity::{encode_nsec, IdentitySession};
+        use crate::publication::insertion::{coord_parts, event_tags, index_children};
+        use crate::publication::merge_request::MergeStatus;
+        const USER_SEC: &str = "000000000000000000000000000000000000000000000000000000000000000d";
+        const ASST_SEC: &str = "000000000000000000000000000000000000000000000000000000000000000e";
+
+        let dir = tempfile::tempdir().unwrap();
+        let mut engine = crate::engine::Engine::new(dir.path()).unwrap();
+        let user = Arc::new(Mutex::new(IdentitySession::new()));
+        let user_pk = user.lock().unwrap().login_nsec(&encode_nsec(USER_SEC).unwrap()).unwrap();
+        let asst = Arc::new(Mutex::new(IdentitySession::new()));
+        let asst_pk = asst.lock().unwrap().login_nsec(&encode_nsec(ASST_SEC).unwrap()).unwrap();
+        engine.set_user_session(user.clone());
+        engine.set_assistant_session(asst.clone());
+        engine.set_assistant_signing(crate::signing::SigningController::new(asst));
+        let engine = Arc::new(engine);
+        std::mem::forget(dir);
+        let signing = crate::signing::SigningController::new(user);
+        let cx = crate::tools::ToolCx { engine: engine.clone(), chat: Arc::new(Mutex::new(ChatState::new())) };
+
+        // The assistant (A) owns the index; the user (B) is a stranger to it.
+        let saved = crate::tools::dispatch(&cx, "save_draft", json!({ "title": "On Method", "sections": [
+            { "title": "The consistency condition", "content": "A new theory must agree with the theories already accepted." },
+            { "title": "Against method", "content": "What the textbook calls epistemological anarchism is only the record.\n\nTheir incommensurability is not a failure of care." }
+        ] })).await.unwrap();
+        let out = crate::tools::dispatch(&cx, "sign_draft", json!({ "draft_id": saved["draft_id"] })).await.unwrap();
+        let index = crate::query::query_by_id(engine.ndb(), out["publication_id"].as_str().unwrap()).unwrap().unwrap();
+        let index_id = index["id"].as_str().unwrap().to_string();
+        let root = crate::publication::insertion::event_coordinate(&index).unwrap();
+        let children = index_children(&index);
+        let (s1, s2) = (children[0].clone(), children[1].clone());
+        let mut coords = Vec::new();
+        for term in ["epistemological anarchism", "incommensurability"] {
+            let d = crate::tools::dispatch(&cx, "propose_insertion", json!({
+                "root": root, "parent": s2, "role": "definition", "title": term, "content": format!("{term}, as used here.")
+            })).await.unwrap();
+            coords.push(d["coordinate"].as_str().unwrap().to_string());
+        }
+
+        // Preview as B: the same diff, owner:false, and the derivative.
+        let req = insertions::RelinkRequest {
+            root: root.clone(),
+            glossary: Some(insertions::RelinkGlossaryEdit { add: vec![coords[0].clone()], remove: vec![] }),
+            ..Default::default()
+        };
+        let pv = insertions::relink_templates(&engine, &req, &user_pk).await.unwrap();
+        assert!(!pv.owner && pv.hunk_count == 2 && pv.sections.len() == 1);
+        assert!(pv.index.is_none(), "a stranger never gets a new version of the owner's index");
+        assert!(pv.glossary.is_some(), "the glossary is the stranger's own bundle for the original root");
+        let d = pv.derivative.as_ref().expect("derivative for a non-owner");
+        assert_eq!(d.sections.len(), 1);
+        let ds = &d.sections[0];
+        assert_eq!(ds.original, s2);
+        let (dk, dpk, dd) = coord_parts(&ds.coordinate).unwrap();
+        assert_eq!((dk, dpk), (30041, user_pk.as_str()));
+        assert!(ds.template.tags.iter().any(|t| t[0] == "d" && t[1] == dd), "minted d");
+        let s2_id = engine.get_addressable(30041, &asst_pk, coord_parts(&s2).unwrap().2, crate::engine::FetchPolicy::LocalOnly).await.unwrap().unwrap()["id"].as_str().unwrap().to_string();
+        assert!(ds.template.tags.iter().any(|t| t[0] == "E" && t[1] == s2_id), "E → the copied section version");
+        assert!(ds.template.tags.iter().any(|t| t[0] == "p" && t[1] == asst_pk), "p → its author");
+        assert_eq!(ds.template.content.matches("{{ref:").count(), 2, "the relinked content");
+        for c in &coords {
+            assert!(ds.template.tags.iter().any(|t| t[0] == "a" && &t[1] == c), "a → {c}");
+        }
+        assert!(ds.template.tags.iter().any(|t| t[0] == "T" && t[1] == "against-method"), "tags verbatim");
+        // index′: s1 kept, s2 → s2′, glossary appended, E → the original index
+        let ia: Vec<&Vec<String>> = d.index.tags.iter().filter(|t| t[0] == "a").collect();
+        assert_eq!(ia.len(), 3);
+        assert_eq!(ia[0][1], s1);
+        assert_eq!(ia[1][1], ds.coordinate);
+        assert_eq!(ia[2][1], pv.glossary_coordinate.clone().unwrap());
+        assert!(d.index.tags.iter().any(|t| t[0] == "E" && t[1] == index_id));
+        assert!(d.index_coordinate.starts_with(&format!("30040:{user_pk}:")));
+        // the 818: a original root · e base · e <placeholder> source · p A
+        let mt = &d.merge_request;
+        assert_eq!(mt.kind, 818);
+        assert!(mt.tags.iter().any(|t| t[0] == "a" && t[1] == root));
+        assert!(mt.tags.iter().any(|t| t[0] == "e" && t[1] == index_id && t.len() == 2), "base");
+        assert!(mt.tags.iter().any(|t| t[0] == "e" && t[1] == insertions::SOURCE_PLACEHOLDER && t.get(3).map(String::as_str) == Some("source")));
+        assert!(mt.tags.iter().any(|t| t[0] == "p" && t[1] == asst_pk));
+        assert_eq!(mt.content, "Relink 2 terms to their definitions; add a glossary (1)");
+        assert!(!d.destinations.deliverable, "nothing on the wire: no inbox, no provenance");
+        assert!(d.destinations.note.is_some());
+
+        // Publish as B (broadcast false): derivative + glossary + 818 land.
+        let (pubkey, signer) = resolve_publish_signer(&engine, &signing, SignAs::User).await.unwrap();
+        let pv = insertions::relink_templates(&engine, &req, &user_pk).await.unwrap();
+        let resp = insertions::relink_publish_derivative(&engine, &req, pv, pubkey, signer, SignAs::User).await.unwrap();
+        assert!(!resp.owner && resp.sections.is_empty() && resp.index.is_none());
+        let dr = resp.derivative.as_ref().unwrap();
+        let mr = resp.merge_request.as_ref().unwrap();
+        assert!(mr.destinations_used.is_empty());
+        let src = mr.event["tags"].as_array().unwrap().iter().find(|t| t[0] == "e" && t.get(3).map(|m| m == "source").unwrap_or(false)).unwrap();
+        assert_eq!(src[1], dr.index["id"], "source = the signed index′");
+        assert_eq!(dr.index["pubkey"], user_pk);
+        assert_eq!(dr.sections[0].event["pubkey"], user_pk);
+        assert!(resp.glossary.as_ref().unwrap()["pubkey"] == user_pk);
+        tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+        let stored_ix = engine.get_by_id(dr.index["id"].as_str().unwrap(), crate::engine::FetchPolicy::LocalOnly).await.unwrap();
+        assert!(stored_ix.is_some(), "index′ ingested");
+        let stored_mr = engine.get_by_id(&mr.id, crate::engine::FetchPolicy::LocalOnly).await.unwrap().unwrap();
+        assert_eq!(stored_mr["kind"], 818);
+        // the original is untouched: the owner's index is still the same version
+        let cur = engine.get_addressable(30040, &asst_pk, coord_parts(&root).unwrap().2, crate::engine::FetchPolicy::LocalOnly).await.unwrap().unwrap();
+        assert_eq!(cur["id"], index_id);
+
+        // Both sides list it open.
+        let mine = merge_requests::list(&engine, &user_pk, "requester", "open").await.unwrap();
+        assert_eq!(mine.requests.len(), 1);
+        assert_eq!(mine.requests[0].request.source.as_deref(), dr.index["id"].as_str());
+        let theirs = merge_requests::list(&engine, &asst_pk, "owner", "open").await.unwrap();
+        assert_eq!(theirs.requests.len(), 1);
+        assert_eq!(theirs.requests[0].role, "owner");
+
+        // B cannot answer their own ask; A can.
+        let refused = merge_requests::reaction_for(&engine, &mr.id, '+', None, &user_pk).await;
+        assert!(matches!(refused, Err(EngineError::Forbidden(_))), "{refused:?}");
+
+        // The review, seen by the owner: one replaced section whose hunks add
+        // the refs; the index diff pairs s2 with s2′ and adds the glossary;
+        // `next` is the OWNER's version — the owner's own d's, the owner's key.
+        use crate::publication::merge_request::DiffKind;
+        let rv = merge_requests::review(&engine, &mr.id, &asst_pk).await.unwrap();
+        assert_eq!(rv.role, "owner");
+        assert_eq!(rv.status, MergeStatus::Open);
+        assert_eq!(rv.base.base_id.as_deref(), Some(index_id.as_str()));
+        assert_eq!(rv.base.current_id, index_id);
+        assert!(!rv.base.moved_on && rv.note.is_none());
+        assert_eq!(rv.source.id, dr.index["id"]);
+        assert_eq!(rv.sections.len(), 1, "one replaced section");
+        let sec = &rv.sections[0];
+        assert_eq!(sec.original, s2);
+        assert_eq!(sec.derivative, dr.sections[0].coordinate);
+        assert!(sec.hunks.iter().flatten().any(|h| h.kind == DiffKind::Added && h.line.contains("{{ref:")), "{:?}", sec.hunks);
+        assert!(sec.hunks.iter().flatten().any(|h| h.kind == DiffKind::Removed));
+        assert_eq!(sec.tags_added.len(), 2, "both definition a-tags are new to the original");
+        assert!(sec.tags_removed.is_empty());
+        assert_eq!(sec.next.pubkey.as_deref(), Some(asst_pk.as_str()));
+        assert!(sec.next.tags.iter().any(|t| t[0] == "d" && t[1] == coord_parts(&s2).unwrap().2), "same d as the original");
+        assert_eq!(sec.next.content.matches("{{ref:").count(), 2);
+        assert!(sec.next.tags.iter().filter(|t| t[0] == "a").count() == 2);
+        let ix = rv.index.as_ref().expect("an index diff for a 30040 target");
+        assert_eq!(ix.diff.replaced.len(), 1);
+        assert_eq!((ix.diff.replaced[0].original.as_str(), ix.diff.replaced[0].derivative.as_str()), (s2.as_str(), dr.sections[0].coordinate.as_str()));
+        assert_eq!(ix.diff.added.len(), 1);
+        assert_eq!(ix.diff.added[0].coordinate, resp.glossary.as_ref().and_then(crate::publication::insertion::event_coordinate).unwrap());
+        assert!(ix.diff.removed.is_empty() && ix.diff.moved.is_empty());
+        assert_eq!(ix.diff.unchanged, vec![s1.clone()]);
+        assert!(ix.next.tags.iter().any(|t| t[0] == "d" && t[1] == coord_parts(&root).unwrap().2), "the owner's index, same d");
+        let next_a: Vec<&str> = ix.next.tags.iter().filter(|t| t[0] == "a").map(|t| t[1].as_str()).collect();
+        assert_eq!(next_a, vec![s1.as_str(), s2.as_str(), ix.diff.added[0].coordinate.as_str()], "replaced sections stay at their own coordinates; the glossary is appended");
+        assert_eq!(rv.definitions.len(), 2);
+        assert!(rv.definitions.iter().any(|d| d.coordinate == coords[0] && d.promoted_in_source));
+        assert!(rv.definitions.iter().any(|d| d.coordinate == coords[1] && !d.promoted_in_source));
+        // the requester may read it too; a stranger may not
+        assert_eq!(merge_requests::review(&engine, &mr.id, &user_pk).await.unwrap().role, "requester");
+        assert!(matches!(merge_requests::review(&engine, &mr.id, &"c".repeat(64)).await, Err(EngineError::Forbidden(_))));
+
+        // The reader's load pass shows the ask as a card under its target.
+        let loaded = insertions::load_insertions(&engine, serde_json::from_value(json!({ "root": root, "policy": "local_only", "counts": true })).unwrap()).await.unwrap();
+        let ask = loaded.insertions.iter().find(|i| i.role == insertions::InsertionRole::Ask).expect("an ask row");
+        assert_eq!(ask.anchor.parent, root);
+        let mrs = ask.merge_request.as_ref().unwrap();
+        assert_eq!((mrs.id.as_str(), mrs.status), (mr.id.as_str(), MergeStatus::Open));
+        assert_eq!(mrs.pubkey, user_pk);
+        let notes = loaded.insertions.iter().filter(|i| !matches!(i.role, insertions::InsertionRole::Ask | insertions::InsertionRole::Request)).count();
+        assert_eq!(loaded.counts.as_ref().unwrap().total, notes, "asks are not notes (2 definitions + B's glossary bundle)");
+        assert_eq!(notes, 3);
+
+        // Merging: the requester is refused; the owner signs their next
+        // versions under their own d's and the + follows.
+        let asst_signing = engine.assistant_signing().unwrap().clone();
+        assert!(matches!(merge_requests::merge(&engine, &signing, &mr.id, false, None, false).await, Err(EngineError::Forbidden(_))));
+        let merged = merge_requests::merge(&engine, &asst_signing, &mr.id, false, None, false).await.unwrap();
+        assert!(merged.merged && merged.status == MergeStatus::Merged);
+        assert_eq!(merged.sections.len(), 1);
+        assert_eq!(merged.sections[0].coordinate, s2, "the owner's own coordinate");
+        assert_eq!(merged.sections[0].event["pubkey"], asst_pk);
+        assert_eq!(merged.index.as_ref().unwrap()["pubkey"], asst_pk);
+        assert_eq!(merged.reaction["content"], "+");
+        tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+        let cur2 = engine.get_addressable(30040, &asst_pk, coord_parts(&root).unwrap().2, crate::engine::FetchPolicy::LocalOnly).await.unwrap().unwrap();
+        assert_ne!(cur2["id"], index_id, "the owner's index moved to the merged version");
+        assert!(index_children(&cur2).iter().any(|c| c == &ix.diff.added[0].coordinate), "glossary in the owner's index");
+        let s2_now = engine.get_addressable(30041, &asst_pk, coord_parts(&s2).unwrap().2, crate::engine::FetchPolicy::LocalOnly).await.unwrap().unwrap();
+        assert_eq!(s2_now["content"].as_str().unwrap().matches("{{ref:").count(), 2, "the owner's §2 carries the refs");
+        // Notifications: the owner's open acts are empty, the ask sits in
+        // `done`; the requester's `mine` row says merged.
+        let prefs = crate::notifications::Prefs::default();
+        let owner_n = notifications::list_notifications(&engine, &asst_pk, &prefs, "open").await.unwrap();
+        assert!(owner_n.acts.iter().all(|r| r.key != "818"), "no open 818 left");
+        assert_eq!(owner_n.done.len(), 1);
+        assert_eq!(owner_n.done[0].status.as_deref(), Some("merged"));
+        assert!(owner_n.done[0].verdict.is_some());
+        let owner_all = notifications::list_notifications(&engine, &asst_pk, &prefs, "all").await.unwrap();
+        assert!(owner_all.acts.iter().any(|r| r.key == "818" && r.status.as_deref() == Some("merged")) && owner_all.done.is_empty());
+        let mine_n = notifications::list_notifications(&engine, &user_pk, &prefs, "open").await.unwrap();
+        assert_eq!(mine_n.mine.len(), 1);
+        assert_eq!(mine_n.mine[0].status.as_deref(), Some("merged"));
+        assert!(mine_n.mine[0].summary.ends_with("— merged"));
+        assert!(mine_n.acts.iter().any(|r| r.key == "7-on-my-818" && r.status.as_deref() == Some("merged")), "the verdict reaches the requester as an act: {:?}", mine_n.acts.iter().map(|r| r.key.clone()).collect::<Vec<_>>());
+        let ask2 = insertions::load_insertions(&engine, serde_json::from_value(json!({ "root": root, "policy": "local_only" })).unwrap()).await.unwrap();
+        assert_eq!(ask2.insertions.iter().find(|i| i.role == insertions::InsertionRole::Ask).unwrap().merge_request.as_ref().unwrap().status, MergeStatus::Merged);
+
+        // A fresh 818 (hand-built by B on the owner's index) is declined with a reason.
+        let t2 = crate::publication::merge_request::template(&root, Some(cur2["id"].as_str().unwrap()), Some(dr.index["id"].as_str().unwrap()), &asst_pk, "again", &crate::publication::merge_request::MergeHints::default(), unix_now_i64() + 5).unwrap();
+        let (_, user_signer) = resolve_publish_signer(&engine, &signing, SignAs::User).await.unwrap();
+        let mut t2 = t2;
+        t2.pubkey = Some(user_pk.clone());
+        let mr2 = user_signer.sign(t2).await.unwrap();
+        let _ = finalize_publish(&engine, None, vec![mr2.clone()], false, None, true).await.unwrap();
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+        let mr2_id = mr2["id"].as_str().unwrap();
+        let declined = merge_requests::react_inner(&engine, &asst_signing, mr2_id, '-', Some("not now"), false, None, false).await.unwrap();
+        assert_eq!(declined.status, MergeStatus::Declined);
+        assert_eq!(declined.reaction["content"], "- not now");
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+        assert_eq!(merge_requests::list(&engine, &user_pk, "requester", "all").await.unwrap().requests.iter().find(|r| r.request.id == mr2_id).unwrap().status, MergeStatus::Declined);
+        let (_, mut t) = merge_requests::reaction_for(&engine, &mr.id, '+', Some("thanks"), &asst_pk).await.unwrap();
+        t.pubkey = Some(asst_pk.clone());
+        let reaction = engine.assistant_signing().unwrap().sign(t).await.unwrap();
+        assert_eq!(reaction["content"], "+ thanks");
+        let _ = finalize_publish(&engine, None, vec![reaction], false, None, true).await.unwrap();
+        let after = merge_requests::list(&engine, &user_pk, "requester", "all").await.unwrap();
+        assert_eq!(after.requests.iter().find(|r| r.request.id == mr.id).unwrap().status, MergeStatus::Merged);
+        assert!(merge_requests::list(&engine, &asst_pk, "owner", "open").await.unwrap().requests.is_empty(), "merged + declined: nothing open");
+        let _ = event_tags(&index);
+    }
+
     /// Requests end to end: an unsigned record → listed open → answered by the
     /// assistant tool (coordinates recorded, no reply event since nothing was
     /// signed); a signed request → a kind-1111 mention of the assistant in the
@@ -10401,5 +10851,98 @@ mod chat_api_tests {
             .unwrap();
         assert_eq!(r["removed"], true);
         assert!(state.chat.lock().unwrap().context.is_empty());
+    }
+
+    /// Notifications: the rules run over the local store for the logged-in
+    /// user; asks are fixed, activity follows the preferences, counts split
+    /// by `how`, and nothing that names someone else ever appears.
+    #[tokio::test]
+    async fn test_notifications_list_follows_rules_and_prefs() {
+        use crate::identity::{encode_nsec, IdentitySession};
+        use crate::notifications::{How, Prefs};
+        const ME_SEC: &str = "0000000000000000000000000000000000000000000000000000000000000009";
+        const THEM_SEC: &str = "000000000000000000000000000000000000000000000000000000000000000b";
+
+        fn signed(sec: &str, kind: u64, content: &str, tags: Vec<Vec<&str>>, t: u64) -> Value {
+            use secp256k1::{PublicKey, Secp256k1, SecretKey};
+            use sha2::{Digest, Sha256};
+            let secp = Secp256k1::new();
+            let sk = SecretKey::from_slice(&hex::decode(sec).unwrap()).unwrap();
+            let pk = hex::encode(&PublicKey::from_secret_key(&secp, &sk).serialize()[1..33]);
+            let tags: Vec<Vec<String>> = tags.iter().map(|t| t.iter().map(|s| s.to_string()).collect()).collect();
+            let serial = serde_json::to_string(&json!([0, pk, t, kind, tags, content])).unwrap();
+            let id = hex::encode(Sha256::digest(serial.as_bytes()));
+            let sig = crate::identity::sign_event_hash(&id, sec).unwrap();
+            json!({ "id": id, "pubkey": pk, "created_at": t, "kind": kind, "tags": tags, "content": content, "sig": sig })
+        }
+
+        let dir = tempfile::tempdir().unwrap();
+        let mut engine = crate::engine::Engine::new(dir.path()).unwrap();
+        let user = Arc::new(Mutex::new(IdentitySession::new()));
+        let me = user.lock().unwrap().login_nsec(&encode_nsec(ME_SEC).unwrap()).unwrap();
+        engine.set_user_session(user.clone());
+        let engine = Arc::new(engine);
+        let data_dir = dir.path().to_path_buf();
+        std::mem::forget(dir);
+
+        // my publication: an index and one section, signed by me
+        let sec = signed(ME_SEC, 30041, "body", vec![vec!["d", "s1"], vec!["title", "Against method"]], 100);
+        let sec_coord = format!("30041:{me}:s1");
+        let idx = signed(ME_SEC, 30040, "", vec![vec!["d", "pub"], vec!["title", "On Method"], vec!["a", &sec_coord]], 101);
+        let root = format!("30040:{me}:pub");
+        // theirs: a highlight of my section, a comment on my root, an 818 to me, a reaction to nothing of mine,
+        // and a signed annotation request on my publication
+        let hl = signed(THEM_SEC, 9802, "the burden is on the newcomer", vec![vec!["a", &sec_coord], vec!["p", &me]], 200);
+        let cm = signed(THEM_SEC, 1111, "needs Mill", vec![vec!["A", &root], vec!["K", "30040"], vec!["P", &me]], 201);
+        let mr = signed(THEM_SEC, 818, "relink 2 terms", vec![vec!["a", &root], vec!["e", &"1".repeat(64)], vec!["p", &me]], 202);
+        let rx = signed(THEM_SEC, 7, "+", vec![vec!["e", &"9".repeat(64)], vec!["p", &"c".repeat(64)]], 203);
+        let rq = signed(THEM_SEC, 30041, "define these words in the context of these events: newcomer",
+            vec![vec!["d", "rq1"], vec!["title", "Define: newcomer"], vec!["t", "annotation-request"], vec!["A", &root], vec!["a", &sec_coord]], 204);
+        for ev in [&sec, &idx, &hl, &cm, &mr, &rx, &rq] {
+            engine.ingest_event(&serde_json::to_string(ev).unwrap()).unwrap();
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(400)).await;
+
+        // defaults: the asks only
+        let prefs = Prefs::load(&data_dir);
+        let r = notifications::list_notifications(&engine, &me, &prefs, "open").await.unwrap();
+        let act_keys: Vec<&str> = r.acts.iter().map(|x| x.key.as_str()).collect();
+        assert!(act_keys.contains(&"818"), "the 818 is an ask: {act_keys:?}");
+        assert!(act_keys.contains(&"request-on-mine"), "the signed request is an ask: {act_keys:?}");
+        assert_eq!(r.acts.len(), 2);
+        assert!(r.activity.is_empty(), "9802 / 1111 are off by default");
+        assert_eq!(r.counts.acts, 2);
+        let mr_row = r.acts.iter().find(|x| x.key == "818").unwrap();
+        assert_eq!(mr_row.anchor.root.as_deref(), Some(root.as_str()));
+        assert!(mr_row.summary.contains("merge request on On Method"), "{}", mr_row.summary);
+        assert_eq!(mr_row.status.as_deref(), Some("open"), "an 818 with no verdict yet is open");
+        assert!(mr_row.verdict.is_none());
+        assert!(r.done.is_empty());
+        assert!(r.mine.is_empty());
+
+        // enable highlights (count) + comments (list): both show, the stray reaction never does
+        let mut prefs = Prefs::load(&data_dir);
+        prefs.set("9802", Some(true), Some(How::Count)).unwrap();
+        prefs.set("1111", Some(true), Some(How::List)).unwrap();
+        prefs.save(&data_dir).unwrap();
+        let r = notifications::list_notifications(&engine, &me, &Prefs::load(&data_dir), "open").await.unwrap();
+        let keys: Vec<&str> = r.activity.iter().map(|x| x.key.as_str()).collect();
+        assert_eq!(keys.len(), 2, "{keys:?}");
+        assert!(keys.contains(&"9802") && keys.contains(&"1111"));
+        assert!(!r.activity.iter().chain(r.acts.iter()).any(|x| x.kind == 7), "a reaction to nothing of mine never appears");
+        assert_eq!((r.counts.acts, r.counts.activity_count, r.counts.activity_list), (2, 1, 1));
+        let hl_row = r.activity.iter().find(|x| x.key == "9802").unwrap();
+        assert!(hl_row.summary.contains("highlighted §Against method of On Method"), "{}", hl_row.summary);
+        assert_eq!(hl_row.anchor.parent.as_deref(), Some(sec_coord.as_str()));
+
+        // turning on the generic reaction rule still keeps the unrelated 7 out
+        prefs.set("7", Some(true), None).unwrap();
+        let r = notifications::list_notifications(&engine, &me, &prefs, "open").await.unwrap();
+        assert!(!r.activity.iter().any(|x| x.kind == 7));
+
+        // muted author → nothing from them
+        engine.ignore_list().write().await.pubkeys.insert(hl["pubkey"].as_str().unwrap().to_string());
+        let r = notifications::list_notifications(&engine, &me, &prefs, "open").await.unwrap();
+        assert!(r.acts.is_empty() && r.activity.is_empty(), "the ignore list applies before counting");
     }
 }

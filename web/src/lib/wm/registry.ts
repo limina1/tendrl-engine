@@ -16,6 +16,8 @@ import ProfileEditBuffer from './renderers/ProfileEditBuffer.svelte';
 import DiscussionViewBuffer from './renderers/DiscussionViewBuffer.svelte';
 import RepositoryBuffer from './renderers/RepositoryBuffer.svelte';
 import AnnotationsBuffer from './renderers/AnnotationsBuffer.svelte';
+import NotificationsBuffer from './renderers/NotificationsBuffer.svelte';
+import MergeRequestReviewBuffer from './renderers/MergeRequestReviewBuffer.svelte';
 import { BUFFER_KIND_META, type BufferKindMeta } from './tours';
 
 // Tour + class lookups live in the leaf `./tours` (no component imports) so a
@@ -53,6 +55,8 @@ const COMPONENTS: Record<string, Component<RendererProps>> = {
 	'discussion-view': DiscussionViewBuffer,
 	repository: RepositoryBuffer,
 	annotations: AnnotationsBuffer,
+	notifications: NotificationsBuffer,
+	review: MergeRequestReviewBuffer,
 	search: SearchBuffer
 };
 

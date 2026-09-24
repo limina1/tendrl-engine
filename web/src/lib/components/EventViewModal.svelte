@@ -430,7 +430,11 @@
 	function onAskAction() {
 		const a = resolveAnchor();
 		if (!a) return;
-		app.annotationRequest = a;
+		// The section's own content, for the vocabulary output's word marking —
+		// only from a full event; a SearchResult's preview is truncated to
+		// 200 chars, so the window fetches the parent itself in that case.
+		const full = !('event_id' in event) && n.kind === 30041;
+		app.annotationRequest = full ? { ...a, content: n.content } : a;
 		onclose();
 	}
 

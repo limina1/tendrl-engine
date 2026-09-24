@@ -11,8 +11,9 @@ use super::{AppState, PublishResponse, SignAs};
 use crate::engine::FetchPolicy;
 use crate::error::EngineError;
 use crate::publication::insertion::{
-    bind_placeholder_pubkey, build_insertion_template, coord_parts, ensure_mime_tag,
-    event_coordinate, event_tags, fork_index, index_children, is_bundle, promotion_slot,
+    bind_placeholder_pubkey, build_glossary_template, build_insertion_template, coord_parts,
+    ensure_mime_tag, event_coordinate, event_tags, fork_index, glossary_d_tag, glossary_edit,
+    index_children, index_with_glossary, is_bundle, is_definition, is_glossary, promotion_slot,
     stamp_bundle_root, InsertionAnchor, Placement,
 };
 use crate::search::TagValueCount;
@@ -58,6 +59,10 @@ pub struct InsertionBody {
     /// Coordinate of the annotation request (`30041:pk:d`, a signed
     /// `t: annotation-request`) this note answers — `["request", …]` tag.
     pub request: Option<String>,
+    /// `note` (default) or `definition` — a definition is one term's
+    /// entry (`title` = the term), tagged `t: definition`, the answer shape
+    /// of a vocabulary request.
+    pub role: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -148,6 +153,19 @@ pub(crate) async fn insertion_template(
     }
     if let Some(t) = request_tag(body.request.as_deref())? {
         extra.push(t);
+    }
+    match body.role.as_deref().map(str::trim).filter(|r| !r.is_empty()) {
+        None | Some("note") => {}
+        Some("definition") => {
+            if !body.tags.iter().any(|t| t.first().map(String::as_str) == Some("t") && t.get(1).map(String::as_str) == Some("definition")) {
+                extra.push(vec!["t".to_string(), "definition".to_string()]);
+            }
+        }
+        Some(other) => {
+            return Err(EngineError::BadRequest(format!(
+                "role must be note or definition, got `{other}`"
+            )))
+        }
     }
     extra.extend(body.tags.iter().cloned());
     let relay_hint = super::discussion_relay_hint(engine);
@@ -501,6 +519,25 @@ pub enum InsertionRole {
     /// A kind-30040 insertion: a whole NKBIP-01 tree (a kasten) attached to
     /// the publication; its `a` tags are its children.
     Bundle,
+    /// A kind-30041 tagged `t: definition`: one term's entry, the answer
+    /// shape of a vocabulary request. Counted as a note; never a request.
+    Definition,
+    /// A kind-818 merge request whose target is this root or one of its
+    /// sections — an ask the reader shows as a card under its target,
+    /// never a note (excluded from counts like a request).
+    Ask,
+}
+
+/// What a `role: ask` row carries about its 818.
+#[derive(Debug, Clone, Serialize)]
+pub struct AskSummary {
+    pub id: String,
+    pub status: crate::publication::merge_request::MergeStatus,
+    pub content: String,
+    pub pubkey: String,
+    /// The derivative the request asks the owner to take (`e … source`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source: Option<String>,
 }
 
 /// One loaded insertion: the section event plus its parsed anchor, so the
@@ -518,6 +555,71 @@ pub struct LoadedInsertion {
     /// A bundle's children (its `a` coordinates, in order); empty otherwise.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub children: Vec<String>,
+    /// A definition's term — its `title` tag, the word as written.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub term: Option<String>,
+    /// A definition promoted into a glossary bundle on this root (by any
+    /// author) — the reader lists it in the glossary, not as a card.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub promoted: bool,
+    /// The glossary bundle's coordinate when `promoted`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub glossary: Option<String>,
+    /// A `role: ask` row's merge request.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub merge_request: Option<AskSummary>,
+}
+
+/// The kind-818s whose target is `root` or one of its sections, as
+/// `role: ask` rows anchored to their target. Local store only.
+async fn load_asks(engine: &AppState, root: &str, ignored_pubkeys: &[String]) -> Result<Vec<LoadedInsertion>, EngineError> {
+    use crate::publication::merge_request::{resolve_status, MergeRequest};
+    let Some((_, root_pk, root_d)) = coord_parts(root) else { return Ok(Vec::new()) };
+    let mut targets = vec![root.to_string()];
+    if let Some(ix) = engine.get_addressable(30040, root_pk, root_d, FetchPolicy::LocalOnly).await? {
+        targets.extend(index_children(&ix));
+    }
+    let events = engine
+        .get_events(vec![json!({ "kinds": [818], "#a": targets, "limit": 200 })], FetchPolicy::LocalOnly, None)
+        .await?
+        .events;
+    let mut out = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    for ev in events {
+        let Some(mr) = MergeRequest::from_event(&ev) else { continue };
+        if !seen.insert(mr.id.clone()) || ignored_pubkeys.iter().any(|p| *p == mr.pubkey) {
+            continue;
+        }
+        let Some((tk, tpk, _)) = coord_parts(&mr.target) else { continue };
+        let anchor = InsertionAnchor {
+            root: root.to_string(),
+            root_kind: 30040,
+            root_pubkey: root_pk.to_string(),
+            parent: mr.target.clone(),
+            parent_kind: tk,
+            parent_pubkey: tpk.to_string(),
+            parent_event_id: mr.base.clone(),
+            placement: Placement::default(),
+        };
+        let reactions = engine
+            .get_events(vec![json!({ "kinds": [7], "#e": [mr.id.clone()], "authors": [mr.owner.clone()], "limit": 50 })], FetchPolicy::LocalOnly, None)
+            .await?
+            .events;
+        let (status, _) = resolve_status(&mr, &reactions);
+        out.push(LoadedInsertion {
+            coordinate: format!("818:{}", mr.id),
+            event: ev,
+            anchor,
+            role: InsertionRole::Ask,
+            request: None,
+            children: Vec::new(),
+            term: None,
+            promoted: false,
+            glossary: None,
+            merge_request: Some(AskSummary { id: mr.id.clone(), status, content: mr.content.clone(), pubkey: mr.pubkey.clone(), source: mr.source.clone() }),
+        });
+    }
+    Ok(out)
 }
 
 /// Histograms over every note on a root (requests excluded), for the
@@ -568,7 +670,7 @@ pub(crate) fn insertion_counts(insertions: &[LoadedInsertion]) -> InsertionCount
     let mut by_author: BTreeMap<&str, Vec<String>> = BTreeMap::new();
     let mut by_parent: BTreeMap<&str, Vec<String>> = BTreeMap::new();
     let mut total = 0usize;
-    for ins in insertions.iter().filter(|i| i.role != InsertionRole::Request) {
+    for ins in insertions.iter().filter(|i| !matches!(i.role, InsertionRole::Request | InsertionRole::Ask)) {
         total += 1;
         let id = ins
             .event
@@ -599,6 +701,29 @@ pub(crate) fn insertion_counts(insertions: &[LoadedInsertion]) -> InsertionCount
         by_author: buckets(by_author),
         by_parent: buckets(by_parent),
         total,
+    }
+}
+
+/// Join definitions against the glossary bundles the same pass loaded: a
+/// definition listed by any glossary on the root is `promoted`, with that
+/// glossary's coordinate. Pure over the loaded rows.
+pub(crate) fn mark_promoted(insertions: &mut [LoadedInsertion]) {
+    let glossaries: Vec<(String, Vec<String>)> = insertions
+        .iter()
+        .filter(|i| i.role == InsertionRole::Bundle && is_glossary(&i.event))
+        .map(|i| (i.coordinate.clone(), i.children.clone()))
+        .collect();
+    if glossaries.is_empty() {
+        return;
+    }
+    for ins in insertions.iter_mut() {
+        if ins.role != InsertionRole::Definition {
+            continue;
+        }
+        if let Some((g, _)) = glossaries.iter().find(|(_, kids)| kids.iter().any(|k| k == &ins.coordinate)) {
+            ins.promoted = true;
+            ins.glossary = Some(g.clone());
+        }
     }
 }
 
@@ -662,7 +787,7 @@ pub(crate) async fn load_insertions(
                 crate::network::FetchPattern::Thread,
                 "Load annotations".to_string(),
                 vec![
-                    format!("kind 30041 with A = {root}"),
+                    format!("kinds 30040 + 30041 with A = {root}"),
                     format!("by {who}"),
                     "attached notes only — the index itself is unchanged".to_string(),
                 ],
@@ -679,7 +804,10 @@ pub(crate) async fn load_insertions(
     }
 
     let mut filter = serde_json::Map::new();
-    filter.insert("kinds".into(), json!([30041]));
+    // 30041 notes / requests / definitions AND 30040 bundles (a kasten, a
+    // glossary) — everything that anchors to the root with `A`. The root
+    // index itself carries no `A`, so it never matches.
+    filter.insert("kinds".into(), json!([30040, 30041]));
     filter.insert("#A".into(), json!([root]));
     filter.insert("limit".into(), json!(limit));
     // Counting sees the whole root; the author filter is applied after.
@@ -714,7 +842,7 @@ pub(crate) async fn load_insertions(
     let mut events = super::dedup_events_by_id(response.events);
 
     // Muted authors never render.
-    {
+    let ignored_pubkeys: Vec<String> = {
         let ignored = engine.ignore_list().read().await;
         if !ignored.pubkeys.is_empty() || !ignored.event_ids.is_empty() {
             events.retain(|e| {
@@ -723,7 +851,8 @@ pub(crate) async fn load_insertions(
                 !ignored.pubkeys.contains(pk) && !ignored.event_ids.contains(id)
             });
         }
-    }
+        ignored.pubkeys.iter().cloned().collect()
+    };
 
     // Addressable: newest version per coordinate wins.
     let mut newest: std::collections::HashMap<String, Value> = std::collections::HashMap::new();
@@ -754,6 +883,8 @@ pub(crate) async fn load_insertions(
                 InsertionRole::Bundle
             } else if crate::requests::is_request_event(&event) {
                 InsertionRole::Request
+            } else if is_definition(&event) {
+                InsertionRole::Definition
             } else {
                 InsertionRole::Note
             };
@@ -763,6 +894,14 @@ pub(crate) async fn load_insertions(
             } else {
                 Vec::new()
             };
+            let term = if role == InsertionRole::Definition {
+                event_tags(&event)
+                    .into_iter()
+                    .find(|t| t.first().map(String::as_str) == Some("title"))
+                    .and_then(|t| t.get(1).cloned())
+            } else {
+                None
+            };
             Some(LoadedInsertion {
                 event,
                 coordinate,
@@ -770,11 +909,19 @@ pub(crate) async fn load_insertions(
                 role,
                 request,
                 children,
+                term,
+                promoted: false,
+                glossary: None,
+                merge_request: None,
             })
         })
         .collect();
+    // Merge requests on this root or its sections: an ask is a card under
+    // its target. Local only — an 818 rides the owner's inbox, not `#A`.
+    insertions.extend(load_asks(engine, &root, &ignored_pubkeys).await?);
     // Spec: clients SHOULD order same-position insertions by created_at.
     insertions.sort_by_key(|i| i.event.get("created_at").and_then(Value::as_i64).unwrap_or(0));
+    mark_promoted(&mut insertions);
 
     if let Some(o) = op {
         o.complete(insertions.len());
@@ -812,6 +959,227 @@ pub async fn insertions_load_handler(
     Json(req): Json<InsertionsLoadRequest>,
 ) -> Result<Json<InsertionsLoadResponse>, EngineError> {
     Ok(Json(load_insertions(&engine, req).await?))
+}
+
+
+// ---------------------------------------------------------------------------
+// POST /api/v1/insertions/glossary  ·  /preview — per-event promotion
+//
+// A definition is promoted one event at a time into the signer's *glossary
+// bundle* for the root: a kind-30040 (`d` = `<root d>-glossary`, `t:
+// glossary`, the bundle anchor set) whose `a` tags are the promoted
+// definitions. Every edit is a new version of that bundle; when the signer
+// owns the root index, the index gets a new version too, carrying (or, once
+// the glossary is empty, no longer carrying) `a → glossary` in the appendix
+// slot. A non-owner's index change is the merge-request path (step 4).
+
+#[derive(Debug, Deserialize, Default)]
+#[serde(default)]
+pub struct GlossaryRequest {
+    /// The publication: `30040:pubkey:d`.
+    pub root: String,
+    /// Definition coordinates to promote (`30041:pk:d`, local, `t: definition`,
+    /// anchored to `root`).
+    pub add: Vec<String>,
+    /// Definition coordinates to take out of the glossary.
+    pub remove: Vec<String>,
+    pub sign_as: Option<SignAs>,
+    /// Default false: sign and keep local, like every other insertion publish.
+    pub broadcast: bool,
+    pub relays: Option<Vec<String>>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct GlossaryPreview {
+    /// The glossary bundle's next version, unsigned.
+    pub glossary: EventTemplate,
+    pub glossary_coordinate: String,
+    /// The index's next version, unsigned — only when the signer owns the
+    /// index AND its `a → glossary` needs to change.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub index: Option<EventTemplate>,
+    pub index_coordinate: String,
+    /// Whether the signer owns the index (else only the glossary is written).
+    pub owner: bool,
+    /// The glossary's entries after the edit, in order.
+    pub promoted: Vec<String>,
+    /// Entries before the edit (the newest local version of the bundle).
+    pub previous: Vec<String>,
+    pub sign_as: SignAs,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub signer_pubkey: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
+}
+
+/// Compute both templates for `signer_pubkey`.
+pub(crate) async fn glossary_templates(
+    engine: &AppState,
+    req: &GlossaryRequest,
+    signer_pubkey: &str,
+) -> Result<GlossaryPreview, EngineError> {
+    let root = req.root.trim().to_string();
+    let (rk, rpk, rd) = coord_parts(&root)
+        .filter(|(k, _, _)| *k == 30040)
+        .ok_or_else(|| {
+            EngineError::BadRequest(format!("root must be a 30040:pubkey:d coordinate, got `{root}`"))
+        })?;
+    let (rpk, rd) = (rpk.to_string(), rd.to_string());
+    // Every `add` must be a local definition anchored to this root.
+    for c in &req.add {
+        let c = c.trim();
+        let (k, pk, d) = coord_parts(c).ok_or_else(|| {
+            EngineError::BadRequest(format!("add: not a coordinate: `{c}`"))
+        })?;
+        if k != 30041 {
+            return Err(EngineError::BadRequest(format!("add: `{c}` is not a 30041")));
+        }
+        let ev = engine
+            .get_addressable(30041, pk, d, FetchPolicy::LocalOnly)
+            .await?
+            .ok_or_else(|| EngineError::NotFound(format!("add: `{c}` is not in the local store")))?;
+        if !is_definition(&ev) {
+            return Err(EngineError::BadRequest(format!(
+                "add: `{c}` is not a definition (no `t: definition`)"
+            )));
+        }
+        let anchored = InsertionAnchor::from_event(&ev).is_some_and(|a| a.root == root);
+        if !anchored {
+            return Err(EngineError::BadRequest(format!(
+                "add: `{c}` is not anchored to {root}"
+            )));
+        }
+    }
+    let anchor = InsertionAnchor::top_level(&root, Placement::Annotation).map_err(EngineError::BadRequest)?;
+    let gd = glossary_d_tag(&rd);
+    let glossary_coordinate = format!("30040:{signer_pubkey}:{gd}");
+    let previous: Vec<String> = if super::is_hex64(signer_pubkey) {
+        match engine.get_addressable(30040, signer_pubkey, &gd, FetchPolicy::LocalOnly).await? {
+            Some(ev) if is_glossary(&ev) => index_children(&ev),
+            _ => Vec::new(),
+        }
+    } else {
+        Vec::new()
+    };
+    let promoted = glossary_edit(&previous, &req.add, &req.remove);
+    let relay_hint = super::discussion_relay_hint(engine);
+    let now = super::unix_now_i64();
+    let glossary = build_glossary_template(&anchor, &promoted, &relay_hint, now).map_err(EngineError::BadRequest)?;
+    let owner = signer_pubkey == rpk;
+    let mut note = None;
+    let index = if owner {
+        let idx = engine
+            .get_addressable(rk as u64, &rpk, &rd, FetchPolicy::LocalFirst)
+            .await?
+            .ok_or_else(|| EngineError::NotFound(format!("index {root} not found")))?;
+        index_with_glossary(&idx, &glossary_coordinate, !promoted.is_empty(), &relay_hint, now)
+            .map_err(EngineError::BadRequest)?
+    } else {
+        note = Some(format!(
+            "you do not own {root}: only your glossary bundle is written; folding it into the index is a merge request to its owner"
+        ));
+        None
+    };
+    Ok(GlossaryPreview {
+        glossary,
+        glossary_coordinate,
+        index,
+        index_coordinate: root,
+        owner,
+        promoted,
+        previous,
+        sign_as: SignAs::User,
+        signer_pubkey: None,
+        note,
+    })
+}
+
+/// POST /api/v1/insertions/glossary/preview — both next versions, unsigned.
+pub async fn glossary_preview_handler(
+    State(engine): State<AppState>,
+    Extension(signing): Extension<crate::signing::SigningController>,
+    Json(req): Json<GlossaryRequest>,
+) -> Result<Json<GlossaryPreview>, EngineError> {
+    let sign_as = req.sign_as.unwrap_or(SignAs::User);
+    let signer_pubkey = preview_pubkey(&engine, &signing, sign_as).await;
+    let mut preview = glossary_templates(
+        &engine,
+        &req,
+        signer_pubkey
+            .as_deref()
+            .unwrap_or(crate::publication::insertion::PUBKEY_PLACEHOLDER),
+    )
+    .await?;
+    crate::signing::ensure_client_tag(&mut preview.glossary.tags);
+    preview.glossary.pubkey = signer_pubkey.clone();
+    if let Some(ix) = preview.index.as_mut() {
+        crate::signing::ensure_client_tag(&mut ix.tags);
+        ix.pubkey = signer_pubkey.clone();
+    }
+    preview.sign_as = sign_as;
+    preview.signer_pubkey = signer_pubkey;
+    Ok(Json(preview))
+}
+
+#[derive(Debug, Serialize)]
+pub struct GlossaryPublishResponse {
+    /// The signed glossary bundle, ingested.
+    pub glossary: Value,
+    pub glossary_coordinate: String,
+    /// The signed index (new version), when one was needed.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub index: Option<Value>,
+    pub index_coordinate: String,
+    pub owner: bool,
+    pub promoted: Vec<String>,
+    pub signed_as: SignAs,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
+    #[serde(flatten)]
+    pub publish: PublishResponse,
+}
+
+/// POST /api/v1/insertions/glossary — sign the glossary (and the index when
+/// owned and changed) as the named source; local until broadcast.
+pub async fn glossary_publish_handler(
+    State(engine): State<AppState>,
+    Extension(signing): Extension<crate::signing::SigningController>,
+    Json(req): Json<GlossaryRequest>,
+) -> Result<Json<GlossaryPublishResponse>, EngineError> {
+    let sign_as = req.sign_as.unwrap_or(SignAs::User);
+    let (pubkey, signer) = super::resolve_publish_signer(&engine, &signing, sign_as).await?;
+    let preview = glossary_templates(&engine, &req, &pubkey).await?;
+    let mut gt = preview.glossary;
+    gt.pubkey = Some(pubkey.clone());
+    let glossary = signer.sign(gt).await.map_err(super::map_publish_sign_error)?;
+    let index = match preview.index {
+        Some(mut it) => {
+            it.pubkey = Some(pubkey.clone());
+            Some(signer.sign(it).await.map_err(super::map_publish_sign_error)?)
+        }
+        None => None,
+    };
+    let publish = super::finalize_publish(
+        &engine,
+        index.clone(),
+        vec![glossary.clone()],
+        req.broadcast,
+        req.relays.clone(),
+        true,
+    )
+    .await?
+    .0;
+    Ok(Json(GlossaryPublishResponse {
+        glossary_coordinate: event_coordinate(&glossary).unwrap_or(preview.glossary_coordinate),
+        glossary,
+        index,
+        index_coordinate: preview.index_coordinate,
+        owner: preview.owner,
+        promoted: preview.promoted,
+        signed_as: sign_as,
+        note: preview.note,
+        publish,
+    }))
 }
 
 // ---------------------------------------------------------------------------
@@ -1003,9 +1371,648 @@ pub async fn fork_publish_handler(
     }))
 }
 
+// ---------------------------------------------------------------------------
+// POST /api/v1/publication/relink  ·  /preview — own publication (step 3)
+//
+// Rewrite the root's sections so the first occurrence of each defined term
+// points at its definition event (`{{ref:<coord>|term}}`), as new versions
+// under the same `d`. Owner only: a non-owner sees the full preview (the
+// diff is the same) but publishing is the derivative + merge-request path
+// (step 4). Optionally the same publish promotes definitions into the
+// glossary (the step-2 helpers), so one armed button does both.
+
+#[derive(Debug, Deserialize, Default)]
+#[serde(default)]
+pub struct RelinkGlossaryEdit {
+    pub add: Vec<String>,
+    pub remove: Vec<String>,
+}
+
+#[derive(Debug, Deserialize, Default)]
+#[serde(default)]
+pub struct RelinkRequest {
+    /// The publication: `30040:pubkey:d`.
+    pub root: String,
+    /// Definition coordinates to link (`30041:pk:d`, local, `t: definition`,
+    /// anchored to `root`). Default: every local definition on the root.
+    pub definitions: Option<Vec<String>>,
+    /// Optional per-event glossary promotion in the same publish.
+    pub glossary: Option<RelinkGlossaryEdit>,
+    pub sign_as: Option<SignAs>,
+    /// Default false: sign and keep local.
+    pub broadcast: bool,
+    pub relays: Option<Vec<String>>,
+    /// Non-owner + broadcast: where the kind-818 goes — the user's edited
+    /// destination list from the Confirm modal. Default: every relay of
+    /// the computed destination set when it is deliverable.
+    pub destinations: Option<Vec<String>>,
+    /// User-initiated: lets the owner's kind-10002 lookup raise the Confirm
+    /// intent instead of resolving local-only.
+    pub mode_confirm: bool,
+}
+
+/// A derivative section: the original coordinate, the coordinate it gets
+/// under the signer's key, and the unsigned copy (tags verbatim, minted `d`,
+/// `E`/`p` back-pointers, the relinked content + its `a` tags).
+#[derive(Debug, Clone, Serialize)]
+pub struct RelinkDerivativeSection {
+    pub original: String,
+    pub coordinate: String,
+    pub template: EventTemplate,
+}
+
+/// What a non-owner's relink publishes: a derivative index + sections under
+/// their key and a kind-818 merge request addressed to the owner.
+#[derive(Debug, Clone, Serialize)]
+pub struct RelinkDerivative {
+    pub index: EventTemplate,
+    pub index_coordinate: String,
+    pub sections: Vec<RelinkDerivativeSection>,
+    /// The unsigned kind-818. Its `e … source` row is a placeholder in the
+    /// preview (the derivative index's id exists only after signing); the
+    /// publish fills it.
+    pub merge_request: EventTemplate,
+    pub destinations: crate::api::merge_requests::DestinationsResponse,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct RelinkDefinition {
+    pub coordinate: String,
+    pub term: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct RelinkSkipped {
+    pub coordinate: String,
+    pub why: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct RelinkPreview {
+    pub root: String,
+    /// Whether the signer owns the root index (publishing requires it here).
+    pub owner: bool,
+    /// The definitions the relink pointed at, in the order they were tried.
+    pub definitions: Vec<RelinkDefinition>,
+    /// Sections that change: hunks + the unsigned next version each.
+    pub sections: Vec<crate::publication::relink::RelinkedSection>,
+    /// Sections with no occurrence outside a protected span.
+    pub unchanged: Vec<String>,
+    /// Children of the index that were not relinked, and why.
+    pub skipped: Vec<RelinkSkipped>,
+    pub hunk_count: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub glossary: Option<EventTemplate>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub glossary_coordinate: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub index: Option<EventTemplate>,
+    pub index_coordinate: String,
+    /// Glossary entries after the edit (empty when no glossary edit asked).
+    pub promoted: Vec<String>,
+    pub sign_as: SignAs,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub signer_pubkey: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
+    /// Non-owner only: the derivative + merge request the publish would sign.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub derivative: Option<RelinkDerivative>,
+}
+
+/// The 818's content line for a relink: how many terms, plus the glossary.
+pub(crate) fn merge_request_content(terms: usize, promoted: usize) -> String {
+    let mut c = format!("Relink {terms} term{} to their definitions", if terms == 1 { "" } else { "s" });
+    if promoted > 0 {
+        c.push_str(&format!("; add a glossary ({promoted})"));
+    }
+    c
+}
+
+pub(crate) const SOURCE_PLACEHOLDER: &str = "<derivative index id — filled after signing>";
+
+fn definition_term(ev: &Value) -> String {
+    event_tags(ev)
+        .iter()
+        .find(|t| t.first().map(String::as_str) == Some("title"))
+        .and_then(|t| t.get(1))
+        .map(|s| s.trim().to_string())
+        .unwrap_or_default()
+}
+
+/// The definitions to link: the named ones (each checked) or every local
+/// definition anchored to the root.
+async fn relink_definitions(
+    engine: &AppState,
+    root: &str,
+    named: Option<&[String]>,
+) -> Result<Vec<RelinkDefinition>, EngineError> {
+    let mut out: Vec<RelinkDefinition> = Vec::new();
+    match named {
+        Some(list) => {
+            for c in list {
+                let c = c.trim();
+                let (k, pk, d) = coord_parts(c)
+                    .ok_or_else(|| EngineError::BadRequest(format!("definitions: not a coordinate: `{c}`")))?;
+                if k != 30041 {
+                    return Err(EngineError::BadRequest(format!("definitions: `{c}` is not a 30041")));
+                }
+                let ev = engine
+                    .get_addressable(30041, pk, d, FetchPolicy::LocalOnly)
+                    .await?
+                    .ok_or_else(|| EngineError::NotFound(format!("definitions: `{c}` is not in the local store")))?;
+                if !is_definition(&ev) {
+                    return Err(EngineError::BadRequest(format!(
+                        "definitions: `{c}` is not a definition (no `t: definition`)"
+                    )));
+                }
+                if !InsertionAnchor::from_event(&ev).is_some_and(|a| a.root == root) {
+                    return Err(EngineError::BadRequest(format!("definitions: `{c}` is not anchored to {root}")));
+                }
+                let term = definition_term(&ev);
+                if term.is_empty() {
+                    return Err(EngineError::BadRequest(format!("definitions: `{c}` has no title (the term)")));
+                }
+                if !out.iter().any(|o| o.coordinate == c) {
+                    out.push(RelinkDefinition { coordinate: c.to_string(), term });
+                }
+            }
+        }
+        None => {
+            let loaded = load_insertions(
+                engine,
+                InsertionsLoadRequest { root: root.to_string(), policy: Some("local_only".into()), ..Default::default() },
+            )
+            .await?;
+            for i in loaded.insertions.into_iter().filter(|i| i.role == InsertionRole::Definition) {
+                let term = i.term.clone().unwrap_or_else(|| definition_term(&i.event));
+                if !term.trim().is_empty() {
+                    out.push(RelinkDefinition { coordinate: i.coordinate, term });
+                }
+            }
+        }
+    }
+    Ok(out)
+}
+
+/// Compute the relink for `signer_pubkey`: every changed section's next
+/// version, the glossary/index templates when a glossary edit was asked.
+pub(crate) async fn relink_templates(
+    engine: &AppState,
+    req: &RelinkRequest,
+    signer_pubkey: &str,
+) -> Result<RelinkPreview, EngineError> {
+    let root = req.root.trim().to_string();
+    let (rk, rpk, rd) = coord_parts(&root)
+        .filter(|(k, _, _)| *k == 30040)
+        .ok_or_else(|| {
+            EngineError::BadRequest(format!("root must be a 30040:pubkey:d coordinate, got `{root}`"))
+        })?;
+    let (rpk, rd) = (rpk.to_string(), rd.to_string());
+    let owner = signer_pubkey == rpk;
+    let index = engine
+        .get_addressable(rk as u64, &rpk, &rd, FetchPolicy::LocalFirst)
+        .await?
+        .ok_or_else(|| EngineError::NotFound(format!("index {root} not found")))?;
+    let definitions = relink_definitions(engine, &root, req.definitions.as_deref()).await?;
+    let defs: Vec<(String, String)> = definitions.iter().map(|d| (d.term.clone(), d.coordinate.clone())).collect();
+    let now = super::unix_now_i64();
+
+    let mut sections = Vec::new();
+    let mut originals: Vec<Value> = Vec::new();
+    let mut unchanged = Vec::new();
+    let mut skipped = Vec::new();
+    for child in index_children(&index) {
+        let Some((k, pk, d)) = coord_parts(&child) else {
+            skipped.push(RelinkSkipped { coordinate: child.clone(), why: "not a coordinate".into() });
+            continue;
+        };
+        if k != 30041 {
+            skipped.push(RelinkSkipped { coordinate: child.clone(), why: format!("kind {k} — a sub-index is not relinked") });
+            continue;
+        }
+        let Some(ev) = engine.get_addressable(30041, pk, d, FetchPolicy::LocalOnly).await? else {
+            skipped.push(RelinkSkipped { coordinate: child.clone(), why: "not in the local store".into() });
+            continue;
+        };
+        if defs.is_empty() {
+            unchanged.push(child.clone());
+            continue;
+        }
+        match crate::publication::relink::relink_section(&ev, &defs, now) {
+            Some(r) => {
+                sections.push(r);
+                originals.push(ev);
+            }
+            None => unchanged.push(child.clone()),
+        }
+    }
+    let hunk_count = sections.iter().map(|s| s.hunks.len()).sum();
+
+    let mut note = if owner {
+        None
+    } else {
+        Some(format!(
+            "you do not own {root}: this is the diff a derivative would carry; publishing it is a merge request to the owner (step 4)"
+        ))
+    };
+    let (mut glossary, mut glossary_coordinate, mut ix, mut promoted) = (None, None, None, Vec::new());
+    if let Some(g) = &req.glossary {
+        if !g.add.is_empty() || !g.remove.is_empty() {
+            let gr = GlossaryRequest { root: root.clone(), add: g.add.clone(), remove: g.remove.clone(), ..Default::default() };
+            let gp = glossary_templates(engine, &gr, signer_pubkey).await?;
+            glossary = Some(gp.glossary);
+            glossary_coordinate = Some(gp.glossary_coordinate);
+            ix = gp.index;
+            promoted = gp.promoted;
+            if note.is_none() {
+                note = gp.note;
+            }
+        }
+    }
+    // A non-owner's publish is a derivative under their key plus a kind-818
+    // to the owner: build it here so the preview shows exactly that.
+    let derivative = if !owner && (!sections.is_empty() || glossary.is_some()) {
+        let relay_hint = super::discussion_relay_hint(engine);
+        let mut dsections = Vec::with_capacity(sections.len());
+        let mut replacements = Vec::with_capacity(sections.len());
+        for (r, orig) in sections.iter().zip(originals.iter()) {
+            let mut t = crate::publication::merge_request::fork_section(orig, signer_pubkey, &relay_hint, now)
+                .map_err(EngineError::BadRequest)?;
+            t.content = r.template.content.clone();
+            for added in &r.tags_added {
+                if !t.tags.iter().any(|x| x.len() >= 2 && added.len() >= 2 && x[0] == added[0] && x[1] == added[1]) {
+                    t.tags.push(added.clone());
+                }
+            }
+            let d = t
+                .tags
+                .iter()
+                .find(|x| x.first().map(String::as_str) == Some("d"))
+                .and_then(|x| x.get(1).cloned())
+                .unwrap_or_default();
+            let coordinate = format!("30041:{signer_pubkey}:{d}");
+            replacements.push((r.coordinate.clone(), coordinate.clone()));
+            dsections.push(RelinkDerivativeSection { original: r.coordinate.clone(), coordinate, template: t });
+        }
+        let (ix_t, ix_d) = crate::publication::merge_request::derivative_index(
+            &index,
+            &replacements,
+            if promoted.is_empty() { None } else { glossary_coordinate.as_deref() },
+            signer_pubkey,
+            &relay_hint,
+            now,
+        )
+        .map_err(EngineError::BadRequest)?;
+        let index_coordinate = format!("30040:{signer_pubkey}:{ix_d}");
+        let base = index.get("id").and_then(Value::as_str).unwrap_or("");
+        let terms: std::collections::BTreeSet<&str> =
+            sections.iter().flat_map(|s| s.hunks.iter().map(|h| h.term.as_str())).collect();
+        let target_hint = engine.relay_hints_for_target(&root).into_iter().next().unwrap_or_default();
+        let hints = crate::publication::merge_request::MergeHints { target: target_hint, source: String::new() };
+        let mut mr = crate::publication::merge_request::template(
+            &root,
+            Some(base),
+            None,
+            &rpk,
+            &merge_request_content(terms.len(), promoted.len()),
+            &hints,
+            now,
+        )
+        .map_err(EngineError::BadRequest)?;
+        // preview only: the source row, to be filled with the signed index′ id
+        let p_at = mr.tags.iter().position(|t| t.first().map(String::as_str) == Some("p")).unwrap_or(mr.tags.len());
+        mr.tags.insert(p_at, vec!["e".into(), SOURCE_PLACEHOLDER.into(), String::new(), "source".into()]);
+        mr.pubkey = Some(signer_pubkey.to_string());
+        let destinations = crate::api::merge_requests::destinations(
+            engine,
+            &crate::api::merge_requests::DestinationsRequest {
+                target: root.clone(),
+                owner: Some(rpk.clone()),
+                policy: Some(if req.mode_confirm { "local_first".into() } else { "local_only".into() }),
+                mode_confirm: req.mode_confirm,
+            },
+        )
+        .await?;
+        Some(RelinkDerivative { index: ix_t, index_coordinate, sections: dsections, merge_request: mr, destinations })
+    } else {
+        None
+    };
+    Ok(RelinkPreview {
+        root: root.clone(),
+        owner,
+        definitions,
+        sections,
+        unchanged,
+        skipped,
+        hunk_count,
+        glossary,
+        glossary_coordinate,
+        index: ix,
+        index_coordinate: root,
+        promoted,
+        sign_as: SignAs::User,
+        signer_pubkey: None,
+        note,
+        derivative,
+    })
+}
+
+/// POST /api/v1/publication/relink/preview — the diff and every unsigned
+/// next version, for the named signer (a non-owner still gets the diff).
+pub async fn relink_preview_handler(
+    State(engine): State<AppState>,
+    Extension(signing): Extension<crate::signing::SigningController>,
+    Json(req): Json<RelinkRequest>,
+) -> Result<Json<RelinkPreview>, EngineError> {
+    let sign_as = req.sign_as.unwrap_or(SignAs::User);
+    let signer_pubkey = preview_pubkey(&engine, &signing, sign_as).await;
+    let mut preview = relink_templates(
+        &engine,
+        &req,
+        signer_pubkey
+            .as_deref()
+            .unwrap_or(crate::publication::insertion::PUBKEY_PLACEHOLDER),
+    )
+    .await?;
+    for s in preview.sections.iter_mut() {
+        crate::signing::ensure_client_tag(&mut s.template.tags);
+        s.template.pubkey = signer_pubkey.clone();
+    }
+    if let Some(g) = preview.glossary.as_mut() {
+        crate::signing::ensure_client_tag(&mut g.tags);
+        g.pubkey = signer_pubkey.clone();
+    }
+    if let Some(i) = preview.index.as_mut() {
+        crate::signing::ensure_client_tag(&mut i.tags);
+        i.pubkey = signer_pubkey.clone();
+    }
+    if let Some(d) = preview.derivative.as_mut() {
+        crate::signing::ensure_client_tag(&mut d.index.tags);
+        d.index.pubkey = signer_pubkey.clone();
+        for s in d.sections.iter_mut() {
+            crate::signing::ensure_client_tag(&mut s.template.tags);
+            s.template.pubkey = signer_pubkey.clone();
+        }
+        crate::signing::ensure_client_tag(&mut d.merge_request.tags);
+        d.merge_request.pubkey = signer_pubkey.clone();
+    }
+    preview.sign_as = sign_as;
+    preview.signer_pubkey = signer_pubkey;
+    Ok(Json(preview))
+}
+
+#[derive(Debug, Serialize)]
+pub struct RelinkedSectionEvent {
+    pub coordinate: String,
+    pub event: Value,
+}
+
+#[derive(Debug, Serialize)]
+pub struct RelinkDerivativeSectionEvent {
+    pub original: String,
+    pub coordinate: String,
+    pub event: Value,
+}
+
+#[derive(Debug, Serialize)]
+pub struct RelinkDerivativeResult {
+    pub index: Value,
+    pub index_coordinate: String,
+    pub sections: Vec<RelinkDerivativeSectionEvent>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct MergeRequestResult {
+    pub event: Value,
+    pub id: String,
+    /// Relays the 818 was sent to (empty when not broadcast).
+    pub destinations_used: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub broadcast_results: Option<Vec<super::BroadcastResult>>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct RelinkPublishResponse {
+    pub root: String,
+    pub owner: bool,
+    /// The signed new versions of the changed sections, ingested.
+    pub sections: Vec<RelinkedSectionEvent>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub index: Option<Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub glossary: Option<Value>,
+    pub hunk_count: usize,
+    pub promoted: Vec<String>,
+    pub signed_as: SignAs,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
+    /// Non-owner: the signed derivative (index′ + sections′), ingested.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub derivative: Option<RelinkDerivativeResult>,
+    /// Non-owner: the signed kind-818, ingested (and sent when broadcast).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub merge_request: Option<MergeRequestResult>,
+    #[serde(flatten)]
+    pub publish: PublishResponse,
+}
+
+/// POST /api/v1/publication/relink — sign the changed sections (+ glossary
+/// and index when asked) as the named source; local until broadcast. An
+/// owner gets new versions under the same `d`; anyone else gets a
+/// derivative under their key plus a kind-818 to the owner, the 818 routed
+/// to the destination set (`docs/zettel/decision-asks-routing.org`).
+pub async fn relink_publish_handler(
+    State(engine): State<AppState>,
+    Extension(signing): Extension<crate::signing::SigningController>,
+    Json(req): Json<RelinkRequest>,
+) -> Result<Json<RelinkPublishResponse>, EngineError> {
+    let sign_as = req.sign_as.unwrap_or(SignAs::User);
+    let (pubkey, signer) = super::resolve_publish_signer(&engine, &signing, sign_as).await?;
+    let preview = relink_templates(&engine, &req, &pubkey).await?;
+    if preview.sections.is_empty() && preview.glossary.is_none() {
+        return Err(EngineError::BadRequest("nothing to relink: no term occurs outside code, headings or existing links".into()));
+    }
+    if !preview.owner {
+        return relink_publish_derivative(&engine, &req, preview, pubkey, signer, sign_as).await.map(Json);
+    }
+    let mut sections = Vec::with_capacity(preview.sections.len());
+    let mut section_events = Vec::with_capacity(preview.sections.len() + 1);
+    for s in preview.sections {
+        let mut t = s.template;
+        t.pubkey = Some(pubkey.clone());
+        let ev = signer.sign(t).await.map_err(super::map_publish_sign_error)?;
+        sections.push(RelinkedSectionEvent { coordinate: event_coordinate(&ev).unwrap_or(s.coordinate), event: ev.clone() });
+        section_events.push(ev);
+    }
+    let glossary = match preview.glossary {
+        Some(mut g) => {
+            g.pubkey = Some(pubkey.clone());
+            let ev = signer.sign(g).await.map_err(super::map_publish_sign_error)?;
+            section_events.push(ev.clone());
+            Some(ev)
+        }
+        None => None,
+    };
+    let index = match preview.index {
+        Some(mut i) => {
+            i.pubkey = Some(pubkey.clone());
+            Some(signer.sign(i).await.map_err(super::map_publish_sign_error)?)
+        }
+        None => None,
+    };
+    let publish = super::finalize_publish(&engine, index.clone(), section_events, req.broadcast, req.relays.clone(), true)
+        .await?
+        .0;
+    Ok(Json(RelinkPublishResponse {
+        root: preview.root,
+        owner: preview.owner,
+        sections,
+        index,
+        glossary,
+        hunk_count: preview.hunk_count,
+        promoted: preview.promoted,
+        signed_as: sign_as,
+        note: preview.note,
+        derivative: None,
+        merge_request: None,
+        publish,
+    }))
+}
+
+/// The non-owner path: sign the derivative sections, the glossary (the
+/// signer's own bundle for the original root, when asked), the derivative
+/// index, then the kind-818 with `e … source` = the signed index′; ingest
+/// all. Broadcast sends the derivative to the signer's publish set and the
+/// 818 to the destination set (or the caller's edited list).
+pub(crate) async fn relink_publish_derivative(
+    engine: &AppState,
+    req: &RelinkRequest,
+    preview: RelinkPreview,
+    pubkey: String,
+    signer: Box<dyn crate::signing::Signer>,
+    sign_as: SignAs,
+) -> Result<RelinkPublishResponse, EngineError> {
+    let d = preview
+        .derivative
+        .ok_or_else(|| EngineError::BadRequest("nothing to propose: no term occurs outside code, headings or existing links".into()))?;
+    // Routing first, so a non-deliverable broadcast fails before anything is signed.
+    let destinations_used: Vec<String> = if req.broadcast {
+        match req.destinations.as_ref().filter(|v| !v.is_empty()) {
+            Some(list) => list.iter().map(|u| crate::relay_url::normalize_relay_url(u)).filter(|u| !u.is_empty()).collect(),
+            None if d.destinations.deliverable => d.destinations.destinations.iter().map(|x| x.url.clone()).collect(),
+            None => {
+                return Err(EngineError::BadRequest(
+                    d.destinations
+                        .note
+                        .clone()
+                        .unwrap_or_else(|| "no relay is known to reach the owner: pass `destinations`".into()),
+                ))
+            }
+        }
+    } else {
+        Vec::new()
+    };
+    let mut sections = Vec::with_capacity(d.sections.len());
+    let mut events = Vec::with_capacity(d.sections.len() + 1);
+    for s in d.sections {
+        let mut t = s.template;
+        t.pubkey = Some(pubkey.clone());
+        let ev = signer.sign(t).await.map_err(super::map_publish_sign_error)?;
+        sections.push(RelinkDerivativeSectionEvent {
+            original: s.original,
+            coordinate: event_coordinate(&ev).unwrap_or(s.coordinate),
+            event: ev.clone(),
+        });
+        events.push(ev);
+    }
+    let glossary = match preview.glossary {
+        Some(mut g) => {
+            g.pubkey = Some(pubkey.clone());
+            let ev = signer.sign(g).await.map_err(super::map_publish_sign_error)?;
+            events.push(ev.clone());
+            Some(ev)
+        }
+        None => None,
+    };
+    let mut ix = d.index;
+    ix.pubkey = Some(pubkey.clone());
+    let index = signer.sign(ix).await.map_err(super::map_publish_sign_error)?;
+    let index_id = index.get("id").and_then(Value::as_str).unwrap_or("").to_string();
+    let index_coordinate = event_coordinate(&index).unwrap_or(d.index_coordinate);
+    let publish = super::finalize_publish(engine, Some(index.clone()), events, req.broadcast, req.relays.clone(), true)
+        .await?
+        .0;
+    // The 818: source = the signed derivative index.
+    let mut mr = d.merge_request;
+    for t in mr.tags.iter_mut() {
+        if t.first().map(String::as_str) == Some("e") && t.get(1).map(String::as_str) == Some(SOURCE_PLACEHOLDER) {
+            t[1] = index_id.clone();
+        }
+    }
+    mr.pubkey = Some(pubkey.clone());
+    let mr_event = signer.sign(mr).await.map_err(super::map_publish_sign_error)?;
+    let mr_id = mr_event.get("id").and_then(Value::as_str).unwrap_or("").to_string();
+    let mr_publish = super::finalize_publish(
+        engine,
+        None,
+        vec![mr_event.clone()],
+        req.broadcast && !destinations_used.is_empty(),
+        Some(destinations_used.clone()),
+        true,
+    )
+    .await?
+    .0;
+    Ok(RelinkPublishResponse {
+        root: preview.root,
+        owner: false,
+        sections: Vec::new(),
+        index: None,
+        glossary,
+        hunk_count: preview.hunk_count,
+        promoted: preview.promoted,
+        signed_as: sign_as,
+        note: preview.note,
+        derivative: Some(RelinkDerivativeResult { index, index_coordinate, sections }),
+        merge_request: Some(MergeRequestResult {
+            event: mr_event,
+            id: mr_id,
+            destinations_used,
+            broadcast_results: mr_publish.broadcast_results,
+        }),
+        publish,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn mark_promoted_joins_definitions_to_glossaries_and_counts_them_as_notes() {
+        let root = format!("30040:{}:book", "r".repeat(64));
+        let pk = "a".repeat(64);
+        let mut rows = vec![
+            loaded("d1", &pk, &root, "30041:x:s1", InsertionRole::Definition),
+            loaded("d2", &pk, &root, "30041:x:s1", InsertionRole::Definition),
+            loaded("n1", &pk, &root, "30041:x:s2", InsertionRole::Note),
+            loaded("q1", &pk, &root, "30041:x:s2", InsertionRole::Request),
+        ];
+        let d1 = rows[0].coordinate.clone();
+        let mut gl = loaded("gl", &pk, &root, &root, InsertionRole::Bundle);
+        gl.coordinate = format!("30040:{pk}:book-glossary");
+        gl.event = json!({ "id": "gl", "pubkey": pk, "kind": 30040, "created_at": 2,
+            "tags": [["d", "book-glossary"], ["t", "glossary"], ["A", root], ["a", d1]] });
+        gl.children = vec![d1.clone()];
+        rows.push(gl);
+        mark_promoted(&mut rows);
+        assert!(rows[0].promoted);
+        assert_eq!(rows[0].glossary.as_deref(), Some(format!("30040:{pk}:book-glossary").as_str()));
+        assert!(!rows[1].promoted && rows[1].glossary.is_none());
+        assert!(!rows[2].promoted);
+        let c = insertion_counts(&rows);
+        assert_eq!(c.total, 4, "2 definitions + 1 note + the glossary bundle; the request excluded");
+    }
 
     fn loaded(id: &str, pubkey: &str, root: &str, parent: &str, role: InsertionRole) -> LoadedInsertion {
         // Fixture coordinates use short pubkeys; only `anchor.parent` is read.
@@ -1026,6 +2033,10 @@ mod tests {
             role,
             request: None,
             children: Vec::new(),
+            term: None,
+            promoted: false,
+            glossary: None,
+            merge_request: None,
         }
     }
 

@@ -927,6 +927,54 @@ pub async fn start(opts: ServeOptions) -> anyhow::Result<RunningServer> {
             post(api::insertions::insertions_load_handler),
         )
         .route(
+            "/api/v1/notifications",
+            get(api::notifications::list_handler),
+        )
+        .route(
+            "/api/v1/notifications/prefs",
+            get(api::notifications::prefs_get_handler).put(api::notifications::prefs_put_handler),
+        )
+        .route(
+            "/api/v1/notifications/fetch",
+            post(api::notifications::fetch_handler),
+        )
+        .route(
+            "/api/v1/insertions/glossary",
+            post(api::insertions::glossary_publish_handler),
+        )
+        .route(
+            "/api/v1/insertions/glossary/preview",
+            post(api::insertions::glossary_preview_handler),
+        )
+        .route(
+            "/api/v1/merge-requests",
+            get(api::merge_requests::list_handler),
+        )
+        .route(
+            "/api/v1/merge-requests/destinations",
+            post(api::merge_requests::destinations_handler),
+        )
+        .route(
+            "/api/v1/merge-requests/react",
+            post(api::merge_requests::react_handler),
+        )
+        .route(
+            "/api/v1/merge-requests/:id/diff",
+            get(api::merge_requests::review_handler),
+        )
+        .route(
+            "/api/v1/merge-requests/:id/merge",
+            post(api::merge_requests::merge_handler),
+        )
+        .route(
+            "/api/v1/merge-requests/:id/decline",
+            post(api::merge_requests::decline_handler),
+        )
+        .route(
+            "/api/v1/merge-requests/:id/review",
+            get(api::merge_requests::agent_review_handler),
+        )
+        .route(
             "/api/v1/publication/fork",
             post(api::insertions::fork_publish_handler),
         )
@@ -935,8 +983,20 @@ pub async fn start(opts: ServeOptions) -> anyhow::Result<RunningServer> {
             post(api::insertions::fork_preview_handler),
         )
         .route(
+            "/api/v1/publication/relink",
+            post(api::insertions::relink_publish_handler),
+        )
+        .route(
+            "/api/v1/publication/relink/preview",
+            post(api::insertions::relink_preview_handler),
+        )
+        .route(
             "/api/v1/annotations/requests",
             get(api::requests::list_handler).post(api::requests::create_handler),
+        )
+        .route(
+            "/api/v1/annotations/requests/preview",
+            post(api::requests::preview_handler),
         )
         .route(
             "/api/v1/annotations/requests/:id",

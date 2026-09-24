@@ -23,13 +23,15 @@
 		/** The notes written for this request: they fold with the card. */
 		answers?: api.LoadedInsertion[];
 		onopen?: ((ins: api.LoadedInsertion) => void) | undefined;
-		onpromoted?: ((resp: api.ForkPublishResponse) => void) | undefined;
+		onpromoted?: ((resp: api.PromotionResponse) => void) | undefined;
 	} = $props();
 
 	const app = getAppState();
 	const r = $derived(request);
 	const notes = $derived(answers ?? []);
 	const answered = $derived(r.status === 'answered');
+	/** The definition events written for a vocabulary request, by term. */
+	const definitions = $derived(notes.filter((n) => n.role === 'definition'));
 	/** A local record (`rq_…`) can be deleted or reopened; a request read
 	 *  off its signed event alone (`ev_…`) has no record to change. */
 	const isRecord = $derived(r.id.startsWith('rq_'));
@@ -101,6 +103,17 @@
 		if (s < 86400 * 30) return `${Math.floor(s / 86400)}d`;
 		return new Date(ts * 1000).toLocaleDateString();
 	}
+	/** The relink window: every definition written for this request, with
+	 *  the ones already in the glossary pre-checked. */
+	function openRelink() {
+		if (!definitions.length) return;
+		app.relink = {
+			root: r.root,
+			definitions: definitions.map((d) => d.coordinate),
+			promoted: definitions.filter((d) => d.promoted).map((d) => d.coordinate)
+		};
+	}
+
 	function openCoordinate(coord: string) {
 		const [k, pk, ...d] = coord.split(':');
 		app.openAddressableInModal({ kind: Number(k), pubkey: pk, d_tag: d.join(':') });
@@ -151,6 +164,21 @@
 		<div class="rcard__body">
 			{#if r.scope.length > 0}
 				<div class="rcard__line"><span class="rcard__k">scope</span> {r.scope.join(' · ')} · {r.output}</div>
+				{#if r.output === 'vocabulary'}
+					<div class="rcard__line"><span class="rcard__k">terms</span> {r.terms?.length ? r.terms.join(', ') : 'find them'}</div>
+					{#if definitions.length > 0}
+						<div class="rcard__line rcard__defs"><span class="rcard__k">defined</span>
+							{#each definitions as d (d.coordinate)}
+								<button class="rcard__mini rcard__mini--def" onclick={() => openCoordinate(d.coordinate)} title={d.coordinate}>{d.term ?? d.event.tags.find((t) => t[0] === 'title')?.[1] ?? d.coordinate.split(':').slice(2).join(':')}{d.promoted ? ' · in glossary' : ''}</button>
+							{/each}
+							<button
+								class="rcard__mini rcard__mini--go"
+								onclick={openRelink}
+								title="Wrap the first occurrence of each term in the text as a {'{{ref}}'} to its definition — a diff of the new section versions first, then one armed sign"
+							>relink {definitions.length} term{definitions.length === 1 ? '' : 's'} ▸</button>
+						</div>
+					{/if}
+				{/if}
 			{/if}
 			{#if r.style}
 				<div class="rcard__line">
@@ -351,6 +379,20 @@
 		border-radius: 3px;
 		padding: 0 6px;
 		white-space: nowrap;
+	}
+	.rcard__defs {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 4px;
+		align-items: center;
+	}
+	.rcard__mini--def {
+		color: var(--green);
+		border-color: color-mix(in srgb, var(--green) 50%, transparent);
+	}
+	.rcard__mini--go {
+		color: var(--id-local);
+		border-color: color-mix(in srgb, var(--id-local) 45%, transparent);
 	}
 	.rcard__answers {
 		display: flex;

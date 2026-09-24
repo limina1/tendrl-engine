@@ -2685,14 +2685,26 @@ export interface LoadedInsertion {
 	event: NostrEvent;
 	coordinate: string;
 	anchor: InsertionAnchor;
-	/** What the 30041 is: a note, or a signed annotation request asking
-	 *  for notes (`t: annotation-request`). Derived engine-side. */
-	role: 'note' | 'request' | 'bundle';
+	/** What the 30041 is: a note, a signed annotation request asking for
+	 *  notes (`t: annotation-request`), a bundle (a kind-30040 kasten), or a
+	 *  definition (`t: definition` — one event per term, the answer to a
+	 *  vocabulary request). Derived engine-side. */
+	role: 'note' | 'request' | 'bundle' | 'definition' | 'ask';
 	/** The request coordinate this note answers (`request` tag), when any. */
 	request?: string;
+	/** `role: 'ask'` — a kind-818 merge request whose target is this root
+	 *  or one of its sections; `anchor` is the target. */
+	merge_request?: { id: string; status: MergeStatus; content: string; pubkey: string };
 	/** A bundle's children (its `a` coordinates, in order) — a kind-30040
 	 *  insertion is a whole kasten attached to the publication. */
 	children?: string[];
+	/** Definitions: the term as written (the `title`). */
+	term?: string;
+	/** Definitions: listed by the user's glossary bundle for this root. */
+	promoted?: boolean;
+	/** Definitions: the glossary bundle coordinate (`30040:pk:d`) that
+	 *  lists it, when `promoted`. */
+	glossary?: string;
 }
 
 /** Histograms over the whole root, computed engine-side BEFORE the author
@@ -2760,6 +2772,9 @@ export interface InsertionRequest {
 	tags?: string[][];
 	/** Coordinate of the annotation request (30041:pk:d) this note answers. */
 	request?: string;
+	/** `definition` stamps `t: definition` (+ `T` from the title): one
+	 *  event per term, the answer to a vocabulary request. */
+	role?: 'note' | 'definition';
 	sign_as?: 'user' | 'assistant';
 	broadcast?: boolean;
 	relays?: string[];
@@ -2846,6 +2861,367 @@ export function forkPublication(req: ForkRequest) {
 	});
 }
 
+// --- Glossary: per-event promotion of definitions -------------------------
+// A definition is promoted one event at a time into the user's *glossary
+// bundle* for the root — a kind-30040 in the appendix slot whose `a` tags
+// are the promoted definitions. Adding or removing a coordinate republishes
+// the bundle (same d) and, when the index is the user's own, the index with
+// `a → glossary` present exactly while the bundle is non-empty. The
+// definition events themselves are untouched. Engine-owned end to end.
+
+export interface UnsignedTemplate {
+	kind: number;
+	created_at: number;
+	tags: string[][];
+	content: string;
+	pubkey?: string;
+}
+
+export interface GlossaryRequest {
+	/** The publication: `30040:pubkey:d`. */
+	root: string;
+	/** Definition coordinates (`30041:pk:d`) to list in the glossary. */
+	add?: string[];
+	/** Definition coordinates to drop from it. */
+	remove?: string[];
+	sign_as?: 'user' | 'assistant';
+	broadcast?: boolean;
+	relays?: string[];
+}
+
+export interface GlossaryPreview {
+	/** The unsigned glossary bundle the publish would sign. */
+	glossary: UnsignedTemplate;
+	glossary_coordinate?: string;
+	/** The unsigned new version of the index — present only when the signer
+	 *  owns the root AND its `a → glossary` row must change (absent when the
+	 *  glossary is already listed, or when the index is not the signer's). */
+	index?: UnsignedTemplate | null;
+	index_coordinate?: string;
+	/** Whether the signer owns the root index. Decides the wording, not
+	 *  `index` (which is also absent when nothing about the index changes). */
+	owner?: boolean;
+	/** Definition coordinates the glossary lists after this change. */
+	promoted: string[];
+	/** …and before it. */
+	previous?: string[];
+	sign_as?: string;
+	signer_pubkey?: string;
+	note?: string;
+}
+
+export interface GlossaryPublishResponse extends PublishResponse {
+	glossary: NostrEvent;
+	/** The republished index, when it was the signer's own. */
+	index?: NostrEvent | null;
+	promoted: string[];
+	signed_as: 'user' | 'assistant';
+}
+
+/** Either promotion outcome the reader may need to react to. */
+export type PromotionResponse = ForkPublishResponse | GlossaryPublishResponse;
+
+export function previewGlossary(req: GlossaryRequest) {
+	return fetchJson<GlossaryPreview>('/api/v1/insertions/glossary/preview', {
+		method: 'POST',
+		body: JSON.stringify(req)
+	});
+}
+
+export function publishGlossary(req: GlossaryRequest) {
+	return fetchJson<GlossaryPublishResponse>('/api/v1/insertions/glossary', {
+		method: 'POST',
+		body: JSON.stringify(req)
+	});
+}
+
+// --- Relink: wrap the terms of a publication's definitions as coordinate refs
+// The engine rewrites the FIRST occurrence of each term per section as
+// `{{ref:<definition coordinate>|term as written}}` (code, headings, native
+// links and existing tokens skipped — nostrdown::link_terms), previews the
+// hunks and the unsigned templates, and publishes new versions of the
+// changed sections and, when the glossary selection changes, of the
+// glossary bundle and the index — all under the signer's own `d` tags.
+// A publication that is not the signer's is previewed only (`owner: false`);
+// the derivative + kind-818 path is plan Phase 5c step 4.
+
+export interface RelinkRequest {
+	/** The publication: `30040:pubkey:d`. */
+	root: string;
+	/** Definition coordinates to relink (default: every definition anchored
+	 *  to the root). */
+	definitions?: string[];
+	/** Glossary edit to publish alongside (per-event promotion). */
+	glossary?: { add?: string[]; remove?: string[] };
+	sign_as?: 'user' | 'assistant';
+	broadcast?: boolean;
+	relays?: string[];
+	/** Foreign root only: the checked destination relays the kind 818 (and the
+	 *  derivative) go to — the owner's inbox ∪ where the target was found ∪
+	 *  hints ∪ mine, as the preview listed them. */
+	destinations?: string[];
+}
+
+/** Why a relay is in the destination set (decision-asks-routing). */
+export type DestinationReason = 'inbox' | 'found_on' | 'hint' | 'mine';
+
+export interface Destination {
+	url: string;
+	reasons: DestinationReason[];
+}
+
+/** `POST /api/v1/merge-requests/destinations` — the Confirm-modal payload
+ *  for anything addressed to another pubkey. */
+export interface DestinationSet {
+	target?: string;
+	owner?: string;
+	destinations: Destination[];
+	/** At least one inbox / found-on relay is known. */
+	deliverable: boolean;
+	inbox_known: boolean;
+	provenance_known: boolean;
+	note?: string;
+}
+
+/** The derivative a non-owner's relink signs: index′ + one copy per changed
+ *  section (minted `d`, `E` → the copied version, `p` → its author). */
+export interface RelinkDerivativePreview {
+	index: UnsignedTemplate;
+	index_coordinate: string;
+	sections: { original: string; coordinate: string; template: UnsignedTemplate }[];
+	/** The unsigned kind 818 (`a` target · `e` base · `e … source` placeholder
+	 *  filled with index′'s id after signing · `p` owner). */
+	merge_request: UnsignedTemplate;
+	destinations: DestinationSet;
+}
+
+export interface RelinkHunk {
+	term: string;
+	/** The definition the occurrence now points at. */
+	coordinate: string;
+	/** The occurrence as written in the text. */
+	display: string;
+	/** Byte span in the original content. */
+	start: number;
+	end: number;
+	/** The line (paragraph) before and after the rewrite. */
+	line_before: string;
+	line_after: string;
+}
+
+export interface RelinkSection {
+	coordinate: string;
+	d: string;
+	title: string;
+	format?: string;
+	hunks: RelinkHunk[];
+	/** Tag rows the republish adds (`["a", <definition coordinate>]`). */
+	tags_added: string[][];
+	/** The unsigned new version (same `d`). */
+	template: UnsignedTemplate;
+}
+
+export interface RelinkPreview {
+	sections: RelinkSection[];
+	/** Section coordinates with no occurrence of any term. */
+	unchanged: string[];
+	skipped?: { coordinate: string; why: string }[];
+	/** Whether the signer owns the root index (and its sections). */
+	owner: boolean;
+	note?: string;
+	/** The index's next version, when the glossary selection changes it. */
+	index?: UnsignedTemplate | null;
+	/** The glossary bundle's next version, when a glossary edit was given. */
+	glossary?: UnsignedTemplate | null;
+	/** Definition coordinates the glossary lists after the edit. */
+	promoted?: string[];
+	sign_as?: 'user' | 'assistant';
+	signer_pubkey?: string | null;
+	/** Present when `owner` is false: the fork + merge-request path. */
+	derivative?: RelinkDerivativePreview | null;
+}
+
+export interface RelinkPublishResponse extends PublishResponse {
+	sections: { coordinate: string; event: NostrEvent }[];
+	index?: NostrEvent | null;
+	glossary?: NostrEvent | null;
+	hunk_count: number;
+	signed_as: 'user' | 'assistant';
+	promoted?: string[];
+	owner?: boolean;
+	/** Present when `owner` is false: what was signed under the requester's key. */
+	derivative?: {
+		index: NostrEvent;
+		index_coordinate: string;
+		sections: { original: string; coordinate: string; event: NostrEvent }[];
+	} | null;
+	merge_request?: { event: NostrEvent; id: string; destinations_used: string[] } | null;
+}
+
+export function getMergeRequestDestinations(body: {
+	target: string;
+	owner?: string;
+	policy?: 'local_only' | 'local_first' | 'fetch_always';
+	mode_confirm?: boolean;
+}) {
+	return fetchJson<DestinationSet>('/api/v1/merge-requests/destinations', {
+		method: 'POST',
+		body: JSON.stringify(body)
+	});
+}
+
+// ---------------------------------------------------------------------------
+// Merge requests (kind 818, decision-merge-requests-818)
+// ---------------------------------------------------------------------------
+
+export type MergeStatus = 'open' | 'merged' | 'declined';
+
+export interface MergeRequest {
+	id: string;
+	pubkey: string;
+	created_at: number;
+	content: string;
+	/** The target: a 30040 or 30041 coordinate (30818 for NIP-54 fidelity). */
+	target: string;
+	target_kind?: number;
+	target_relay_hint?: string | null;
+	/** The version the change was made against. */
+	base?: string | null;
+	/** The derivative to merge (the `e … source` row). */
+	source?: string | null;
+	source_relay_hint?: string | null;
+	/** The `p`: who is asked. */
+	owner: string;
+	status: MergeStatus;
+	role: 'owner' | 'requester' | 'both';
+	/** The newest kind 7 by the owner, when any. */
+	verdict?: NostrEvent | null;
+	event: NostrEvent;
+}
+
+/** One line of a section diff: context, a removed line, or an added one. */
+export interface DiffHunk {
+	kind: 'context' | 'removed' | 'added';
+	line: string;
+	n_before?: number;
+	n_after?: number;
+}
+
+export interface MergeRequestDiffSection {
+	/** The owner's section (base) and the requester's derivative. */
+	original: string;
+	derivative: string;
+	title: string;
+	format?: string;
+	/** Hunks, each a run of lines. */
+	hunks: DiffHunk[][];
+	tags_added: string[][];
+	tags_removed: string[][];
+	/** The owner's NEXT version of this section (same `d`) — what merge signs. */
+	next: UnsignedTemplate;
+}
+
+export interface MergeRequestIndexDiff {
+	added: { coordinate: string; slot: number }[];
+	removed: string[];
+	moved: { coordinate: string; from: number; to: number }[];
+	unchanged: string[];
+	replaced: { original: string; derivative: string }[];
+}
+
+/** `GET /api/v1/merge-requests/:id/diff` — the engine pairs the source with
+ *  the base and computes the owner's next versions; the review renders it. */
+export interface MergeRequestDiff {
+	merge_request: MergeRequest;
+	status: MergeStatus;
+	role: 'owner' | 'requester' | 'both';
+	base: { coordinate: string; base_id?: string | null; current_id?: string | null; moved_on: boolean };
+	source: { coordinate: string; id: string };
+	sections: MergeRequestDiffSection[];
+	index: { diff: MergeRequestIndexDiff; next: UnsignedTemplate } | null;
+	definitions: { coordinate: string; term: string; promoted_in_source: boolean }[];
+	note?: string;
+	/** The assistant's local review record, when `review_ask` wrote one. */
+	review?: AskReview | null;
+}
+
+/** The assistant's structured review of an 818 — a LOCAL record written by
+ *  `review_ask` over MCP (never an event). Folded into the diff when present. */
+export interface AskReview {
+	id: string;
+	findings: string[];
+	recommendation: 'merge' | 'decline' | 'edit-first' | (string & {});
+	note?: string;
+	by?: string;
+	created_at: number;
+}
+export function getMergeRequestDiff(id: string) {
+	return fetchJson<MergeRequestDiff>(`/api/v1/merge-requests/${encodeURIComponent(id)}/diff`);
+}
+
+export interface MergeRequestMergeResponse extends Partial<PublishResponse> {
+	merged: boolean;
+	sections: { coordinate: string; event: NostrEvent }[];
+	index?: NostrEvent | null;
+	reaction: NostrEvent;
+	status: MergeStatus;
+}
+
+/** Merge = sign the owner's next versions (same `d`), react `+` on the 818,
+ *  optionally broadcast. Owner only. */
+export function mergeMergeRequest(id: string, body: { broadcast?: boolean } = {}) {
+	return fetchJson<MergeRequestMergeResponse>(`/api/v1/merge-requests/${encodeURIComponent(id)}/merge`, {
+		method: 'POST',
+		body: JSON.stringify(body)
+	});
+}
+
+/** Decline = react `-` on the 818 with an optional reason. Owner only. */
+export function declineMergeRequest(id: string, body: { reason?: string; broadcast?: boolean } = {}) {
+	return fetchJson<{ status: MergeStatus; reaction: NostrEvent } & Partial<PublishResponse>>(
+		`/api/v1/merge-requests/${encodeURIComponent(id)}/decline`,
+		{ method: 'POST', body: JSON.stringify(body) }
+	);
+}
+
+export interface MergeRequestList {
+	pubkey: string;
+	open: number;
+	requests: MergeRequest[];
+}
+
+export function listMergeRequests(q: { role?: 'owner' | 'requester' | 'all'; status?: 'open' | 'all'; pubkey?: string } = {}) {
+	const p = new URLSearchParams();
+	if (q.role) p.set('role', q.role);
+	if (q.status) p.set('status', q.status);
+	if (q.pubkey) p.set('pubkey', q.pubkey);
+	const qs = p.toString();
+	return fetchJson<MergeRequestList>(`/api/v1/merge-requests${qs ? '?' + qs : ''}`);
+}
+
+/** The owner's verdict on an 818: `+` = merged (they republished under their
+ *  own `d` first), `-` = declined; `reason` rides as the reaction's content. */
+export function reactToMergeRequest(body: { id: string; verdict: '+' | '-'; reason?: string; broadcast?: boolean }) {
+	return fetchJson<{ event: NostrEvent } & Partial<PublishResponse>>('/api/v1/merge-requests/react', {
+		method: 'POST',
+		body: JSON.stringify(body)
+	});
+}
+
+export function previewRelink(req: RelinkRequest) {
+	return fetchJson<RelinkPreview>('/api/v1/publication/relink/preview', {
+		method: 'POST',
+		body: JSON.stringify(req)
+	});
+}
+
+export function publishRelink(req: RelinkRequest) {
+	return fetchJson<RelinkPublishResponse>('/api/v1/publication/relink', {
+		method: 'POST',
+		body: JSON.stringify(req)
+	});
+}
+
 // ---------------------------------------------------------------------------
 // Annotation requests — "ask for notes about this place". Local records the
 // user's own agent reads over MCP (list_requests); optionally signed by the
@@ -2871,7 +3247,10 @@ export interface AnnotationRequest {
 	task: string;
 	scope: string[];
 	context?: string;
-	output: 'notes' | 'kasten';
+	output: 'notes' | 'kasten' | 'vocabulary';
+	/** `output: vocabulary` — the words to define (the `term` tags); empty =
+	 *  "find the words these events use but never define". */
+	terms: string[];
 	created_at: number;
 	status: 'open' | 'answered';
 	answer?: AnnotationRequestAnswer;
@@ -2918,7 +3297,11 @@ export function createRequest(req: {
 	task: string;
 	scope?: string[];
 	context?: string;
-	output?: 'notes' | 'kasten';
+	output?: 'notes' | 'kasten' | 'vocabulary';
+	/** `output: vocabulary` — the highlighted words; the engine generates the
+	 *  content line from them ("define these words in the context of these
+	 *  events: …"). */
+	terms?: string[];
 	style?: string;
 	sign?: boolean;
 	broadcast?: boolean;
@@ -2927,6 +3310,139 @@ export function createRequest(req: {
 	return fetchJson<AnnotationRequest & { event?: NostrEvent }>('/api/v1/annotations/requests', {
 		method: 'POST',
 		body: JSON.stringify(req)
+	});
+}
+
+/** The unsigned kind-30041 a request would sign — every event-creating
+ *  modal ends in this preview (the tags as they will be emitted). */
+/** The unsigned kind-30041 the create path would sign (`event`, with the
+ *  client tag; `pubkey` when an identity is active) plus the record it
+ *  would persist (`request`). Nothing is stored. */
+export interface RequestPreview {
+	event: { kind: number; content: string; tags: string[][]; created_at?: number; pubkey?: string };
+	request: AnnotationRequest;
+}
+export function previewRequest(req: {
+	root: string;
+	parent?: string;
+	parent_event_id?: string;
+	parent_title?: string;
+	title?: string;
+	task?: string;
+	scope?: string[];
+	context?: string;
+	output?: 'notes' | 'kasten' | 'vocabulary';
+	terms?: string[];
+	style?: string;
+}) {
+	return fetchJson<RequestPreview>('/api/v1/annotations/requests/preview', {
+		method: 'POST',
+		body: JSON.stringify(req)
+	});
+}
+
+// ---------------------------------------------------------------------------
+// Notifications — what is for the user, chosen by kind (plan Phase 5c step 5;
+// docs/zettel/feat-notifications.org). Rules are the engine's, per kind:
+// "addressed to me" is a tag, never a search the web builds.
+// ---------------------------------------------------------------------------
+
+/** The stable id of an engine rule row. */
+export type NotificationKey =
+	| '818'
+	| '7-on-my-818'
+	| 'request-on-mine'
+	| '1111'
+	| '9802'
+	| '7'
+	| '9735'
+	| '30045'
+	| 'any-p'
+	| (string & {});
+
+export interface NotificationRow {
+	key: NotificationKey;
+	kind: number;
+	id: string;
+	pubkey: string;
+	created_at: number;
+	/** The publication (`root`) and section (`parent`) it is anchored to,
+	 *  when the event names them (A/a, or an 818's target). */
+	anchor: { root?: string; parent?: string };
+	/** Engine-built one-liner ("npub1… highlighted §2 of On Method"). */
+	summary: string;
+	event: NostrEvent;
+	/** For asks: open | answered | merged | declined … (engine-derived);
+	 *  null until the engine resolves it. */
+	status?: string | null;
+	/** The verdict event (a kind 7 on my 818), when any. */
+	verdict?: unknown;
+}
+
+export interface NotificationCounts {
+	/** Rows that need an act from me (the fixed rules). */
+	acts: number;
+	/** Activity rows whose rule is set to `count` — the modeline's "M new". */
+	activity_count: number;
+	/** Activity rows whose rule is set to `list` — shown in the list only. */
+	activity_list: number;
+}
+
+export interface NotificationsResponse {
+	acts: NotificationRow[];
+	activity: NotificationRow[];
+	/** My own asks (the 818s I sent) with their verdicts. */
+	mine: NotificationRow[];
+	/** Asks for me that are settled (merged / declined) — only with `status=open`. */
+	done?: NotificationRow[];
+	counts: NotificationCounts;
+}
+
+export interface NotificationRule {
+	key: NotificationKey;
+	kind: number;
+	/** The engine's one-line rule ("a highlight of one of your sections"). */
+	label: string;
+	/** `{ kind: 'read' }`, or `{ kind: 'act', label }` for a fixed row. */
+	verb: { kind: 'read' } | { kind: 'act'; label: string };
+	/** True for the rows that need an act (always on, fixed). */
+	act: boolean;
+	fixed: boolean;
+	on: boolean;
+	how: 'count' | 'list';
+}
+
+export interface NotificationPrefs {
+	rules: NotificationRule[];
+}
+
+export function getNotifications(status: 'open' | 'all' = 'open'): Promise<NotificationsResponse> {
+	return fetchJson<NotificationsResponse>(`/api/v1/notifications?status=${status}`);
+}
+
+export function getNotificationPrefs(): Promise<NotificationPrefs> {
+	return fetchJson<NotificationPrefs>('/api/v1/notifications/prefs');
+}
+
+export function putNotificationPrefs(
+	entries: Record<string, { on: boolean; how: 'count' | 'list' }>
+): Promise<NotificationPrefs> {
+	return fetchJson<NotificationPrefs>('/api/v1/notifications/prefs', {
+		method: 'PUT',
+		body: JSON.stringify({ entries })
+	});
+}
+
+/** One Confirm-gated relay pull: a filter per enabled rule on my read relays
+ *  ∪ the provenance relays of my own events. Returns the refreshed list. */
+export function fetchNotifications(body: {
+	policy?: 'local_first' | 'fetch_always';
+	relays?: string[];
+	mode_confirm?: boolean;
+} = {}): Promise<NotificationsResponse> {
+	return fetchJson<NotificationsResponse>('/api/v1/notifications/fetch', {
+		method: 'POST',
+		body: JSON.stringify(body)
 	});
 }
 

@@ -13,7 +13,10 @@ use super::{AppState, SignAs};
 use crate::engine::FetchPolicy;
 use crate::error::EngineError;
 use crate::publication::insertion::{coord_parts, event_coordinate};
-use crate::requests::{request_pointer, AnnotationRequest, RequestAnswer, RequestStatus, RequestStore, REQUEST_TAG};
+use crate::requests::{
+    request_pointer, vocabulary_task, AnnotationRequest, RequestAnswer, RequestStatus, RequestStore, OUTPUTS,
+    REQUEST_TAG,
+};
 use axum::{
     extract::{Path, Query, State},
     Extension, Json,
@@ -33,14 +36,21 @@ pub struct CreateRequest {
     pub parent_title: Option<String>,
     #[serde(default)]
     pub title: Option<String>,
+    /// The ask in the user's words. Optional for `output: vocabulary`, where
+    /// it is generated from `terms` when left empty.
+    #[serde(default)]
     pub task: String,
     #[serde(default)]
     pub scope: Vec<String>,
     #[serde(default)]
     pub context: Option<String>,
-    /// `notes` (default) or `kasten`.
+    /// `notes` (default), `kasten` or `vocabulary`.
     #[serde(default)]
     pub output: Option<String>,
+    /// `output: vocabulary` — the words highlighted in the section, one
+    /// `term` tag each. Empty = find the undefined vocabulary.
+    #[serde(default)]
+    pub terms: Vec<String>,
     /// Coordinate of a style event (`30078:pk:d`) the answer should follow.
     #[serde(default)]
     pub style: Option<String>,
@@ -65,28 +75,31 @@ pub struct RequestResponse {
     pub event: Option<Value>,
 }
 
-/// POST /api/v1/annotations/requests
-pub async fn create_handler(
-    State(engine): State<AppState>,
-    Extension(signing): Extension<crate::signing::SigningController>,
-    Json(req): Json<CreateRequest>,
-) -> Result<Json<RequestResponse>, EngineError> {
-    let now = super::unix_now_i64();
-    let mut r = AnnotationRequest::new(&req.root, req.parent.as_deref(), &req.task, now)
+/// The record a create call describes, before anything is signed or saved.
+/// Shared by `create_handler` and `preview_handler` so the preview shows
+/// exactly what the create path signs. For `output: vocabulary` the task is
+/// generated from the terms unless the caller typed one.
+async fn build_request(engine: &AppState, req: &CreateRequest, now: i64) -> Result<AnnotationRequest, EngineError> {
+    let output = match req.output.as_deref().map(str::trim) {
+        None | Some("") => "notes",
+        Some(o) if OUTPUTS.contains(&o) => o,
+        Some(_) => return Err(EngineError::BadRequest("output must be notes, kasten or vocabulary".into())),
+    };
+    let task = if output == "vocabulary" && req.task.trim().is_empty() {
+        vocabulary_task(&req.terms)
+    } else {
+        req.task.clone()
+    };
+    let mut r = AnnotationRequest::new(&req.root, req.parent.as_deref(), &task, now)
         .map_err(EngineError::BadRequest)?
-        .with_scope(&req.scope);
-    r.parent_title = req.parent_title.filter(|t| !t.trim().is_empty());
-    r.title = req.title.map(|t| t.trim().to_string()).filter(|t| !t.is_empty());
-    r.context = req.context.map(|c| c.trim().to_string()).filter(|c| !c.is_empty());
-    if let Some(o) = req.output.as_deref().map(str::trim) {
-        if o == "kasten" || o == "notes" {
-            r.output = o.to_string();
-        } else if !o.is_empty() {
-            return Err(EngineError::BadRequest("output must be notes or kasten".into()));
-        }
-    }
+        .with_scope(&req.scope)
+        .with_terms(&req.terms);
+    r.output = output.to_string();
+    r.parent_title = req.parent_title.clone().filter(|t| !t.trim().is_empty());
+    r.title = req.title.as_deref().map(str::trim).filter(|t| !t.is_empty()).map(str::to_string);
+    r.context = req.context.as_deref().map(str::trim).filter(|c| !c.is_empty()).map(str::to_string);
     // Pin the parent version from the local store when the caller did not.
-    r.parent_event_id = req.parent_event_id.filter(|e| super::is_hex64(e));
+    r.parent_event_id = req.parent_event_id.clone().filter(|e| super::is_hex64(e));
     if r.parent_event_id.is_none() {
         if let Some((k, pk, d)) = coord_parts(&r.parent) {
             if let Ok(Some(ev)) = engine.get_addressable(k as u64, pk, d, FetchPolicy::LocalOnly).await {
@@ -95,12 +108,40 @@ pub async fn create_handler(
         }
     }
     if let Some(coord) = req.style.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
-        let style = super::styles::get_style(&engine, coord)
+        let style = super::styles::get_style(engine, coord)
             .await?
             .ok_or_else(|| EngineError::NotFound(format!("style {coord} is not in the local store")))?;
         r.style = Some(style.coordinate);
         r.style_title = Some(style.title);
     }
+    Ok(r)
+}
+
+/// POST /api/v1/annotations/requests/preview — the unsigned kind-30041 the
+/// create path would sign for this body (same builder), pubkey filled when
+/// the user has an identity. Persists nothing; the modal renders it live.
+pub async fn preview_handler(
+    State(engine): State<AppState>,
+    Extension(signing): Extension<crate::signing::SigningController>,
+    Json(req): Json<CreateRequest>,
+) -> Result<Json<Value>, EngineError> {
+    let now = super::unix_now_i64();
+    let r = build_request(&engine, &req, now).await?;
+    let relay_hint = super::discussion_relay_hint(&engine);
+    let mut template = r.to_template(&relay_hint, now).map_err(EngineError::BadRequest)?;
+    crate::signing::ensure_client_tag(&mut template.tags);
+    template.pubkey = signing.active_pubkey().await;
+    Ok(Json(json!({ "event": template, "request": r })))
+}
+
+/// POST /api/v1/annotations/requests
+pub async fn create_handler(
+    State(engine): State<AppState>,
+    Extension(signing): Extension<crate::signing::SigningController>,
+    Json(req): Json<CreateRequest>,
+) -> Result<Json<RequestResponse>, EngineError> {
+    let now = super::unix_now_i64();
+    let mut r = build_request(&engine, &req, now).await?;
 
     let mut event = None;
     if req.sign {

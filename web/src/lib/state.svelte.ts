@@ -125,6 +125,21 @@ export type AnnotationRequestOpen = {
 	roots?: { coord: string; title: string | null }[];
 	/** Selection excerpt the ask is about. */
 	context?: string;
+	/** The anchored section's full source content, when the opener has it
+	 *  (the capture card, the event menu). The vocabulary output renders it
+	 *  word by word for marking; absent, the window fetches the parent. */
+	content?: string;
+};
+
+/** Payload that opens the relink modal: the publication and the definition
+ *  coordinates whose terms get wrapped as `{{ref:…}}` in its sections. */
+export type RelinkOpen = {
+	root: string;
+	rootTitle?: string | null;
+	definitions: string[];
+	/** Coordinates already in the signer's glossary bundle (prefills the
+	 *  per-definition glossary checkboxes). */
+	promoted?: string[];
 };
 
 /** Payload that opens the insertion composer. */
@@ -599,6 +614,11 @@ function _createAppState() {
 	let annotateMode = $state(false);
 	let annotationRequest: AnnotationRequestOpen | null = $state(null);
 	let requestsVersion = $state(0);
+	// --- Relink (vocabulary definitions → `{{ref}}`s in the text) ---
+	// The modal is portaled (+layout), so a finished relink reaches the
+	// reader as a signal: root + nonce, applied once (the readerJump idiom).
+	let relink: RelinkOpen | null = $state(null);
+	let relinkDone: { root: string; nonce: number } | null = $state(null);
 
 	// Republish diff prompt: set when Publish detects a same-title
 	// publication. ComparePublishModal renders the diff and calls
@@ -4426,6 +4446,8 @@ function _createAppState() {
 		onProfile?: (pubkey: string) => void;
 		onCompose?: () => void;
 		onDiscussion?: (event_id: string, kind: number) => void;
+		/** Open the merge-request review buffer (`review:<818 id>`). */
+		onMergeRequestReview?: (id: string) => void;
 		/** Open an arbitrary reader buffer by its id. Used when the id
 		 *  needs to carry a marker (`?focus_comment=`, `?highlight=`)
 		 *  that the structured handlers above can't express. */
@@ -4440,6 +4462,14 @@ function _createAppState() {
 		onHome?: () => void;
 	};
 	let navHandlers: NavigationHandlers | null = null;
+
+	/** The merge-request review — a work buffer per 818 (`review:<id>`);
+	 *  the page owns the buffer store, so it goes through the nav handlers
+	 *  like a publication does. */
+	function openMergeRequestReview(id: string) {
+		if (navHandlers?.onMergeRequestReview) navHandlers.onMergeRequestReview(id);
+		else pushToast('Open the workbench to review a merge request', 'info');
+	}
 
 	function setNavigationHandlers(h: NavigationHandlers | null) {
 		navHandlers = h;
@@ -5355,6 +5385,14 @@ function _createAppState() {
 		get requestsVersion() { return requestsVersion; },
 		bumpRequests() { requestsVersion += 1; },
 
+		// Relink
+		get relink() { return relink; },
+		set relink(v: RelinkOpen | null) { relink = v; },
+		get relinkDone() { return relinkDone; },
+		markRelinkDone(root: string) {
+			relinkDone = { root, nonce: (relinkDone?.nonce ?? 0) + 1 };
+		},
+
 		// Profile
 		get profilePubkey() { return profilePubkey; },
 		set profilePubkey(v: string | null) { profilePubkey = v; },
@@ -5542,6 +5580,7 @@ function _createAppState() {
 		handleSearchViaRelays,
 		searchFor,
 		openSearchFor,
+		openMergeRequestReview,
 		get searchSeed() { return searchSeed; },
 		get searchLastQuery() { return searchLastQuery; },
 		pushHistoryEntry,

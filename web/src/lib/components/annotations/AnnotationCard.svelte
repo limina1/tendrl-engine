@@ -122,6 +122,8 @@
 		<button class="acard__anchor" onclick={(e) => { e.stopPropagation(); onanchor(); }} title={anchorTitle}>{anchorLabel}</button>
 		{#if card.kind === 'request'}
 			<span class="badge" class:answered={card.status === 'answered'}>{card.status === 'answered' ? '✓ request' : '? request'}</span>
+		{:else if card.role === 'definition'}
+			<span class="badge def" title="A definition — one event for this term">def</span>
 		{:else}
 			<span class="acard__cap">{placement}</span>
 		{/if}
@@ -237,6 +239,10 @@
 		white-space: nowrap;
 	}
 	.badge.answered { color: var(--blue); border-color: color-mix(in srgb, var(--blue) 50%, transparent); }
+	.badge.def {
+		color: var(--green);
+		border-color: color-mix(in srgb, var(--green) 50%, transparent);
+	}
 	.acard__t { font-weight: 600; margin-bottom: 2px; overflow: hidden; text-overflow: ellipsis; }
 	.acard__b {
 		color: var(--fg-alt);

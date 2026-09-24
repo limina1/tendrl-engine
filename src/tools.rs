@@ -270,7 +270,7 @@ pub fn catalog() -> Vec<ToolDef> {
         },
         ToolDef {
             name: "propose_insertion",
-            description: "Write a new note ATTACHED to a place in a publication, signed AS THE ASSISTANT with its own key (never the user's) and kept local. This is the right shape for 'write more notes from this section': the note is a kind-30041 section anchored to the section (or the index) you name, with an optional position claim (before / after) the curator can promote it into. It does NOT change the publication — the human folds it in later via promote_insertion or the reader. Sending it to relays is the separate `publish` step.",
+            description: "Write a new note ATTACHED to a place in a publication, signed AS THE ASSISTANT with its own key (never the user's) and kept local. This is the right shape for 'write more notes from this section': the note is a kind-30041 section anchored to the section (or the index) you name, with an optional position claim (before / after) the curator can promote it into. It does NOT change the publication — the human folds it in later via promote_insertion or the reader. Sending it to relays is the separate `publish` step. For a request whose `output` is `vocabulary`, write one note PER TERM with `role: definition`: `title` = the term, `content` = the definition in the context of the anchored section (sense here, background, origin — everything about the word in one event), and `request` set.",
             category: ToolCategory::ComposeWrite,
             input_schema: schema_propose_insertion,
         },
@@ -282,7 +282,7 @@ pub fn catalog() -> Vec<ToolDef> {
         },
         ToolDef {
             name: "list_requests",
-            description: "List the user's annotation requests — tasks they wrote in the reader against a place in a publication (\"write notes about this section\", \"compare with…\"). Each has an anchor (root publication + parent section), the task, scope hints (section / siblings / publication / neighbours / relays / web), an optional selected excerpt, and whether it is open or answered. Two sources are merged: local records (rq_…) and requests the user signed as kind-30041 annotations (`coordinate` set; ev_… when there is no record). A signed request counts as answered as soon as a local note points at it with `request`. Start here when asked to check requests. Answer one by reading the anchor (view_publication / get_addressable / get_context), researching per its scope, writing notes with propose_insertion anchored to the same parent — passing the request's `coordinate` as `request` on EVERY note — then answer_request for a record.",
+            description: "List the user's annotation requests — tasks they wrote in the reader against a place in a publication (\"write notes about this section\", \"compare with…\"). Each has an anchor (root publication + parent section), the task, scope hints (section / siblings / publication / neighbours / relays / web), an optional selected excerpt, and whether it is open or answered. Two sources are merged: local records (rq_…) and requests the user signed as kind-30041 annotations (`coordinate` set; ev_… when there is no record). A signed request counts as answered as soon as a local note points at it with `request`. Start here when asked to check requests. Answer one by reading the anchor (view_publication / get_addressable / get_context), researching per its scope, writing notes with propose_insertion anchored to the same parent — passing the request's `coordinate` as `request` on EVERY note — then answer_request for a record. `output` says the shape: `notes` (loose), `kasten` (one propose_bundle), or `vocabulary` — its `terms` are the words the user highlighted in the section (empty = find the words the text uses but never defines) and the answer is ONE definition note per term, title = the term, tagged [\"t\", \"definition\"], defining the word as it is used in the anchored text.",
             category: ToolCategory::Read,
             input_schema: schema_list_requests,
         },
@@ -303,6 +303,36 @@ pub fn catalog() -> Vec<ToolDef> {
             description: "Fold an insertion into a publication's structure by republishing its index with the note's coordinate spliced in — NKBIP-01's own copy process, signed AS THE ASSISTANT. If the assistant authored the index this is a new version (same d-tag); otherwise it is a DERIVATIVE index under the assistant's key (p + E to the original). The insertion event itself is never re-authored. Kept local; broadcast is the separate `publish` step. Disabled by default.",
             category: ToolCategory::Publish,
             input_schema: schema_promote_insertion,
+        },
+        ToolDef {
+            name: "list_asks",
+            description: "What is for the user: ASKS that need an act from them (kind-818 merge requests on their publications, verdicts on merge requests they sent, signed annotation requests on their publications) and the ACTIVITY kinds they chose in Settings › Notifications (highlights, comments, reactions, zaps, shelvings — off unless they turned them on). Local store only; `fetch_asks` pulls new ones. Start here for \"check tendrl\" / \"anything for me?\". There is no merge_ask / decline_ask: merge, decline, relink and the 818 itself are the user's press — you read (`get_ask_diff`), review (`review_ask`) and at most prepare a draft (`prepare_merge`).",
+            category: ToolCategory::Read,
+            input_schema: schema_list_asks,
+        },
+        ToolDef {
+            name: "get_ask_diff",
+            description: "The diff of a kind-818 merge request (from `list_asks` acts / mine / done): exactly what the review screen shows — the OWNER'S NEXT VERSION of each touched section as unified hunks (`- ` removed, `+ ` added, `  ` context), the tags it gains, the index change (added / removed / moved / replaced entries), the definitions it cites, whether the target moved on since the base, and the agent review already on file if any. Readable by the owner and the requester.",
+            category: ToolCategory::Read,
+            input_schema: schema_get_ask_diff,
+        },
+        ToolDef {
+            name: "review_ask",
+            description: "Record your review of a merge request as a LOCAL record beside the ask (`<data_dir>/reviews/`): findings first, then a recommendation (merge · decline · edit-first) and an optional note. Not an event — nothing is signed, nothing can be broadcast, and the assistant never comments on someone else's merge request under its own key. The review screen shows it next to the diff; the owner decides.",
+            category: ToolCategory::ComposeWrite,
+            input_schema: schema_review_ask,
+        },
+        ToolDef {
+            name: "prepare_merge",
+            description: "The merged result — the owner's next versions of the index and the touched sections, from the same diff `get_ask_diff` shows — saved as an UNSIGNED draft the USER signs in the composer. Nothing is signed here; the engine reacts + on the 818 when that publish lands. The assistant never merges. Only when the user asked for the draft.",
+            category: ToolCategory::ComposeWrite,
+            input_schema: schema_prepare_merge,
+        },
+        ToolDef {
+            name: "fetch_asks",
+            description: "Pull new asks and activity from relays — one filter per enabled notification rule (#p me, #a/#A my coordinates) on the user's READ relays (their kind-10002 inbox) ∪ where their own events were found — then return the same list as `list_asks`. Confirm-gated like every fetch: in Confirm mode the app asks the user first and this call waits. Only when the user asked to look on relays.",
+            category: ToolCategory::Network,
+            input_schema: schema_fetch_asks,
         },
     ]
 }
@@ -352,6 +382,11 @@ pub async fn dispatch(cx: &ToolCx, name: &str, input: Value) -> Result<Value> {
         "list_requests" => list_requests(engine, input).await,
         "list_styles" => list_styles(engine, input).await,
         "answer_request" => answer_request(engine, input).await,
+        "list_asks" => list_asks(engine, input).await,
+        "get_ask_diff" => get_ask_diff(engine, input).await,
+        "review_ask" => review_ask(engine, input).await,
+        "prepare_merge" => prepare_merge(engine, input).await,
+        "fetch_asks" => fetch_asks(engine, input).await,
         other => Err(EngineError::BadRequest(format!("unknown tool: {other}"))),
     }
 }
@@ -607,6 +642,7 @@ fn schema_propose_insertion() -> Value {
             "context": { "type": "string", "description": "Optional excerpt of the parent this note responds to." },
             "replace": { "type": "string", "description": "Coordinate (30041:pk:d) of YOUR earlier note to replace — the new event reuses its d-tag, so it is a new version, not a second note." },
             "request": { "type": "string", "description": "The `coordinate` of the annotation request this note answers (30041:pk:d, from list_requests). Pass it on every note written for a request — it is what marks the request answered and lets the reader thread the note under it." },
+            "role": { "type": "string", "enum": ["note", "definition"], "description": "note (default), or definition: ONE term's entry — `title` = the term exactly as written in the text, `content` = everything about it as used there (the sense here first, then the background a reader needs, then where the word comes from). Tagged `t: definition`; the reader shows it as a definition card and can promote it, per event, into the publication's glossary. For a vocabulary request write one propose_insertion per term with role: definition." },
             "style": { "type": "string", "description": "Coordinate of the style event (30078:pk:d) this note follows — copy it from the request's `style`. Stamped as a `style` tag so everything written in that style is one search." },
             "links": { "type": "array", "items": { "type": "string" }, "description": "Web URLs the note cites, one `r` tag each — the note's outbound links live in its tags, so a tag-walking reader lists them without parsing the prose." },
             "tags": { "type": "array", "items": { "type": "array", "items": { "type": "string" } }, "description": "Extra tag rows, e.g. [[\"a\", \"30041:pk:d\"]] for a cited coordinate. Anchor, d, title and request rows are set by the engine and cannot be overridden here." }
@@ -652,6 +688,57 @@ fn schema_answer_request() -> Value {
             "coordinates": { "type": "array", "items": { "type": "string" }, "description": "Coordinates of the notes you stored (from propose_insertion / promote_insertion)." }
         },
         "required": ["request_id", "summary"]
+    })
+}
+
+fn schema_list_asks() -> Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "status": { "type": "string", "enum": ["open", "all"], "description": "`open` (default): settled merge requests move to `done`; `all` keeps them under `acts`." }
+        }
+    })
+}
+
+fn schema_get_ask_diff() -> Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "id": { "type": "string", "description": "The kind-818 event id (64 hex) from list_asks." }
+        },
+        "required": ["id"]
+    })
+}
+
+fn schema_review_ask() -> Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "id": { "type": "string", "description": "The kind-818 event id (64 hex)." },
+            "findings": { "type": "array", "items": { "type": "string" }, "description": "What the diff does, one finding per line: sections touched, what each hunk changes, what the index gains, whether the base moved on, anything that changes the owner's own wording." },
+            "recommendation": { "type": "string", "enum": ["merge", "decline", "edit-first"], "description": "merge = take it as is; decline = not this; edit-first = open the merged result in the composer and change something before signing." },
+            "note": { "type": "string", "description": "Optional: one paragraph for the owner (why, what to edit first, what to tell the requester)." }
+        },
+        "required": ["id", "findings", "recommendation"]
+    })
+}
+
+fn schema_prepare_merge() -> Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "id": { "type": "string", "description": "The kind-818 event id (64 hex). The user must own the target." }
+        },
+        "required": ["id"]
+    })
+}
+
+fn schema_fetch_asks() -> Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "policy": { "type": "string", "enum": ["local_first", "fetch_always"], "description": "Default local_first." }
+        }
     })
 }
 
@@ -1311,6 +1398,10 @@ async fn list_insertions(engine: &Arc<Engine>, input: Value) -> Result<Value> {
                 "parent": i.anchor.parent,
                 "top_level": i.anchor.is_top_level(),
                 "placement": i.anchor.placement,
+                "role": i.role,
+                "term": i.term,
+                "promoted": i.promoted,
+                "glossary": i.glossary,
                 "snippet": snippet,
             })
         })
@@ -1425,6 +1516,7 @@ async fn propose_insertion(cx: &ToolCx, input: Value) -> Result<Value> {
         },
         replace: input.get("replace").and_then(Value::as_str).map(String::from),
         request: input.get("request").and_then(Value::as_str).map(String::from),
+        role: input.get("role").and_then(Value::as_str).map(String::from),
     };
     let (mut template, resolved) =
         crate::api::insertions::insertion_template(&cx.engine, &anchor, &body).await?;
@@ -1445,6 +1537,7 @@ async fn propose_insertion(cx: &ToolCx, input: Value) -> Result<Value> {
         "id": signed.get("id"),
         "coordinate": coordinate,
         "anchor": resolved,
+        "role": body.role.as_deref().unwrap_or("note"),
         "request": body.request,
         "ingested": v["ingested"],
         "note": "Attached and stored locally — not in the index. `publish` broadcasts it; promote_insertion (or the reader's promote) folds it into the structure.",
@@ -1504,7 +1597,7 @@ async fn list_requests(engine: &Arc<Engine>, input: Value) -> Result<Value> {
     Ok(json!({
         "count": requests.len(),
         "requests": requests,
-        "note": "Answer one with propose_insertion (anchored to its parent, root = its root; pass its `coordinate` as `request` on every note so it is marked answered, pass its `style` so the notes carry it, and follow `style_instructions`) then answer_request for an rq_… record. When `output` is `kasten`, build the notes as a kasten and deliver it with ONE propose_bundle (root = its root, `request` on the bundle) — the single 30040 is the answer, not one note per event.",
+        "note": "Answer one with propose_insertion (anchored to its parent, root = its root; pass its `coordinate` as `request` on every note so it is marked answered, pass its `style` so the notes carry it, and follow `style_instructions`) then answer_request for an rq_… record. When `output` is `kasten`, build the notes as a kasten and deliver it with ONE propose_bundle (root = its root, `request` on the bundle) — the single 30040 is the answer, not one note per event. When `output` is `vocabulary`, `terms` lists the words to define (empty = find the undefined ones yourself): one propose_insertion per term, title = the term, tags [[\"t\", \"definition\"]], the definition as the word is used in the anchored section.",
     }))
 }
 
@@ -1534,6 +1627,274 @@ async fn answer_request(engine: &Arc<Engine>, input: Value) -> Result<Value> {
     )
     .await?;
     Ok(serde_json::to_value(r)?)
+}
+
+// ---------------------------------------------------------------------------
+// Asks: what is for the user (Phase 5c step 6). The agent READS and REVIEWS;
+// merge, decline, relink and the 818 are always the user's key.
+// ---------------------------------------------------------------------------
+
+/// The active user's pubkey, or a clear "log in" error.
+fn user_pubkey(engine: &Arc<Engine>) -> Result<String> {
+    crate::api::notifications::me_or_err(engine.my_pubkey())
+}
+
+/// A notification row without its full event — what the model needs to
+/// decide what to open next.
+fn compact_ask_row(r: &crate::api::notifications::Row) -> Value {
+    let mut v = json!({
+        "key": r.key,
+        "kind": r.kind,
+        "id": r.id,
+        "pubkey": r.pubkey,
+        "created_at": r.created_at,
+        "anchor": r.anchor,
+        "summary": r.summary,
+        "act": r.act,
+    });
+    if let Some(st) = &r.status {
+        v["status"] = json!(st);
+    }
+    if r.kind == 818 {
+        v["content"] = json!(r.event.get("content").and_then(Value::as_str).unwrap_or(""));
+    }
+    v
+}
+
+fn compact_asks(list: &crate::api::notifications::NotificationsResponse) -> Value {
+    let rows = |v: &[crate::api::notifications::Row]| -> Vec<Value> { v.iter().map(compact_ask_row).collect() };
+    json!({
+        "me": list.me,
+        "acts": rows(&list.acts),
+        "activity": rows(&list.activity),
+        "mine": rows(&list.mine),
+        "done": rows(&list.done),
+        "counts": list.counts,
+        "note": "acts need something from the user — a kind-818 merge request: get_ask_diff, then review_ask (findings, recommendation); a verdict on their own 818: report it; a signed annotation request on their publication: answer it only if they say so. activity is read-only. There is no merge_ask / decline_ask — merging, declining, relinking and sending an 818 are the user's press.",
+    })
+}
+
+/// The notifications list under the user's saved preferences.
+async fn list_asks(engine: &Arc<Engine>, input: Value) -> Result<Value> {
+    let me = user_pubkey(engine)?;
+    let status = input.get("status").and_then(Value::as_str).unwrap_or("open");
+    if !matches!(status, "open" | "all") {
+        return Err(EngineError::BadRequest("status must be open or all".into()));
+    }
+    let prefs = crate::notifications::Prefs::load(engine.data_dir());
+    let list = crate::api::notifications::list_notifications(engine, &me, &prefs, status).await?;
+    Ok(compact_asks(&list))
+}
+
+/// Unified-diff text for one hunk list.
+fn hunk_text(hunks: &[Vec<crate::publication::merge_request::DiffHunk>]) -> Vec<String> {
+    use crate::publication::merge_request::DiffKind;
+    hunks
+        .iter()
+        .map(|h| {
+            h.iter()
+                .map(|l| {
+                    let p = match l.kind {
+                        DiffKind::Removed => "- ",
+                        DiffKind::Added => "+ ",
+                        DiffKind::Context => "  ",
+                    };
+                    format!("{p}{}", l.line)
+                })
+                .collect::<Vec<_>>()
+                .join("\n")
+        })
+        .collect()
+}
+
+/// The review screen's diff, compacted for the model.
+async fn get_ask_diff(engine: &Arc<Engine>, input: Value) -> Result<Value> {
+    let me = user_pubkey(engine)?;
+    let id = require_str(&input, "id")?.trim().to_string();
+    if id.len() != 64 || !id.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return Err(EngineError::BadRequest("id must be the 818's 64-hex event id".into()));
+    }
+    let r = crate::api::merge_requests::review(engine, &id, &me).await?;
+    let sections: Vec<Value> = r
+        .sections
+        .iter()
+        .map(|sec| {
+            json!({
+                "original": sec.original,
+                "derivative": sec.derivative,
+                "title": sec.title,
+                "format": sec.format,
+                "hunks": hunk_text(&sec.hunks),
+                "tags_added": sec.tags_added,
+                "tags_removed": sec.tags_removed,
+            })
+        })
+        .collect();
+    let index = r.index.as_ref().map(|ix| {
+        json!({
+            "added": ix.diff.added,
+            "removed": ix.diff.removed,
+            "moved": ix.diff.moved,
+            "replaced": ix.diff.replaced,
+            "unchanged": ix.diff.unchanged.len(),
+        })
+    });
+    Ok(json!({
+        "id": r.merge_request.id,
+        "from": r.merge_request.pubkey,
+        "content": r.merge_request.content,
+        "target": r.merge_request.target,
+        "status": r.status,
+        "role": r.role,
+        "base": { "coordinate": r.base.coordinate, "moved_on": r.base.moved_on, "note": r.note },
+        "sections": sections,
+        "index": index,
+        "definitions": r.definitions,
+        "review": r.review,
+        "note": "This is the owner's NEXT version, the same diff the review screen shows. Write findings with review_ask; the owner merges or declines in the app.",
+    }))
+}
+
+/// Record the agent's review beside the ask — a local record, never an event.
+async fn review_ask(engine: &Arc<Engine>, input: Value) -> Result<Value> {
+    let me = user_pubkey(engine)?;
+    let id = require_str(&input, "id")?.trim().to_string();
+    let findings: Vec<String> = input
+        .get("findings")
+        .and_then(Value::as_array)
+        .map(|a| a.iter().filter_map(|v| v.as_str().map(|s| s.trim().to_string())).filter(|s| !s.is_empty()).collect())
+        .unwrap_or_default();
+    if findings.is_empty() {
+        return Err(EngineError::BadRequest("review_ask: at least one finding".into()));
+    }
+    let recommendation: crate::reviews::Recommendation = require_str(&input, "recommendation")?
+        .parse()
+        .map_err(EngineError::BadRequest)?;
+    let note = input.get("note").and_then(Value::as_str).map(str::trim).filter(|n| !n.is_empty()).map(String::from);
+    // The 818 must be local and the user must be a party to it (owner or
+    // requester) — the same check the diff makes.
+    let _ = crate::api::merge_requests::review(engine, &id, &me).await?;
+    let review = crate::reviews::Review {
+        id: id.clone(),
+        findings,
+        recommendation,
+        note,
+        by: "assistant".into(),
+        created_at: std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0),
+    };
+    crate::reviews::ReviewStore::new(engine.data_dir())?.save(&review)?;
+    Ok(json!({
+        "saved": true,
+        "review": review,
+        "note": "A local record beside the ask (GET /api/v1/merge-requests/<id>/review; shown on the review screen). Nothing was signed or sent.",
+    }))
+}
+
+/// The owner's next versions as an unsigned draft in the DraftStore.
+async fn prepare_merge(engine: &Arc<Engine>, input: Value) -> Result<Value> {
+    use crate::publication::compose::{ComposeState, SectionCompose, TagEntry};
+    use crate::publication::insertion::coord_parts;
+    let me = user_pubkey(engine)?;
+    let id = require_str(&input, "id")?.trim().to_string();
+    let r = crate::api::merge_requests::review(engine, &id, &me).await?;
+    if !matches!(r.role.as_str(), "owner" | "both") {
+        return Err(EngineError::Forbidden("only the target's owner merges — the draft is the owner's next version".into()));
+    }
+    let first = |tags: &[Vec<String>], name: &str| -> Option<String> {
+        tags.iter().find(|t| t.len() > 1 && t[0] == name).map(|t| t[1].clone())
+    };
+    let entries = |tags: &[Vec<String>], skip: &[&str]| -> Vec<TagEntry> {
+        tags.iter()
+            .filter(|t| t.len() > 1 && !skip.contains(&t[0].as_str()))
+            .map(|t| TagEntry { name: t[0].clone(), value: t[1].clone() })
+            .collect()
+    };
+    let section_from = |next: &crate::signing::EventTemplate, d_tag: Option<String>| SectionCompose {
+        title: first(&next.tags, "title").unwrap_or_default(),
+        content: next.content.clone(),
+        tags: entries(&next.tags, &["d", "title", "T", "client"]),
+        level: 2,
+        d_tag,
+        tag_mode: false,
+        current_tag_name: String::new(),
+        current_tag_value: String::new(),
+        slot_coord: None,
+    };
+    let mut compose = ComposeState::default();
+    let mut section_count = 0usize;
+    match &r.index {
+        Some(ix) => {
+            // The index's next a-list in order: a replaced section becomes
+            // authored content (its next version, same d); everything else
+            // stays a transclude slot so the composer re-emits it verbatim.
+            compose.title = first(&ix.next.tags, "title").unwrap_or_else(|| "merged".into());
+            compose.d_tag = first(&ix.next.tags, "d");
+            compose.tags = entries(&ix.next.tags, &["d", "title", "T", "a", "client", "E", "p"]);
+            for t in ix.next.tags.iter().filter(|t| t.len() > 1 && t[0] == "a") {
+                let coord = t[1].clone();
+                if let Some(sec) = r.sections.iter().find(|s| s.original == coord) {
+                    let d = coord_parts(&coord).map(|(_, _, d)| d.to_string());
+                    compose.sections.push(section_from(&sec.next, d));
+                    section_count += 1;
+                } else {
+                    compose.sections.push(SectionCompose {
+                        title: String::new(),
+                        content: String::new(),
+                        tags: Vec::new(),
+                        level: 2,
+                        d_tag: None,
+                        tag_mode: false,
+                        current_tag_name: String::new(),
+                        current_tag_value: String::new(),
+                        slot_coord: Some(coord),
+                    });
+                }
+            }
+        }
+        None => {
+            // A single 30041 target: a one-section draft under that section's d.
+            let sec = r.sections.first().ok_or_else(|| EngineError::BadRequest("nothing to merge".into()))?;
+            compose.title = sec.title.clone();
+            let d = coord_parts(&sec.original).map(|(_, _, d)| d.to_string());
+            compose.sections.push(section_from(&sec.next, d));
+            section_count = 1;
+        }
+    }
+    let short: String = id.chars().take(8).collect();
+    compose.title = format!("merge of {short}: {}", if compose.title.is_empty() { r.merge_request.content.clone() } else { compose.title });
+    let store = crate::drafts::DraftStore::new(engine.data_dir())
+        .map_err(|e| EngineError::Other(format!("draft store: {e}")))?;
+    let draft_id = store
+        .save_draft(&mut compose)
+        .map_err(|e| EngineError::Other(format!("save draft: {e}")))?;
+    Ok(json!({
+        "draft_id": draft_id,
+        "title": compose.title,
+        "sections": section_count,
+        "index": r.index.is_some(),
+        "signed": false,
+        "note": "An unsigned draft of the owner's next version. The user opens it in the composer (Saved drafts), edits if they like, and signs; the engine reacts + on the 818 when that publish lands. Do not sign_draft it — that would sign as the assistant.",
+    }))
+}
+
+/// One Confirm-gated pull of the enabled rules' filters, then the list.
+async fn fetch_asks(engine: &Arc<Engine>, input: Value) -> Result<Value> {
+    let me = user_pubkey(engine)?;
+    let policy = input.get("policy").and_then(Value::as_str).map(String::from);
+    if let Some(p) = &policy {
+        if !matches!(p.as_str(), "local_first" | "fetch_always") {
+            return Err(EngineError::BadRequest("policy must be local_first or fetch_always".into()));
+        }
+    }
+    let req = crate::api::notifications::FetchRequest { policy, relays: Vec::new(), mode_confirm: true };
+    let resp = crate::api::notifications::fetch_notifications(engine, &me, &req).await?;
+    let mut out = compact_asks(&resp.list);
+    out["relays"] = json!(resp.relays);
+    out["fetched"] = json!(resp.fetched);
+    if resp.relays.is_empty() {
+        out["fetch_note"] = json!("The user declined the relay fetch (or no relay was reachable): this is the local list only.");
+    }
+    Ok(out)
 }
 
 /// Broadcast already-signed local events to relays — the deliberate
@@ -2058,5 +2419,107 @@ mod tests {
     #[test]
     fn parse_address_rejects_garbage() {
         assert!(parse_address("not-an-address").is_err());
+    }
+
+    /// Step 6: the agent reads what is for the user, reviews a merge
+    /// request as a local record, and may not merge — an 818 built the way
+    /// the foreign-relink path builds one, seen from the requester's side.
+    #[tokio::test]
+    async fn asks_are_listed_reviewed_and_never_merged_by_the_agent() {
+        use crate::identity::{encode_nsec, IdentitySession};
+        use crate::publication::insertion::index_children;
+        const USER_SEC: &str = "0000000000000000000000000000000000000000000000000000000000000021";
+        const ASST_SEC: &str = "0000000000000000000000000000000000000000000000000000000000000022";
+        let dir = tempfile::tempdir().unwrap();
+        let mut engine = Engine::new(dir.path()).unwrap();
+        let user = Arc::new(Mutex::new(IdentitySession::new()));
+        let user_pk = user.lock().unwrap().login_nsec(&encode_nsec(USER_SEC).unwrap()).unwrap();
+        let asst = Arc::new(Mutex::new(IdentitySession::new()));
+        asst.lock().unwrap().login_nsec(&encode_nsec(ASST_SEC).unwrap()).unwrap();
+        engine.set_user_session(user.clone());
+        engine.set_assistant_session(asst.clone());
+        engine.set_assistant_signing(crate::signing::SigningController::new(asst));
+        let engine = Arc::new(engine);
+        std::mem::forget(dir);
+        let signing = crate::signing::SigningController::new(user.clone());
+        let cx = ToolCx { engine: engine.clone(), chat: Arc::new(Mutex::new(ChatState::new())) };
+
+        // Nothing for the user yet.
+        let empty = dispatch(&cx, "list_asks", json!({})).await.unwrap();
+        assert_eq!(empty["counts"]["acts"], 0);
+        assert!(empty["mine"].as_array().unwrap().is_empty());
+        assert!(dispatch(&cx, "list_asks", json!({ "status": "later" })).await.is_err());
+
+        // The assistant owns a publication; the user relinks it → derivative + 818.
+        let saved = dispatch(&cx, "save_draft", json!({ "title": "On Method", "sections": [
+            { "title": "Against method", "content": "What the textbook calls epistemological anarchism is only the record." }
+        ] })).await.unwrap();
+        let out = dispatch(&cx, "sign_draft", json!({ "draft_id": saved["draft_id"] })).await.unwrap();
+        let index = crate::query::query_by_id(engine.ndb(), out["publication_id"].as_str().unwrap()).unwrap().unwrap();
+        let root = crate::publication::insertion::event_coordinate(&index).unwrap();
+        let s1 = index_children(&index)[0].clone();
+        dispatch(&cx, "propose_insertion", json!({ "root": root, "parent": s1, "role": "definition", "title": "epistemological anarchism", "content": "As used here." })).await.unwrap();
+        let req = crate::api::insertions::RelinkRequest { root: root.clone(), ..Default::default() };
+        let pv = crate::api::insertions::relink_templates(&engine, &req, &user_pk).await.unwrap();
+        assert!(!pv.owner);
+        let (pubkey, signer) = crate::api::resolve_publish_signer(&engine, &signing, crate::api::SignAs::User).await.unwrap();
+        let resp = crate::api::insertions::relink_publish_derivative(&engine, &req, pv, pubkey, signer, crate::api::SignAs::User).await.unwrap();
+        let mr_id = resp.merge_request.as_ref().unwrap().id.clone();
+        tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+
+        // list_asks: the requester sees it under `mine`, compact (no full event).
+        let mine = dispatch(&cx, "list_asks", json!({})).await.unwrap();
+        let row = &mine["mine"][0];
+        assert_eq!(row["id"], mr_id);
+        assert_eq!(row["status"], "open");
+        assert!(row.get("event").is_none(), "compact rows carry no event");
+        assert!(row["content"].as_str().unwrap().starts_with("Relink 1 term"));
+
+        // get_ask_diff: the review screen's diff, as prefixed hunk lines.
+        let diff = dispatch(&cx, "get_ask_diff", json!({ "id": mr_id })).await.unwrap();
+        assert_eq!(diff["role"], "requester");
+        assert_eq!(diff["status"], "open");
+        let hunks = diff["sections"][0]["hunks"].as_array().unwrap();
+        assert!(hunks[0].as_str().unwrap().contains("+ ") && hunks[0].as_str().unwrap().contains("{{ref:"), "{hunks:?}");
+        assert!(diff["review"].is_null(), "no review yet");
+        assert!(dispatch(&cx, "get_ask_diff", json!({ "id": "nope" })).await.is_err());
+
+        // review_ask: a local record, folded into the next diff.
+        let rv = dispatch(&cx, "review_ask", json!({ "id": mr_id, "findings": ["1 section touched", "adds one a tag"], "recommendation": "merge" })).await.unwrap();
+        assert_eq!(rv["saved"], true);
+        assert_eq!(rv["review"]["by"], "assistant");
+        let stored = crate::reviews::ReviewStore::new(engine.data_dir()).unwrap().load(&mr_id).unwrap().unwrap();
+        assert_eq!(stored.recommendation, crate::reviews::Recommendation::Merge);
+        let diff2 = dispatch(&cx, "get_ask_diff", json!({ "id": mr_id })).await.unwrap();
+        assert_eq!(diff2["review"]["findings"][1], "adds one a tag");
+        assert!(dispatch(&cx, "review_ask", json!({ "id": mr_id, "findings": [], "recommendation": "merge" })).await.is_err(), "a review needs findings");
+        assert!(dispatch(&cx, "review_ask", json!({ "id": mr_id, "findings": ["x"], "recommendation": "maybe" })).await.is_err());
+        // nothing became an event
+        assert!(engine.get_events(vec![json!({ "kinds": [1111], "limit": 5 })], FetchPolicy::LocalOnly, None).await.unwrap().events.is_empty());
+
+        // prepare_merge: the requester is not the owner → refused; no merge tool exists.
+        let pm = dispatch(&cx, "prepare_merge", json!({ "id": mr_id })).await;
+        assert!(matches!(pm, Err(EngineError::Forbidden(_))), "{pm:?}");
+        assert!(dispatch(&cx, "merge_ask", json!({ "id": mr_id })).await.is_err());
+        assert!(!catalog().iter().any(|t| t.name == "merge_ask" || t.name == "decline_ask"));
+        // As the owner (the user session re-logged as the index's key): the
+        // draft is the owner's next version — unsigned, same d, relinked content.
+        user.lock().unwrap().login_nsec(&encode_nsec(ASST_SEC).unwrap()).unwrap();
+        let pm = dispatch(&cx, "prepare_merge", json!({ "id": mr_id })).await.unwrap();
+        assert_eq!(pm["signed"], false);
+        assert_eq!(pm["sections"], 1);
+        assert_eq!(pm["index"], true);
+        let draft = crate::drafts::DraftStore::new(engine.data_dir()).unwrap().load_draft(pm["draft_id"].as_str().unwrap()).unwrap();
+        let compose: crate::publication::compose::ComposeState = (&draft.compose_state).into();
+        assert_eq!(compose.d_tag.as_deref(), Some(crate::publication::insertion::coord_parts(&root).unwrap().2));
+        assert_eq!(compose.sections.len(), 1);
+        assert!(compose.sections[0].content.contains("{{ref:"), "the next version's content");
+        assert_eq!(compose.sections[0].d_tag.as_deref(), Some(crate::publication::insertion::coord_parts(&s1).unwrap().2));
+        // the policy knows the new tools: all on, fetch_asks gated as Network
+        let policy = ToolPolicy::default();
+        for t in ["list_asks", "get_ask_diff", "review_ask", "prepare_merge", "fetch_asks"] {
+            assert!(policy.enabled.contains(t));
+        }
+        assert_eq!(catalog().iter().find(|t| t.name == "fetch_asks").unwrap().category, ToolCategory::Network);
     }
 }

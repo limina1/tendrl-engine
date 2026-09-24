@@ -2400,6 +2400,264 @@ pgrep -a -x tendrl-engine | awk '/--port 3131/ {print $1}' | xargs -r kill
 pgrep -a -x chromium | awk '/remote-debugging-port=9333/ {print $1}' | xargs -r kill
 #+end_src
 
+* Vocabulary request (plan Phase 5c step 1, branch =feat/vocab-request=)
+
+A request whose =output= is =vocabulary=: the words the user highlighted
+in the section travel as =term= tags, the task is *generated* by the
+engine (=requests::vocabulary_task=) — "define these words in the context
+of these events: a, b" (none → "find the words these events use but never
+define, and define them in their context") — and the answer is one
+definition insertion per term (=t: definition=). =/preview= returns the
+unsigned 30041 the create path would sign (the modal renders it live).
+
+** Live: scratch engine + CDP harness (ran 2026-09-24, 15/15)
+
+#+begin_src bash
+pnpm -C web build && cargo build
+# scratch config as in "Annotations table — verify" (port 3131, fresh data dir, test relay only)
+./target/debug/tendrl-engine -c /tmp/verify-vocab.toml --port 3131 > /tmp/verify-vocab-engine.log 2>&1 &
+PORT=3131 scripts/verify/vocab-request-seed.sh > /tmp/seed.env; source /tmp/seed.env   # logs a fresh user in, ingests "On Method" (3 sections), prints ROOT / S1 / IDX
+chromium --headless=new --remote-debugging-port=9333 --no-sandbox --user-data-dir=/tmp/cdp-vocab about:blank &
+node scripts/verify/vocab-request.mjs --root "$ROOT" --search "id:$IDX" --out /tmp/vocab-shots
+# checks: app-open · search-result · reader-open · reader-sections · annotate-mode · capture-card (a Range + document mouseup)
+#         · modal-open · modal-vocabulary · words-rendered (.rq-word) · mark-phrase (CDP drag over two words) · generated-line (.rq-gen)
+#         · preview-terms (.rq-preview__pre has "term", the phrase, annotation-request, "vocabulary") · unmark-click · sign-local · request-listed
+#+end_src
+
+** API
+
+#+begin_src bash
+cargo test --lib requests::            # vocabulary_task, term tags round-trip
+B=localhost:3131; J='Content-Type: application/json'
+# preview: the unsigned event, nothing persisted — content is generated, one term tag per word
+curl -s -X POST $B/api/v1/annotations/requests/preview -H "$J" -d "{\"root\":\"$ROOT\",\"parent\":\"$S1\",\"output\":\"vocabulary\",\"terms\":[\"incommensurability\",\"epistemological anarchism\"],\"scope\":[\"section\",\"web\"]}" | jq -c '{content:.event.content, terms:[.event.tags[]|select(.[0]=="term")|.[1]], output:[.event.tags[]|select(.[0]=="output")|.[1]], task:.request.task}'
+# create (unsigned record; add "sign":true for the 30041) — same builder, so it matches the preview
+RQ=$(curl -s -X POST $B/api/v1/annotations/requests -H "$J" -d "{\"root\":\"$ROOT\",\"parent\":\"$S1\",\"output\":\"vocabulary\",\"terms\":[\"incommensurability\"]}"); echo "$RQ" | jq -c '{id, output, terms, task}'
+curl -s "$B/api/v1/annotations/requests?root=$ROOT&status=open" | jq -c '.requests[]|{id, output, terms}'
+# a typed task is kept; an empty term list yields the "find the words…" task
+curl -s -X POST $B/api/v1/annotations/requests/preview -H "$J" -d "{\"root\":\"$ROOT\",\"output\":\"vocabulary\"}" | jq -r .event.content
+# the agent sees `output` + `terms` and writes one definition per term
+curl -s -X POST $B/mcp -H "$J" -H "$A" -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"list_requests","arguments":{}}}' | jq -c '.result.structuredContent.requests[]|{id, output, terms}'
+#+end_src
+
+** Definitions — live (ran 2026-09-24: API 8/8, GUI harness 8/8 on a fresh seed)
+
+#+begin_src bash
+# after the vocabulary seed (ROOT / S1 / IDX in the env):
+PORT=3131 scripts/verify/vocab-definitions.sh       # request signed → 2 definitions (role: definition) → load roles/terms → glossary preview/publish/remove → refuses a plain note
+node scripts/verify/vocab-definitions.mjs --root "$ROOT" --search "id:$IDX" --out /tmp/def-shots
+# reader-open · definition-cards (.badge.def = unpromoted definitions) · answers-chips · promote-preview (.icard__promote) · promote-event-preview (.icard__wire-pre)
+# · promote-signed (armed sign · promote) · glossary-in-reader (the reader's collapsed .cv-index row “▸ Glossary · N items”) · engine-says-promoted (+1)
+#+end_src
+
+** Definitions (plan Phase 5c step 2, branch =feat/vocab-definitions=)
+
+A definition is a 30041 insertion with =role: definition= (=t:
+definition=, =title= = the term); the load pass tags it =role:
+definition= with its =term=. Promotion is *per event* into the signer's
+glossary bundle — a 30040 (=d= = =<root d>-glossary=, =t: glossary=, the
+bundle anchor set) whose =a= tags are the promoted definitions; the
+owner's index gets a new version (same =d=) with =a → glossary= in the
+appendix slot, dropped again when the glossary empties. A non-owner
+only writes the glossary (folding it into someone else's index is step
+4's merge request). The =#A= pass now loads 30040 bundles too (it only
+said so in its DSL before).
+
+#+begin_src bash
+cargo test --lib -- --test-threads=4 insertion glossary definition   # pure fns + the end-to-end handler test
+B=localhost:3131/api/v1; J='Content-Type: application/json'
+# two definitions on §1, as the assistant (or drop sign_as for the user)
+D1=$(curl -s -X POST $B/insertions -H "$J" -d "{\"anchor\":{\"root\":\"$ROOT\",\"parent\":\"$S1\"},\"role\":\"definition\",\"title\":\"newcomer\",\"content\":\"The theory that arrives second…\",\"sign_as\":\"assistant\",\"broadcast\":false}" | jq -r .coordinate)
+D2=$(curl -s -X POST $B/insertions -H "$J" -d "{\"anchor\":{\"root\":\"$ROOT\",\"parent\":\"$S1\"},\"role\":\"definition\",\"title\":\"consistency condition\",\"content\":\"The rule that…\",\"sign_as\":\"assistant\",\"broadcast\":false}" | jq -r .coordinate)
+curl -s -X POST $B/insertions/load -H "$J" -d "{\"root\":\"$ROOT\",\"policy\":\"local_only\"}" | jq -c '.insertions[]|{role, term, promoted, glossary}'
+# promote one (the user owns $ROOT here): preview = glossary + index templates, then publish (local until broadcast)
+curl -s -X POST $B/insertions/glossary/preview -H "$J" -d "{\"root\":\"$ROOT\",\"add\":[\"$D1\"]}" | jq -c '{owner, promoted, glossary_coordinate, index_a:[.index.tags[]?|select(.[0]=="a")|.[1]], note}'
+curl -s -X POST $B/insertions/glossary -H "$J" -d "{\"root\":\"$ROOT\",\"add\":[\"$D1\"]}" | jq -c '{glossary_coordinate, promoted, index:(.index!=null), ingested}'
+curl -s -X POST $B/insertions/load -H "$J" -d "{\"root\":\"$ROOT\",\"policy\":\"local_only\"}" | jq -c '.insertions[]|select(.role=="definition" or .role=="bundle")|{role, term, promoted, glossary, children}'   # D1 promoted → glossary coord; the bundle row lists it
+# take it out again: empty glossary republished, the index's a → glossary removed
+curl -s -X POST $B/insertions/glossary -H "$J" -d "{\"root\":\"$ROOT\",\"remove\":[\"$D1\"]}" | jq -c '{promoted, index:(.index!=null)}'
+# refusals: a plain section is not a definition; a 30040 cannot be added
+curl -s -X POST $B/insertions/glossary/preview -H "$J" -d "{\"root\":\"$ROOT\",\"add\":[\"$S1\"]}" | jq -r .error
+#+end_src
+
+* Relink — live (ran 2026-09-24: API 8/8, GUI 10/10)
+
+#+begin_src bash
+# fresh seed (§3 now uses "the consistency condition" in its body; §1 only in its heading, which is protected) + definitions:
+PORT=3131 scripts/verify/vocab-request-seed.sh > /tmp/seed.env; source /tmp/seed.env; export ROOT S1
+PORT=3131 scripts/verify/vocab-definitions.sh | tee /tmp/defs.out; source <(grep -E '^(D1|D2)=' /tmp/defs.out); export D1 D2
+PORT=3131 scripts/verify/vocab-relink.sh                          # preview: 2 sections · 1 hunk each · §2 unchanged → publish (+ glossary add) → refs + a tags in the signed §1 → second preview 0 hunks → 400 when nothing is left
+node scripts/verify/vocab-relink.mjs --search "id:$IDX" --out /tmp/relink-shots   # request card “relink 2 terms ▸” → .rl-modal (.rl-diff ×3 incl. the index block, .rl-ref ×2, tags row, .rl-wire__pre, 2 checkboxes) → armed “sure? sign 2 sections” → 2 .nd-ref links in the reader → hover .nd-preview shows the definition's first sentence
+# the GUI harness consumes the unrelinked state: seed again before the API script (or the reverse)
+#+end_src
+
+* Relink (plan Phase 5c step 3, branch =feat/vocab-relink=)
+
+Your own publication: every section whose text uses a defined term gets a
+*new version under the same =d=* with the first occurrence rewritten as
+={{ref:<definition coordinate>|term as written}}= and one =a= tag per
+definition (=nostrdown::link_terms=, engine-side; code, headings, native
+links and existing tokens are never touched). Optionally the same publish
+promotes definitions into the glossary. A stranger gets the preview (the
+diff) but not the publish — that is the derivative + kind-818 path (step 4).
+
+#+begin_src bash
+cargo test --lib -- --test-threads=4 nostrdown::tests::link_terms relink test_relink_own_publication   # pure + handler-level
+B=localhost:3131/api/v1; J='Content-Type: application/json'
+# after the "Definitions (step 2)" recipe: two definitions on $ROOT by the owner's assistant, or write them with role: definition
+# preview — sections that change (hunks with line_before / line_after, tags_added, the unsigned template), unchanged, skipped
+curl -s -X POST $B/publication/relink/preview -H "$J" -d "{\"root\":\"$ROOT\"}" | jq -c '{owner, hunks:.hunk_count, changed:[.sections[]|{coordinate, n:(.hunks|length), added:.tags_added}], unchanged, skipped, note}'
+curl -s -X POST $B/publication/relink/preview -H "$J" -d "{\"root\":\"$ROOT\"}" | jq -r '.sections[0].hunks[]|"- "+.line_before+"\n+ "+.line_after'
+# publish (owner; sign_as user by default; local until broadcast) — optionally promote in the same call
+RL=$(curl -s -X POST $B/publication/relink -H "$J" -d "{\"root\":\"$ROOT\",\"glossary\":{\"add\":[\"$D1\"]}}"); echo "$RL" | jq -c '{owner, hunk_count, sections:[.sections[].coordinate], index:(.index!=null), glossary:(.glossary!=null), promoted}'
+# the stored section now carries the refs + a tags; the reader resolves them sibling-first, then as direct pointers
+curl -s "$B/events/$(echo "$RL" | jq -r '.sections[0].event.id')" | jq -c '{content, a:[.tags[]|select(.[0]=="a")|.[1]]}'
+# idempotent: a second preview reports no hunks (refs are protected spans)
+curl -s -X POST $B/publication/relink/preview -H "$J" -d "{\"root\":\"$ROOT\"}" | jq -c '{hunk_count, unchanged:(.unchanged|length)}'
+# a stranger: the diff, owner:false, and publish → 400
+* Merge requests — live (ran 2026-09-24: two-key API 14/14)
+
+#+begin_src bash
+# fresh engine + seed (the seed now prints USEC, the owner's key, so a check can log the owner back in — single identity slot):
+PORT=3131 scripts/verify/vocab-request-seed.sh > /tmp/seed.env; source /tmp/seed.env; export ROOT S1 IDX USEC
+PORT=3131 scripts/verify/merge-requests.sh
+# requester logs in → foreign relink preview: owner:false, derivative sections (E · p · a), index′ a-list, the 818 template (a root · e base · e … source placeholder · p owner),
+# destination set (hint + mine only on a scratch engine: no 10002, no provenance → not deliverable + note) → publish local → 818 source = index′ id → requester lists it open,
+# notifications `mine` has it, requester react → 403 → owner re-login → notifications `acts` shows "sent a merge request on On Method" → owner declines with a reason → status declined
+#+end_src
+
+* Merge requests (plan Phase 5c step 4, pure + routing; branch =feat/merge-requests=)
+
+Kind-818 merge requests on publications (=src/publication/merge_request.rs=:
+template · parse · status from the owner's newest kind-7 · =fork_section= ·
+=destination_set=) and the two read endpoints (=src/api/merge_requests.rs=).
+Publishing a derivative + 818 and the owner's merge / decline come with the
+relink work; nothing here signs.
+
+#+begin_src bash
+cargo test --lib -- --test-threads=4 merge_request      # 6: round-trip, 30818 fidelity, status newest-wins, fork_section, destination set, the list + destinations handlers
+B=localhost:3131/api/v1; J='Content-Type: application/json'
+# where an ask to the owner of $ROOT goes — inbox (their kind-10002 read relays) ∪ found-on (nostrdb provenance) ∪ hints ∪ my write relays, each with reasons
+curl -s -X POST $B/merge-requests/destinations -H "$J" -d "{\"target\":\"$ROOT\",\"policy\":\"local_only\"}" | jq -c '{deliverable, inbox_known, provenance_known, note, d:[.destinations[]|[.url, (.reasons|join("+"))]]}'
+# NOTE: an event ingested through POST /ingest carries no provenance — only a relay fetch or a broadcast (record_event_relay) does — so a
+# seeded scratch publication reports provenance_known: false; policy local_first would pull the owner's 10002 through the indexer composition (Confirm-gated).
+# the local 818s that concern me (owner: p = me or target mine · requester: authored by me), status from the owner's newest + / -
+curl -s "$B/merge-requests?role=all&status=all" | jq -c '.requests[]|{id:(.id|.[0:8]), role, status, target, source:(.source|.[0:8]?)}'
+#+end_src
+
+** Foreign relink → derivative + kind 818 → the owner's verdict (step 4b)
+
+A stranger's relink is never a new version of the owner's events: it is a
+*derivative* (index′ + the changed sections′ under the stranger's key,
+=E=/=p= back-pointers, the relinked content + its =a= tags) plus one
+kind-818 addressed to the owner whose =e … source= is the signed index′.
+The 818 goes to the destination set (owner's inbox ∪ where the target was
+found ∪ hints ∪ mine), the derivative to your publish set; both local until
+broadcast. The owner answers with a kind-7 (=+= merged, =-= declined);
+anyone else gets 403.
+
+#+begin_src bash
+cargo test --lib -- --test-threads=4 test_relink_foreign_publication derivative_index     # handler-level + pure
+B=localhost:3131/api/v1; J='Content-Type: application/json'
+# two keys: the OWNER made the publication (seed as usual), the USER is a stranger who logs in afterwards
+USEC2=$(nak key generate); curl -s -X POST $B/identity/login -H "$J" -d "{\"ncryptsec\":\"$(nak key encrypt $USEC2 pw)\"}"; curl -s -X POST $B/identity/unlock -H "$J" -d '{"password":"pw"}'
+# preview: owner:false, the diff, and `derivative` = index′ / sections′ / the 818 (source row is a placeholder) / destinations with reasons
+curl -s -X POST $B/publication/relink/preview -H "$J" -d "{\"root\":\"$ROOT\"}" | jq -c '{owner, note, sections:[.derivative.sections[]|{original, coordinate, E:[.template.tags[]|select(.[0]=="E")|.[1]]}], index:[.derivative.index.tags[]|select(.[0]=="a")|.[1]|split(":")[2]], mr:.derivative.merge_request.tags, deliverable:.derivative.destinations.deliverable, dest:[.derivative.destinations.destinations[]|{url, reasons}]}'
+# publish (local): three kinds land — 30041′, 30040′, 818 — the original is untouched
+RL=$(curl -s -X POST $B/publication/relink -H "$J" -d "{\"root\":\"$ROOT\",\"broadcast\":false}"); echo "$RL" | jq -c '{owner, index:.derivative.index_coordinate, sections:[.derivative.sections[].coordinate], mr:.merge_request.id, source:[.merge_request.event.tags[]|select(.[0]=="e" and .[3]=="source")|.[1]]}'
+# broadcast: `destinations` (the Confirm modal's edited list) routes the 818; without it, only a deliverable set is used, else 400 with the routing note
+curl -s -X POST $B/publication/relink -H "$J" -d "{\"root\":\"$ROOT\",\"broadcast\":true,\"destinations\":[\"wss://theforest.nostr1.com\"]}" | jq -c '{mr:.merge_request.id, used:.merge_request.destinations_used, results:.merge_request.broadcast_results}'
+# both sides list it open
+MR=$(echo "$RL" | jq -r .merge_request.id)
+curl -s "$B/merge-requests?role=requester" | jq -c '.requests[]|{id:.id[0:8], status, role, target}'
+# the owner's verdict (log the owner back in first): + merged · - declined; a stranger → 403
+curl -s -X POST $B/merge-requests/react -H "$J" -d "{\"id\":\"$MR\",\"verdict\":\"+\",\"reason\":\"thanks\"}" | jq -c '{status, id:.id[0:8], relays_used}'
+curl -s "$B/merge-requests?role=owner&status=all" | jq -c '.requests[]|{id:.id[0:8], status, verdict:(.verdict.content)}'
+#+end_src
+
+* Merge-request review — live (ran 2026-09-24: API 14/14, GUI 11/11)
+
+#+begin_src bash
+# fresh engine + seed (owner); the API script builds its own 818 (assistant definitions → a requester's foreign relink), then:
+PORT=3131 scripts/verify/merge-review.sh     # requester reads the diff but merge → 403 · owner diff: 2 replaced sections + the glossary added at slot 3, added lines carry {{ref:, next versions keep the owner's d,
+                                             # definitions with promoted_in_source · the reader's load pass lists the 818 as role: ask · notifications: open act → merge (2 sections + index signed under the owner's d, kind-7 +)
+                                             # → notifications done, status merged, the requester's `mine` says merged
+# GUI: seed a second publication, stage an OPEN 818 (definitions → requester relink → owner re-login), then
+node scripts/verify/merge-review.mjs --out /tmp/review-shots   # 🔔 "1 ask" → notifications → review the diff ▸ → .mr[data-status=open][data-role=owner] (header applies cleanly · the ask · index block: + a → Glossary, replaced rows
+                                                               # · 2 added lines with tinted refs · event preview · .mr-agent slot) → armed "sure? sign 3 next versions · react + · broadcast" → ✓ merged, buttons gone → notifications done
+#+end_src
+
+* Notifications — live (ran 2026-09-24: API 7/7, GUI 7/7)
+
+#+begin_src bash
+# after the seed (owner logged in):
+DATA_DIR=/tmp/verify-vocab-data PORT=3131 scripts/verify/notifications.sh   # prefs defaults (3 fixed acts on) → nak: a 9802 on my §1, a 1111 on my root, a stray 7 → activity empty by default → PUT 9802 count + 1111 list → both listed, counts (0,1,1), stray 7 ignored, notifications.json 0600, a fixed row refuses off
+node scripts/verify/notifications.mjs --out /tmp/notif-shots                   # .pill--notif "🔔 0 asks · 1 new" → click → notifications buffer (asks · activity · mine; highlight + comment rows) → settings › notifications ▸ → .notif-row--fixed ×3 checked+disabled, 6 optional, 9802 reflects count → toggling 9735 PUTs
+#+end_src
+
+* Notifications (plan Phase 5c step 5, branch =feat/notifications=)
+
+What is for you, under the kinds you chose: the engine's rule table
+(=src/notifications.rs= =RULES=, one "addressed to me" tag rule per kind),
+preferences in =<data_dir>/notifications.json= (never an event), and
+=GET /api/v1/notifications= run over the local store. Asks (818 · 7 on
+my 818 · a signed request on my publication) are fixed; the rest is
+activity the user switches on, each either =count= (the modeline number)
+or =list=. Kind-818 =status= / =verdict= stay =null= until
+=publication::merge_request= (feat/merge-requests) is merged in.
+
+#+begin_src bash
+cargo test --lib -- --test-threads=4 notifications    # 7 unit (every rule + prefs round trip) + 1 handler-level
+B=localhost:3131/api/v1; J='Content-Type: application/json'
+# a logged-in user (see the vocabulary seed) is "me"; ME = its hex pubkey, S1 = one of my section coordinates
+curl -s $B/notifications/prefs | jq -c '.rules[]|{key, on, how, act, fixed}'          # acts on + fixed; 1111/9802/7/9735/30045/any-p off
+curl -s $B/notifications | jq -c '{acts:(.acts|length), activity:(.activity|length), mine:(.mine|length), counts}'
+# someone highlights my section (nak blocks on an open stdin — close it)
+OSEC=$(nak key generate)
+nak event -k 9802 -t a="$S1" -t p="$ME" -c "the burden is on the newcomer" --sec $OSEC < /dev/null > /tmp/hl.json
+curl -s -X POST $B/ingest -H 'Content-Type: application/x-ndjson' --data-binary @/tmp/hl.json
+curl -s $B/notifications | jq -c '.activity|length'                                    # 0 — 9802 is off
+curl -s -X PUT $B/notifications/prefs -H "$J" -d '{"entries":{"9802":{"on":true,"how":"count"},"1111":{"on":true,"how":"list"}}}' | jq -c '.rules[]|select(.key=="9802" or .key=="1111")|{key,on,how}'
+curl -s $B/notifications | jq -c '{activity:[.activity[]|{key, summary, anchor}], counts}'   # 1 · "npub1… highlighted §<title> of <root title>" · activity_count 1
+curl -s -X PUT $B/notifications/prefs -H "$J" -d '{"entries":{"818":{"on":false}}}' | jq -c '.rules[]|select(.key=="818")|{on,fixed}'   # still on: an ask is fixed (only `how` changes)
+# pull from relays: one Confirm-gated fetch, my kind-10002 read relays (else the general set) ∪ where my events were found
+curl -s -X POST $B/notifications/fetch -H "$J" -d '{"policy":"fetch_always"}' | jq -c '{relays, fetched, counts}'
+#+end_src
+
+* Agent tools for asks — live (ran 2026-09-24: 14/14 over MCP)
+
+#+begin_src bash
+PORT=3131 scripts/verify/vocab-request-seed.sh > /tmp/seed.env; source /tmp/seed.env; export ROOT S1 USEC
+DATA_DIR=/tmp/verify-vocab-data PORT=3131 scripts/verify/agent-asks.sh   # stages an open 818 → tools/list has the five ask tools and no merge_ask → list_asks (compact act row) → get_ask_diff (text hunks with {{ref:, index replaced/added)
+                                                                          # → review_ask → <data_dir>/reviews/<818>.json, GET /merge-requests/:id/review, the diff carries `review`, no kind-7 by us → prepare_merge (unsigned draft, 2 sections + index) → the 818 stays open → fetch_asks
+#+end_src
+
+* Agent tools for asks (plan Phase 5c step 6, branch =feat/notifications=)
+
+Five tools, one catalog (=src/tools.rs=), reachable over MCP and in-app:
+=list_asks= (the 🔔 list, compact rows), =get_ask_diff= (the review screen's
+diff as =- = / =+ = hunks), =review_ask= (findings + recommendation → a LOCAL
+record in =<data_dir>/reviews/<818 id>.json=, never an event), =prepare_merge=
+(the owner's next version as an unsigned draft), =fetch_asks= (Network,
+Confirm-gated). No =merge_ask= / =decline_ask=. Skill:
+=docs/skills/tendrl-requests/SKILL.md= ("work the asks").
+
+#+begin_src bash
+cargo test --lib -- --test-threads=4 tools::tests::asks_are_listed_reviewed_and_never_merged_by_the_agent reviews
+B=localhost:3131; A="Authorization: Bearer $(cat /tmp/verify-vocab-data/mcp-token)"; J='Content-Type: application/json'
+mcp() { curl -s -X POST $B/mcp -H "$J" -H "$A" -d "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/call\",\"params\":{\"name\":\"$1\",\"arguments\":$2}}" | jq -c '.result.structuredContent // .result'; }
+# after merge-requests.sh (an 818 for the owner; owner logged in):
+mcp list_asks '{}' | jq -c '{acts:[.acts[]|{key, id:(.id|.[0:8]), summary, status}], mine:(.mine|length), done:(.done|length), counts}'
+MR=$(mcp list_asks '{}' | jq -r '.acts[]|select(.key=="818")|.id' | head -1)
+mcp get_ask_diff "{\"id\":\"$MR\"}" | jq -c '{role, status, moved_on:.base.moved_on, sections:[.sections[]|{title, hunks:(.hunks|length), tags_added}], index:{added:(.index.added|length), replaced:(.index.replaced|length)}, definitions:(.definitions|length)}'
+mcp get_ask_diff "{\"id\":\"$MR\"}" | jq -r '.sections[0].hunks[0]'          # the unified hunk: "- …" / "+ … {{ref:…}} …"
+mcp review_ask "{\"id\":\"$MR\",\"findings\":[\"2 sections touched\",\"index gains a → Glossary at slot 3\"],\"recommendation\":\"merge\"}" | jq -c '.review'
+curl -s $B/api/v1/merge-requests/$MR/review | jq -c '{recommendation, findings:(.findings|length), by}'      # the record the review screen shows
+curl -s $B/api/v1/merge-requests/$MR/diff | jq -c '.review.recommendation'                                 # folded into the diff too
+mcp prepare_merge "{\"id\":\"$MR\"}" | jq -c '{draft_id, sections, index, signed}'                            # owner only (403 otherwise); nothing signed
+mcp fetch_asks '{}' | jq -c '{relays, fetched, counts}'                                                    # Confirm-gated: approve it in the app (or it returns the local list)
+#+end_src
+
 * Kasten bundle delivery (answer a request whose output is kasten)
 
 One insertion for the whole kasten: the root 30040, anchored to the

@@ -38,6 +38,8 @@ export type LeaderContext = {
 	openCompose: () => void;
 	/** Open the annotations table for the focused reader (Track B arms it). */
 	openAnnotationsTable: () => void;
+	/** Open the notifications list (the 🔔 pill's buffer). */
+	openNotifications: () => void;
 	/** Focus the chat: expands the chat rail into a window on desktop,
 	 *  switches to the chat panel on mobile. */
 	openChat: () => void;
@@ -69,7 +71,8 @@ export function buildLeaderRoot(ctx: LeaderContext): SubPrefix {
 							// desc/category match so listLeaderBindings merges the rows.
 							s: { type: 'leaf', desc: 'open settings', commandId: 'tendrl-open-settings', category: 'Configuration', kind: 'client', run: () => ctx.openSettings() },
 							// 't' = table: 'a' is the assistant chat (SPC c alias, shipped v0.15.1).
-							t: { type: 'leaf', desc: 'annotations table', commandId: 'tendrl-annotations-table', category: 'View', kind: 'client', run: () => ctx.openAnnotationsTable() }
+							t: { type: 'leaf', desc: 'annotations table', commandId: 'tendrl-annotations-table', category: 'View', kind: 'client', run: () => ctx.openAnnotationsTable() },
+							n: { type: 'leaf', desc: 'notifications', commandId: 'tendrl-notifications', category: 'View', kind: 'client', run: () => ctx.openNotifications() }
 						}
 					}
 				}
@@ -270,6 +273,7 @@ function buildNoopRoot(): SubPrefix {
 		openProfileEdit: noop,
 		openCompose: noop,
 		openAnnotationsTable: noop,
+		openNotifications: noop,
 		openChat: noop
 	});
 }

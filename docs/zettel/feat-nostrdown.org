@@ -116,6 +116,14 @@ branch is ready to fast-forward into =tendrl-web=.
 
 * Not implemented (spec'd or open)
 
+- *Multi-target ref* ={{ref:a,b|display}}= (and =embed=?): a comma list
+  of entities, =resolve_refs= returns =targets: [...]= per span,
+  =RichContent= shows a chooser, one =a= per target. Needed when two
+  definitions answer one term ([[file:idea-vocabulary-requests.org][vocabulary requests]]).
+- *=link_terms=* (Phase 5c): pure relink of the first occurrence of each
+  term per section into ={{ref:<coord>|term}}=, skipping code, headings,
+  existing links and anything inside ={{ }}=.
+
 - ={{cite:}}= / kind 30161 — [[file:idea-citations.org][idea zettel]]
 - pin/live version semantics — [[file:idea-version-semantics.org][idea zettel]]
 - Performance (2026-08-12 audit): the overhaul above fixed the *wiki*

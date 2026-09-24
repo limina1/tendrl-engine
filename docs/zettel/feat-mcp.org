@@ -66,6 +66,20 @@ the app's Context panel shows the entry; an unauthenticated POST is
 stdin. Parallel =tools/call= fan-out measured — see the recipe for the
 numbers and the nostrdb-mutex note.
 
+* Asks (Phase 5c, built 2026-09-24 — [[file:feat-notifications.org][notifications]])
+
+=list_asks= (what is for the user, under their notification kinds),
+=get_ask_diff= (the engine's structured diff for an 818), =review_ask=
+(a structured *result* kept as a local record — not an event; the
+assistant never comments on others' merge requests under its own key),
+=prepare_merge= (the owner's next version as an unsigned draft),
+=fetch_asks= (Network, Confirm-gated). No =merge_ask= / =decline_ask=:
+merge, decline, relink and the 818 are always the user's key. The
+=/tendrl-requests= skill has a vocabulary branch (one
+=propose_insertion= per term, =role: definition=) and a merge-request
+branch; =review_ask= writes =<data_dir>/reviews/<818>.json= and the review
+screen shows it. Still a pull: nothing wakes the agent.
+
 * Related
 - [[file:index.org][Index]]
 - [[file:feat-assistant.org][AI assistant]] — the in-app half; shares the catalog
