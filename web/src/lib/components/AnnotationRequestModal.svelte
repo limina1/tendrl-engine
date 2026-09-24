@@ -14,6 +14,7 @@
 	import { confirmState } from '$lib/network/fetch-events.svelte';
 	import { stylesList, refreshStyles } from '$lib/styles.svelte';
 	import { onStoreEvent } from '$lib/store-events.svelte';
+	import { getAuthorDisplayName } from '$lib/discussions/authors.svelte';
 
 	const app = getAppState();
 	const canSign = $derived(identityCanSign(app.identityStatus));
@@ -309,70 +310,159 @@
 		app.annotationRequest = null;
 	}
 
-	// ---- answer mode: answer a request by hand ---------------------------
-	// vocabulary → one signed definition per term; ask → one signed note;
-	// notes / kasten → the composer with the request pointer. Each entry is
-	// an ordinary insertion carrying ["request", <coordinate>] when the
-	// request is signed; an unsigned record is closed through the answer
-	// endpoint with the coordinates written.
+	// ---- answer mode: answer a request by hand, ONE TERM AT A TIME --------
+	// vocabulary → the request's terms in a dropdown, one definition entry,
+	// "sign ▸" signs that one 30041 (role definition, the request pointer)
+	// and pages to the next undone term, closing after the last; "skip ▸"
+	// pages without signing. ask → the question as a fixed title, one note,
+	// sign closes. notes / kasten → the composer with the request pointer.
+	// "define them myself ▸" (vocabulary mode, marked words) is the same
+	// window over the marked terms with no request at all.
 	type Format = 'markdown' | 'org' | 'asciidoc' | 'plain';
-	type Entry = { term: string; body: string; format: Format };
+	type TermStatus = 'pending' | 'defined' | 'signed' | 'skipped';
+	type TermEntry = { term: string; body: string; format: Format; status: TermStatus; by: string | null; fixed?: boolean };
 	const FORMATS: Format[] = ['markdown', 'org', 'asciidoc', 'plain'];
 	let answering = $state(!!open?.answer);
 	let answer = $state<api.AnnotationRequest | null>(open?.answer ?? null);
-	let entries = $state<Entry[]>([]);
-	let armedAnswer = $state(false);
+	/** "define them myself": answer mode with no request. */
+	let defineOnly = $state(false);
+	let entries = $state<TermEntry[]>([]);
+	let idx = $state(0);
+	let newTerm = $state(false);
+	let signedCount = $state(0);
+	let signedCoords = $state<string[]>([]);
+	let answerStyle = $state<string>('');
 	const openHere = $derived(existing.filter((r) => r.status === 'open'));
-	const entryKind = $derived(answer?.output === 'vocabulary' ? 'definition' : 'note');
-	function entriesFor(r: api.AnnotationRequest): Entry[] {
-		if (r.output === 'vocabulary') {
-			const terms = (r.terms ?? []).filter((t) => t.trim());
-			return terms.length ? terms.map((t) => ({ term: t, body: '', format: 'markdown' as Format })) : [{ term: '', body: '', format: 'markdown' as Format }];
-		}
-		return [{ term: `Answer: ${r.task.slice(0, 60)}${r.task.length > 60 ? '…' : ''}`, body: '', format: 'markdown' as Format }];
+	const isDef = $derived(defineOnly || answer?.output === 'vocabulary');
+	const entry = $derived(entries[idx] ?? null);
+	const todo = $derived(entries.filter((e) => e.status === 'pending').length);
+	const skipped = $derived(entries.filter((e) => e.status === 'skipped').map((e) => e.term));
+	const myPubkey = $derived(app.identityStatus?.pubkey ?? app.myPubkey ?? null);
+	const requestBy = $derived.by(() => {
+		const r = answer;
+		if (!r) return 'you';
+		const pk = r.coordinate?.split(':')[1];
+		if (!pk || pk === myPubkey) return 'you';
+		return getAuthorDisplayName(pk);
+	});
+	function whoName(pk: string | null): string {
+		if (!pk) return 'someone';
+		return pk === myPubkey ? 'you' : getAuthorDisplayName(pk);
 	}
-	function startAnswer(r: api.AnnotationRequest) {
+	function fresh(term: string): TermEntry {
+		return { term, body: '', format: 'markdown', status: 'pending', by: null };
+	}
+	/** The request's terms, each with what already answers it (the
+	 *  definitions loaded for this root that carry its pointer). */
+	async function entriesFor(r: api.AnnotationRequest): Promise<TermEntry[]> {
+		if (r.output !== 'vocabulary') {
+			const t = r.title ?? `${r.task.slice(0, 60)}${r.task.length > 60 ? '…' : ''}`;
+			return [{ ...fresh(t), fixed: true }];
+		}
+		const list = (r.terms ?? []).filter((t) => t.trim()).map(fresh);
+		let defs: api.LoadedInsertion[] = [];
+		try {
+			const resp = await api.loadInsertions({ root: r.root, policy: 'local_only' });
+			defs = resp.insertions.filter(
+				(i) => i.role === 'definition' && (i.request === r.coordinate || (r.answer?.coordinates ?? []).includes(i.coordinate))
+			);
+		} catch {
+			defs = [];
+		}
+		for (const d of defs) {
+			const term = d.term ?? d.event.tags.find((t) => t[0] === 'title')?.[1] ?? '';
+			const hit = list.find((e) => e.term.toLowerCase() === term.toLowerCase());
+			if (hit) {
+				hit.status = 'defined';
+				hit.by = d.event.pubkey;
+			} else if (term) list.push({ ...fresh(term), status: 'defined', by: d.event.pubkey });
+		}
+		return list.length ? list : [fresh('')];
+	}
+	function firstPending(list: TermEntry[]): number {
+		const k = list.findIndex((e) => e.status === 'pending');
+		return k < 0 ? 0 : k;
+	}
+	async function startAnswer(r: api.AnnotationRequest) {
 		answer = r;
+		defineOnly = false;
 		answering = true;
-		armedAnswer = false;
-		entries = entriesFor(r);
-		answerPreviews = [];
+		signedCount = 0;
+		signedCoords = [];
+		newTerm = false;
+		answerStyle = r.style ?? style;
+		entries = [fresh('')];
+		idx = 0;
+		const list = await entriesFor(r);
+		if (answer !== r) return;
+		entries = list;
+		idx = firstPending(list);
+		newTerm = !list[idx]?.term;
 		scheduleAnswerPreview();
 	}
 	function enterAnswerMode() {
 		answering = true;
-		if (!answer && openHere.length === 1) startAnswer(openHere[0]);
+		if (!answer && openHere.length === 1) void startAnswer(openHere[0]);
 	}
 	function leaveAnswerMode() {
 		answering = false;
 		answer = null;
-		armedAnswer = false;
+		defineOnly = false;
 	}
-	function addEntry() {
-		entries = [...entries, { term: '', body: '', format: 'markdown' }];
-	}
-	function removeEntry(i: number) {
-		entries = entries.filter((_, k) => k !== i);
+	/** Vocabulary mode → define the marked words yourself, no request. */
+	function defineMyself() {
+		if (terms.length === 0) return;
+		answer = null;
+		defineOnly = true;
+		answering = true;
+		signedCount = 0;
+		signedCoords = [];
+		answerStyle = style;
+		entries = terms.map(fresh);
+		idx = 0;
+		newTerm = false;
 		scheduleAnswerPreview();
 	}
-	function entryRequest(e: Entry, broadcast = false): api.InsertionRequest {
-		const r = answer!;
-		const parent = r.parent && r.parent !== r.root ? r.parent : undefined;
+	function pickTerm(v: string) {
+		if (v === '+') {
+			entries = [...entries, fresh('')];
+			idx = entries.length - 1;
+			newTerm = true;
+		} else {
+			idx = Number(v);
+			newTerm = false;
+		}
+		scheduleAnswerPreview();
+	}
+	function nextPending(from: number): number {
+		const n = entries.length;
+		for (let k = 1; k < n; k++) {
+			const j = (from + k) % n;
+			if (entries[j].status === 'pending') return j;
+		}
+		return -1;
+	}
+	function anchorFor(): api.InsertionRequest['anchor'] {
+		const r = answer;
+		if (r) return { root: r.root, parent: r.parent && r.parent !== r.root ? r.parent : undefined, parent_event_id: r.parent_event_id };
+		return { root, parent: topLevel ? undefined : parent, parent_event_id: open?.parentEventId };
+	}
+	function entryRequest(e: TermEntry, broadcast = false): api.InsertionRequest {
 		return {
-			anchor: { root: r.root, parent, parent_event_id: r.parent_event_id },
+			anchor: anchorFor(),
 			title: e.term.trim(),
 			content: e.body.trim(),
 			format: e.format === 'markdown' ? undefined : e.format,
-			role: r.output === 'vocabulary' ? 'definition' : 'note',
-			request: r.coordinate,
-			tags: r.style ? [['style', r.style]] : undefined,
+			role: isDef ? 'definition' : 'note',
+			request: answer?.coordinate,
+			tags: answerStyle ? [['style', answerStyle]] : undefined,
 			sign_as: 'user',
 			broadcast
 		};
 	}
-	if (open?.answer) entries = entriesFor(open.answer);
-	// event preview: one unsigned template per entry, debounced from the handlers
-	let answerPreviews = $state<string[]>([]);
+	if (open?.answer) void startAnswer(open.answer);
+	// event preview: the one unsigned template for the current entry, debounced
+	let answerPreview = $state<string | null>(null);
 	let answerPreviewTimer: ReturnType<typeof setTimeout> | null = null;
 	let answerPreviewSeq = 0;
 	function scheduleAnswerPreview() {
@@ -380,54 +470,101 @@
 		answerPreviewTimer = setTimeout(() => void refreshAnswerPreview(), 250);
 	}
 	async function refreshAnswerPreview() {
-		if (!answer) return;
+		const e = entry;
 		const seq = ++answerPreviewSeq;
-		const ready = entries.filter((e) => e.term.trim() && e.body.trim());
-		try {
-			const out = await Promise.all(
-				ready.map(async (e) => {
-					const r = await api.previewInsertion(entryRequest(e));
-					return `{ "kind": ${r.event.kind},\n  "content": ${JSON.stringify(r.event.content)},\n  "tags": [\n${r.event.tags.map((t) => '    ' + tagLine(t)).join(',\n')}\n  ] }`;
-				})
-			);
-			if (seq === answerPreviewSeq) answerPreviews = out;
-		} catch {
-			if (seq === answerPreviewSeq) answerPreviews = [];
-		}
-	}
-	const canSignAnswer = $derived(
-		canSign && !posting && !!answer && entries.length > 0 && entries.every((e) => e.term.trim().length > 0 && e.body.trim().length > 0)
-	);
-	async function signAnswers() {
-		if (!canSignAnswer || !answer) return;
-		if (!armedAnswer) {
-			armedAnswer = true;
+		if (!e || !e.term.trim() || !e.body.trim()) {
+			answerPreview = null;
 			return;
 		}
-		posting = true;
-		const r = answer;
 		try {
-			const coords: string[] = [];
-			for (const e of entries) {
-				const resp = await api.publishInsertion(entryRequest(e));
-				coords.push(resp.coordinate);
+			const r = await api.previewInsertion(entryRequest(e));
+			if (seq === answerPreviewSeq)
+				answerPreview = `{ "kind": ${r.event.kind},\n  "content": ${JSON.stringify(r.event.content)},\n  "tags": [\n${r.event.tags.map((t) => '    ' + tagLine(t)).join(',\n')}\n  ] }`;
+		} catch {
+			if (seq === answerPreviewSeq) answerPreview = null;
+		}
+	}
+	const canSignTerm = $derived(
+		canSign && !posting && !!entry && entry.term.trim().length > 0 && entry.body.trim().length > 0
+	);
+	/** Close the local record (an unsigned request) with what was written. */
+	async function closeRecord() {
+		const r = answer;
+		if (!r || r.coordinate || signedCoords.length === 0) return;
+		const what = isDef ? `${signedCount} definition${signedCount === 1 ? '' : 's'}` : 'an answer';
+		const names = entries.filter((e) => e.status === 'signed').map((e) => e.term).join(', ');
+		await api.answerRequest(r.id, {
+			summary: `${what} written by hand${names ? `: ${names}` : ''}${skipped.length ? ` · skipped: ${skipped.join(', ')}` : ''}`,
+			coordinates: signedCoords
+		});
+	}
+	/** Done: report what was signed and skipped, close the window. */
+	async function finishAnswer() {
+		if (signedCount > 0) {
+			try {
+				await closeRecord();
+			} catch (e) {
+				app.pushToast(api.errorMessage(e, 'Closing the request failed'), 'error', 4000);
 			}
-			if (!r.coordinate) {
-				await api.answerRequest(r.id, {
-					summary: r.output === 'vocabulary' ? `${coords.length} definition${coords.length === 1 ? '' : 's'} written by hand` : 'an answer written by hand',
-					coordinates: coords
-				});
-			}
-			app.pushToast(r.output === 'vocabulary' ? `${coords.length} definition${coords.length === 1 ? '' : 's'} signed as your answer` : 'answer signed', 'success');
+			const what = isDef ? `${signedCount} definition${signedCount === 1 ? '' : 's'}` : 'answer';
+			app.pushToast(
+				`${what} signed as you${answer ? ', pointing at the request' : ' — no request, just definitions anchored here'}${skipped.length ? ` · skipped: ${skipped.join(', ')}` : ''}`,
+				'success'
+			);
 			app.bumpInsertions();
 			app.bumpRequests();
-			close();
-		} catch (e) {
-			app.pushToast(api.errorMessage(e, 'Signing the answer failed'), 'error', 5000);
-			armedAnswer = false;
-		} finally {
-			posting = false;
 		}
+		close();
+	}
+	/** Sign the current entry; page to the next undone term or close. */
+	async function signTerm() {
+		const e = entry;
+		if (!canSignTerm || !e) return;
+		posting = true;
+		try {
+			const resp = await api.publishInsertion(entryRequest(e));
+			e.status = 'signed';
+			e.by = myPubkey;
+			signedCount += 1;
+			signedCoords = [...signedCoords, resp.coordinate];
+			if (signedCount === 1) {
+				// The first signed event closes the record; the signed request
+				// is already marked answered by the pointer itself.
+				await closeRecord();
+				app.bumpRequests();
+			}
+			app.bumpInsertions();
+		} catch (err) {
+			app.pushToast(api.errorMessage(err, 'Signing failed'), 'error', 5000);
+			posting = false;
+			return;
+		}
+		posting = false;
+		const j = nextPending(idx);
+		if (j < 0) {
+			await finishAnswer();
+			return;
+		}
+		app.pushToast(`signed “${e.term.trim()}”`, 'success');
+		idx = j;
+		newTerm = !entries[j].term;
+		answerPreview = null;
+		scheduleAnswerPreview();
+	}
+	/** Leave this term for the agent or for later; page on. */
+	async function skipTerm() {
+		const e = entry;
+		if (!e || posting) return;
+		if (e.status === 'pending') e.status = 'skipped';
+		const j = nextPending(idx);
+		if (j < 0) {
+			await finishAnswer();
+			return;
+		}
+		idx = j;
+		newTerm = !entries[j].term;
+		answerPreview = null;
+		scheduleAnswerPreview();
 	}
 	/** notes / kasten: the composer, with the request pointer. */
 	function openComposerFor(r: api.AnnotationRequest) {
@@ -504,7 +641,7 @@
 			close();
 		} else if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
 			e.preventDefault();
-			if (answering) void signAnswers();
+			if (answering) void signTerm();
 			else void submit();
 		}
 	}
@@ -531,15 +668,24 @@
 		<header class="rq-header">
 			<h3 class="rq-title">
 				<span class="rq-dot" aria-hidden="true">●</span>
-				{answering ? 'answer' : 'annotate'}
-				{#if topLevel}
+				{answering ? (defineOnly ? 'define' : 'answer') : 'annotate'}
+				{#if answering && answer}
+					<span class="rq-title__on">— <em>{answer.title ?? answer.task}</em></span>
+					<span class="rq-pick__badge">{answer.status === 'open' ? '?' : '✓'} {OUTPUT_LABEL[answer.output] ?? answer.output}</span>
+					<span class="rq-title__on">by {requestBy} · {relTime(answer.created_at)}</span>
+				{:else if answering && defineOnly}
+					<span class="rq-title__on">— {entries.length} term{entries.length === 1 ? '' : 's'} on <em>{topLevel ? 'the publication' : (open?.parentTitle ?? short(parent))}</em></span>
+				{:else if topLevel}
 					<span class="rq-title__on">— on the publication</span>
 				{:else if open?.parentTitle}
 					<span class="rq-title__on">— on <em>{open.parentTitle}</em></span>
 				{/if}
 			</h3>
+			{#if answering && isDef && entries.length > 0}
+				<span class="rq-count" title="terms in this request">{idx + 1} of {entries.length} · {todo} to do</span>
+			{/if}
 			{#if answering}
-				<button class="rq-mini rq-answer-back" onclick={leaveAnswerMode} disabled={posting} title="Back to asking your agent">← ask instead</button>
+				<button class="rq-mini rq-answer-back" onclick={leaveAnswerMode} disabled={posting} title="Back to asking your agent">← annotate</button>
 			{:else if openHere.length > 0}
 				<button class="rq-mini rq-answer-toggle" onclick={enterAnswerMode} disabled={posting} title="Answer one of the open requests here by hand instead of asking your agent">answer a request ({openHere.length}) ▸</button>
 			{/if}
@@ -562,6 +708,9 @@
 				</label>
 			{:else}
 				<span class="rq-chip" title={root}><b>A</b> {open?.rootTitle ?? short(root)}</span>
+			{/if}
+			{#if answering && answer?.coordinate}
+				<span class="rq-chip rq-chip--request" title={answer.coordinate}><b>request</b> {short(answer.coordinate)}</span>
 			{/if}
 		</div>
 
@@ -735,6 +884,9 @@
 			<span class="rq-hint">Ctrl-Enter</span>
 			<span class="rq-spacer"></span>
 			<button class="rq-btn" onclick={close} disabled={posting}>Cancel</button>
+			{#if output === 'vocabulary' && terms.length > 0}
+				<button class="rq-btn rq-btn--define" onclick={defineMyself} disabled={posting || !canSign} title={canSign ? 'Skip the agent: write the definitions yourself — one signed 30041 per term, no request event' : 'Sign in to write definitions yourself'}>define them myself ▸</button>
+			{/if}
 			<button class="rq-btn rq-btn--post" onclick={submit} disabled={!canPost}>
 				{posting ? 'Saving…' : sign ? 'sign · keep local' : 'save request'}
 			</button>
@@ -768,7 +920,7 @@
 				{/each}
 			</ul>
 		{/if}
-		{:else if !answer}
+		{:else if !answer && !defineOnly}
 			<div class="rq-label">open requests here <span class="rq-label__sub">· pick the one to answer by hand</span></div>
 			<div class="rq-picks">
 				{#each openHere as r (r.id)}
@@ -782,8 +934,7 @@
 					</button>
 				{/each}
 			</div>
-		{:else}
-			<div class="rq-label">the request <span class="rq-label__sub">· what you are answering</span></div>
+		{:else if answer && (answer.output === 'notes' || answer.output === 'kasten')}
 			<div class="rq-ask-line">
 				<span class="rq-pick__badge">{OUTPUT_LABEL[answer.output] ?? answer.output}</span>
 				<span class="rq-ask-line__task">{answer.title ? `${answer.title} — ` : ''}{answer.task}</span>
@@ -791,67 +942,104 @@
 			{#if answer.context}
 				<div class="rq-style-preview">{answer.context}</div>
 			{/if}
-			{#if answer.output === 'vocabulary' || answer.output === 'ask'}
-				<div class="rq-label">
-					{answer.output === 'vocabulary' ? 'definitions' : 'your answer'}
-					<span class="rq-label__sub">{answer.output === 'vocabulary' ? '· one signed definition per term, each pointing at the request' : '· one signed note pointing at the request'}</span>
-					{#if answer.output === 'vocabulary'}
-						<button class="rq-mini rq-mini--inline rq-entry-add" onclick={addEntry} disabled={posting}>+ term</button>
-					{/if}
+			<div class="rq-help">
+				{answer.output === 'kasten'
+					? 'write it as a note here; a full kasten is the agent\'s job — the composer opens anchored to this place with the request pointer'
+					: 'the composer opens anchored to this place with the request pointer — the note you write there answers it'}
+			</div>
+			<footer class="rq-foot">
+				<span class="rq-spacer"></span>
+				<button class="rq-btn" onclick={close} disabled={posting}>Cancel</button>
+				<button class="rq-btn rq-btn--post rq-answer-compose" onclick={() => openComposerFor(answer!)} disabled={posting}>open the composer ▸</button>
+			</footer>
+		{:else if entry}
+			{#if answer && answer.output !== 'vocabulary'}
+				<div class="rq-ask-line">
+					<span class="rq-pick__badge">{OUTPUT_LABEL[answer.output] ?? answer.output}</span>
+					<span class="rq-ask-line__task">{answer.task}</span>
 				</div>
-				<div class="rq-entries">
-					{#each entries as e, i (i)}
-						<div class="rq-entry" data-kind={entryKind}>
-							<div class="rq-entry__row">
-								<input class="rq-input rq-entry__term" data-entry bind:value={e.term} oninput={scheduleAnswerPreview} disabled={posting} placeholder={answer.output === 'vocabulary' ? 'the term, as written' : 'title'} />
-								<select class="rq-select rq-entry__format" bind:value={e.format} onchange={scheduleAnswerPreview} disabled={posting}>
-									{#each FORMATS as f (f)}<option value={f}>{f}</option>{/each}
-								</select>
-								{#if answer.output === 'vocabulary' && entries.length > 1}
-									<button class="rq-mini" onclick={() => removeEntry(i)} disabled={posting} title="Drop this term">×</button>
-								{/if}
-							</div>
-							<textarea class="rq-input rq-entry__body" data-entry bind:value={e.body} oninput={scheduleAnswerPreview} disabled={posting} placeholder={answer.output === 'vocabulary' ? 'the sense here first, then the background a reader needs, then where the word comes from' : 'the answer, in your words — cite with {{ref:…}} where it helps'}></textarea>
-						</div>
-					{/each}
-				</div>
-				<details class="rq-preview" bind:open={previewOpen}>
-					<summary class="rq-label rq-preview__sum">event preview <span class="rq-label__sub">· the unsigned {entryKind === 'definition' ? 'definitions' : 'note'} “sign” will sign — {entries.length} event{entries.length === 1 ? '' : 's'}</span></summary>
-					{#if answerPreviews.length}
-						{#each answerPreviews as pv, i (i)}
-							<pre class="rq-preview__pre">{pv}</pre>
-						{/each}
-					{:else}
-						<div class="rq-help">fill a term and its body — the engine builds the template from them</div>
-					{/if}
-				</details>
-				<div class="rq-help">
-					{#if !canSign}
-						Sign in to sign the answer — it is signed as you, {answer.coordinate ? 'pointing at the signed request' : 'and the local record closes with it'}.
-					{:else}
-						Signed as you, kept local; broadcast is the separate step. {answer.coordinate ? 'Each event points at the request — that is what marks it answered.' : 'The local record closes with the coordinates written.'}
-					{/if}
-				</div>
-				<footer class="rq-foot">
-					<span class="rq-hint">Ctrl-Enter</span>
-					<span class="rq-spacer"></span>
-					<button class="rq-btn" onclick={close} disabled={posting}>Cancel</button>
-					<button class="rq-btn rq-btn--post rq-answer-sign" class:rq-btn--armed={armedAnswer} onclick={signAnswers} disabled={!canSignAnswer}>
-						{posting ? 'signing…' : armedAnswer ? `sure? sign ${entries.length} event${entries.length === 1 ? '' : 's'}` : 'sign · keep local ▸'}
-					</button>
-				</footer>
-			{:else}
-				<div class="rq-help">
-					{answer.output === 'kasten'
-						? 'write it as a note here; a full kasten is the agent\'s job — the composer opens anchored to this place with the request pointer'
-						: 'the composer opens anchored to this place with the request pointer — the note you write there answers it'}
-				</div>
-				<footer class="rq-foot">
-					<span class="rq-spacer"></span>
-					<button class="rq-btn" onclick={close} disabled={posting}>Cancel</button>
-					<button class="rq-btn rq-btn--post rq-answer-compose" onclick={() => openComposerFor(answer!)} disabled={posting}>open the composer ▸</button>
-				</footer>
+				{#if answer.context}
+					<div class="rq-style-preview">{answer.context}</div>
+				{/if}
 			{/if}
+			{#if isDef}
+				<div class="rq-label">term <span class="rq-label__sub">· one definition per term; pick from the request or add one</span></div>
+				<div class="rq-term">
+					{#if newTerm || !entry.term}
+						<!-- svelte-ignore a11y_autofocus -->
+						<input class="rq-input rq-term__new" data-entry autofocus bind:value={entry.term} oninput={scheduleAnswerPreview} disabled={posting} placeholder="new term, as written in the text" />
+						{#if entries.some((e) => e.term)}
+							<button class="rq-mini" onclick={() => { newTerm = false; if (!entry.term.trim()) { entries = entries.filter((_, k) => k !== idx); idx = Math.min(idx, entries.length - 1); } }} disabled={posting} title="Back to the request's terms">list ▾</button>
+						{/if}
+					{:else}
+						<select class="rq-select rq-term__pick" value={String(idx)} onchange={(e) => pickTerm((e.currentTarget as HTMLSelectElement).value)} disabled={posting} title="Which term this entry defines">
+							{#each entries as e, k (k)}
+								<option value={String(k)}>{e.term || '(new term)'}{e.status === 'defined' ? ` · defined by ${whoName(e.by)}` : e.status === 'signed' ? ' · signed by you' : e.status === 'skipped' ? ' · skipped' : ''}</option>
+							{/each}
+							<option value="+">+ another term…</option>
+						</select>
+					{/if}
+					<select class="rq-select rq-term__fmt" bind:value={entry.format} onchange={scheduleAnswerPreview} disabled={posting} title="Content format">
+						{#each FORMATS as f (f)}<option value={f}>{f}</option>{/each}
+					</select>
+				</div>
+				{#if entry.status === 'defined'}
+					<div class="rq-warn">already defined by {whoName(entry.by)} — signing writes a second definition of “{entry.term}” under your key; the relink will ask which one to point at</div>
+				{:else if entry.status === 'signed'}
+					<div class="rq-warn">signed by you a moment ago — signing again writes a second definition</div>
+				{/if}
+			{:else}
+				<div class="rq-label">title</div>
+				<div class="rq-term">
+					<span class="rq-term__fixed">{entry.term}</span>
+					<select class="rq-select rq-term__fmt" bind:value={entry.format} onchange={scheduleAnswerPreview} disabled={posting} title="Content format">
+						{#each FORMATS as f (f)}<option value={f}>{f}</option>{/each}
+					</select>
+				</div>
+			{/if}
+			<label class="rq-label" for="rq-def">
+				{isDef ? 'definition' : 'your answer'}
+				<span class="rq-label__sub">{isDef ? '· the sense in this text first; that sentence becomes the hover summary of every {{ref}} to it' : '· a signed note pointing at the request'}</span>
+			</label>
+			<textarea id="rq-def" class="rq-input rq-def" data-entry bind:value={entry.body} oninput={scheduleAnswerPreview} disabled={posting} placeholder={isDef ? 'the sense here first, then the background a reader needs, then where the word comes from' : 'the answer, in your words — cite with {{ref:…}} where it helps'}></textarea>
+			<div class="rq-label">style</div>
+			<div class="rq-style">
+				<select class="rq-select" bind:value={answerStyle} onchange={scheduleAnswerPreview} disabled={posting}>
+					<option value="">— none —</option>
+					{#each stylesList() as s (s.coordinate)}
+						<option value={s.coordinate}>{s.title}</option>
+					{/each}
+				</select>
+			</div>
+			<details class="rq-preview" bind:open={previewOpen}>
+				<summary class="rq-label rq-preview__sum">event preview <span class="rq-label__sub">· the unsigned {isDef ? 'definition' : 'note'} “sign” will sign</span></summary>
+				{#if answerPreview}
+					<pre class="rq-preview__pre">{answerPreview}</pre>
+				{:else}
+					<div class="rq-help">fill the {isDef ? 'term and its definition' : 'answer'} — the engine builds the template from them</div>
+				{/if}
+			</details>
+			<div class="rq-help">
+				{#if !canSign}
+					Sign in to sign — each event is signed as you{answer ? (answer.coordinate ? ', pointing at the signed request' : ', and the local record closes with it') : ''}.
+				{:else if answer}
+					Signed as you, kept local; broadcast is the separate step. {answer.coordinate ? 'Each event points at the request — that is what marks it answered.' : 'The local record closes with the first one.'}
+				{:else}
+					Signed as you, kept local, no request — plain definitions anchored here.
+				{/if}
+			</div>
+			{#if signedCount > 0}
+				<div class="rq-help rq-signed">{signedCount} signed so far{isDef ? ' — the rows are already in the ledger' : ''}</div>
+			{/if}
+			<footer class="rq-foot">
+				<span class="rq-hint">Ctrl-Enter</span>
+				<span class="rq-spacer"></span>
+				<button class="rq-btn rq-btn--done" onclick={finishAnswer} disabled={posting}>{signedCount > 0 ? 'done' : 'Cancel'}</button>
+				{#if isDef && entries.length > 1}
+					<button class="rq-btn rq-btn--skip" onclick={skipTerm} disabled={posting} title="Leave this term for the agent or for later; move on">skip ▸</button>
+				{/if}
+				<button class="rq-btn rq-btn--sign" onclick={signTerm} disabled={!canSignTerm} title={isDef && nextPending(idx) >= 0 ? 'Signs this definition and pages to the next term' : 'Signs and closes'}>{posting ? 'signing…' : 'sign ▸'}</button>
+			</footer>
 		{/if}
 	</div>
 </div>
@@ -1221,38 +1409,68 @@
 		border-radius: var(--r-sm);
 		padding: 6px 10px;
 	}
-	.rq-entries {
-		display: flex;
-		flex-direction: column;
-		gap: 8px;
+	.rq-count {
+		margin-left: auto;
+		margin-right: var(--s-2);
+		font: calc(var(--t-xs) - 2px) / 1.3 var(--font-mono);
+		color: var(--base5);
+		white-space: nowrap;
 	}
-	.rq-entry {
-		display: flex;
-		flex-direction: column;
-		gap: 4px;
-		border: 1px solid var(--panel-border);
-		border-left: 3px solid var(--green);
-		border-radius: var(--r-sm);
-		padding: 6px 8px;
+	.rq-count + .rq-answer-back {
+		margin-left: 0;
 	}
-	.rq-entry__row {
+	.rq-chip--request b {
+		color: var(--ask);
+	}
+	.rq-term {
 		display: flex;
 		gap: 6px;
 		align-items: center;
 	}
-	.rq-entry__term {
+	.rq-term__pick,
+	.rq-term__new,
+	.rq-term__fixed {
 		flex: 1;
+		min-width: 0;
+		font: 600 var(--t-md) / 1.3 var(--font-sans);
+		color: var(--fg);
+		background: var(--bg-surface);
+		border: 1px solid var(--panel-border);
+		border-left: 3px solid var(--green);
+		border-radius: var(--r-sm);
+		padding: 5px 8px;
+		min-height: 32px;
 	}
-	.rq-entry__body {
+	.rq-term__pick {
+		cursor: pointer;
+	}
+	.rq-term__fixed {
+		font-family: var(--font-serif);
+		font-weight: 500;
+	}
+	.rq-term__fmt {
+		flex: none;
+	}
+	.rq-warn {
+		font: calc(var(--t-xs) - 2px) / 1.4 var(--font-mono);
+		color: var(--yellow);
+	}
+	.rq-def {
 		font-family: var(--font-serif);
 		font-size: var(--t-md);
-		min-height: 72px;
+		min-height: 96px;
 		resize: vertical;
 	}
-	.rq-btn--armed {
-		background: var(--ask);
-		color: var(--bg);
-		border-color: var(--ask);
+	.rq-signed {
+		color: var(--green);
+	}
+	.rq-btn--sign,
+	.rq-btn--define {
+		color: var(--green);
+	}
+	.rq-btn--sign:hover:not(:disabled),
+	.rq-btn--define:hover:not(:disabled) {
+		border-color: var(--green);
 	}
 	.rq-mini {
 		font-family: var(--font-mono);

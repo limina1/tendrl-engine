@@ -10,6 +10,7 @@
 	import { getAppState } from '$lib/state.svelte';
 	import RichContent from './RichContent.svelte';
 	import InsertionCard from './InsertionCard.svelte';
+	import AnnotationThread from './annotations/AnnotationThread.svelte';
 	import type { ResolvedRef, ParsedToken } from '$lib/nostr/nostrdown';
 	import { getAuthorDisplayName } from '$lib/discussions/authors.svelte';
 	import { pubkeyToColor } from '$lib/discussions/colors';
@@ -118,7 +119,13 @@
 		const [k, pk, ...d] = coord.split(':');
 		app.openAddressableInModal({ kind: Number(k), pubkey: pk, d_tag: d.join(':') });
 	}
-	/** Answer this request by hand: the annotate window in answer mode. */
+	/** Its row in the ledger (opens or focuses the ledger first). */
+	function revealRow() {
+		app.requestRevealAnnotation(r.root, r.coordinate ?? r.id);
+	}
+	/** Answer this request by hand: the annotate window in answer mode —
+	 *  one term at a time; an answered vocabulary request still takes
+	 *  your definitions. */
 	function answerYourself() {
 		app.annotationRequest = {
 			root: r.root,
@@ -219,8 +226,11 @@
 			{/if}
 			<div class="rcard__actions">
 				{#if !answered}
-					<button class="rcard__mini rcard__mini--answer" onclick={answerYourself} disabled={busy} title={r.output === 'vocabulary' ? 'Write the definitions yourself — one signed entry per term, each pointing at this request' : r.output === 'ask' ? 'Answer the question yourself — a signed note pointing at this request' : 'Write the note yourself in the composer, pointing at this request'}>answer it yourself ▸</button>
+					<button class="rcard__mini rcard__mini--answer" onclick={answerYourself} disabled={busy} title={r.output === 'vocabulary' ? 'Write the definitions yourself — one term at a time, each signed and pointing at this request' : r.output === 'ask' ? 'Answer the question yourself — a signed note pointing at this request' : 'Write the note yourself in the composer, pointing at this request'}>answer it yourself ▸</button>
+				{:else if r.output === 'vocabulary'}
+					<button class="rcard__mini rcard__mini--answer" onclick={answerYourself} disabled={busy} title="Add or replace a definition yourself — one term at a time, each signed and pointing at this request">define a term yourself ▸</button>
 				{/if}
+				<button class="rcard__mini rcard__mini--row" onclick={revealRow} title="This request's row in the annotations ledger">≡ row</button>
 				{#if answered && isRecord}
 					<button class="rcard__mini" onclick={reopen} disabled={busy}>reopen</button>
 				{/if}
@@ -232,6 +242,11 @@
 					<button class="rcard__mini" onclick={remove} disabled={busy} title={r.coordinate ? 'Delete the local record — the signed annotation stays' : 'Delete the local record'}>delete</button>
 				{/if}
 			</div>
+			{#if r.coordinate}
+				<!-- Replies (kind 1111) threaded under the signed request; an
+				     unsigned local record is not an event, so no thread. -->
+				<AnnotationThread root={r.root} coordinate={r.coordinate} author={authorPubkey ?? ''} title={r.title ?? r.task} compact count={undefined} onreplied={() => onchanged?.()} />
+			{/if}
 		</div>
 		{#if notes.length > 0}
 			<!-- What was written for the ask, folded with it: a request and
@@ -402,6 +417,9 @@
 		flex-wrap: wrap;
 		gap: 4px;
 		align-items: center;
+	}
+	.rcard__mini--row {
+		color: var(--base5);
 	}
 	.rcard__mini--def {
 		color: var(--green);

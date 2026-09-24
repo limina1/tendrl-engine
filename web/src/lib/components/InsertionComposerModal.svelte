@@ -73,6 +73,7 @@
 			format: format === 'markdown' ? undefined : format,
 			context: context.trim() || undefined,
 			request: open?.request,
+			reply_to: open?.replyTo,
 			broadcast
 		};
 	}
@@ -208,7 +209,13 @@
 			{#if open?.request}
 				<span class="ins-chip ins-chip--answers" title={open.request}>↳ answers {open.requestTitle ?? short(open.request)}</span>
 			{/if}
+			{#if open?.replyTo}
+				<span class="ins-chip ic-chip--reply" title={open.replyTo}>↩ in reply to {open.replyToTitle ?? short(open.replyTo)}</span>
+			{/if}
 		</div>
+		{#if open?.replyTo}
+			<div class="ins-help">A note in reply: anchored to the same place, carrying a <code>q</code> tag to the annotation it answers — the ledger shows ↩ on its row.</div>
+		{/if}
 		<div class="ins-help">
 			Emitted by the engine — never typed. Open the menu on another section to change the target
 			{#if root.startsWith('30041:')}
@@ -396,6 +403,10 @@
 	.ins-chip--answers {
 		color: var(--ask);
 		border-color: color-mix(in srgb, var(--ask) 50%, transparent);
+	}
+	.ic-chip--reply {
+		color: var(--cyan);
+		border-color: color-mix(in srgb, var(--cyan) 50%, transparent);
 	}
 	.ins-anchor {
 		display: flex;
