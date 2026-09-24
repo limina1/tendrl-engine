@@ -554,16 +554,20 @@ order on branches off =feat/annotations-table=; each step is shippable alone.
       default. Found on the way: the =#A= load filter only asked for 30041, so
       bundles never loaded — fixed in =d0a0404=.
 
-*Step 3 — relink, own publication* (=feat/vocab-relink=)
-- [ ] =nostrdown::link_terms(content, format, &[(term, coord)]) -> (String, Vec<Hunk>)=,
+*Step 3 — relink, own publication* (=feat/vocab-relink=, built 2026-09-24: =link_terms= =8a124e6=, engine =35e703e=, web =a383179=; live API 8/8 + GUI 10/10)
+- [X] =nostrdown::link_terms(content, format, &[(term, coord)]) -> (String, Vec<Hunk>)=,
       pure: first occurrence per section, skip code / headings / existing
       links / anything inside ={{ }}=; display keeps the author's wording
-- [ ] =POST /publication/relink/preview= + =/relink=: per-section hunks +
+- [X] =POST /publication/relink/preview= + =/relink=: per-section hunks +
       =a= tags, index structural diff, per-definition glossary selection;
       publish = new versions under the same =d= (sign_as user), local
       until broadcast
-- [ ] reader: the request card's "relink N terms ▸" → diff gate → armed
+- [X] reader: the request card's "relink N terms ▸" → diff gate → armed
       sign; refs render as links
+      Also: a definition ref resolves with its first sentence as =summary=
+      (=9fb4d74=), so the hover card shows the sense. =link_terms= skips a
+      term the text already references (idempotent). "open in composer" is a
+      disabled placeholder in the modal.
 
 *Step 4 — foreign publication: derivative + 818* (=feat/merge-requests=)
 - [ ] section copy process (=fork_section=): every tag verbatim, minted

@@ -2480,6 +2480,17 @@ curl -s -X POST $B/insertions/glossary -H "$J" -d "{\"root\":\"$ROOT\",\"remove\
 curl -s -X POST $B/insertions/glossary/preview -H "$J" -d "{\"root\":\"$ROOT\",\"add\":[\"$S1\"]}" | jq -r .error
 #+end_src
 
+* Relink — live (ran 2026-09-24: API 8/8, GUI 10/10)
+
+#+begin_src bash
+# fresh seed (§3 now uses "the consistency condition" in its body; §1 only in its heading, which is protected) + definitions:
+PORT=3131 scripts/verify/vocab-request-seed.sh > /tmp/seed.env; source /tmp/seed.env; export ROOT S1
+PORT=3131 scripts/verify/vocab-definitions.sh | tee /tmp/defs.out; source <(grep -E '^(D1|D2)=' /tmp/defs.out); export D1 D2
+PORT=3131 scripts/verify/vocab-relink.sh                          # preview: 2 sections · 1 hunk each · §2 unchanged → publish (+ glossary add) → refs + a tags in the signed §1 → second preview 0 hunks → 400 when nothing is left
+node scripts/verify/vocab-relink.mjs --search "id:$IDX" --out /tmp/relink-shots   # request card “relink 2 terms ▸” → .rl-modal (.rl-diff ×3 incl. the index block, .rl-ref ×2, tags row, .rl-wire__pre, 2 checkboxes) → armed “sure? sign 2 sections” → 2 .nd-ref links in the reader → hover .nd-preview shows the definition's first sentence
+# the GUI harness consumes the unrelinked state: seed again before the API script (or the reverse)
+#+end_src
+
 * Relink (plan Phase 5c step 3, branch =feat/vocab-relink=)
 
 Your own publication: every section whose text uses a defined term gets a
