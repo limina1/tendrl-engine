@@ -569,23 +569,23 @@ order on branches off =feat/annotations-table=; each step is shippable alone.
       term the text already references (idempotent). "open in composer" is a
       disabled placeholder in the modal.
 
-*Step 4 — foreign publication: derivative + 818* (=feat/merge-requests=)
-- [ ] section copy process (=fork_section=): every tag verbatim, minted
+*Step 4 — foreign publication: derivative + 818* (=feat/merge-requests= =4642f2f= + =feat/vocab-relink= =d7d904d= / web =5ae99dc=; built 2026-09-24, two-key API 14/14; GUI of the foreign modal pending a two-key harness)
+- [X] section copy process (=fork_section=): every tag verbatim, minted
       =d=, =E= to the copied version, =p= to its author; =fork_index=
       reused for the index
-- [ ] =publication/merge_request.rs=: 818 template + parse (=a= target
+- [X] =publication/merge_request.rs=: 818 template + parse (=a= target
       30040/30041, =e= base, =e … source=, =p= owner), status from the
       newest kind-7 by the target owner; spec clause in
       =nips/NKBIP-01-insertions.org=
-- [ ] routing: =engine.inbox_relays_for(pubkey)= (10002 via the indexer
+- [X] routing: =engine.inbox_relays_for(pubkey)= (10002 via the indexer
       composition → =read_relays()=), =destination_set(target, owner)= =
       inbox ∪ provenance (=note.relays()=) ∪ =a=-tag hints ∪ mine, each
       with a reason; refuse when inbox and provenance are both unknown;
       the Confirm modal lists relay + reason
-- [ ] =/relink= on a foreign root → derivative + 818 (+ 818 event preview)
+- [X] =/relink= on a foreign root → derivative + 818 (+ 818 event preview)
 
-*Step 5 — notifications + review* (=feat/notifications=)
-- [ ] =notifications.rs=: =Rule= per kind (tag → mine), defaults (818 /
+*Step 5 — notifications + review* (=feat/notifications=: rules/prefs/list/fetch =333b4ea=, web bell/list/settings =e92b061=, live API 7/7 + GUI 7/7 2026-09-24; diff/merge/decline + the review pane in flight)
+- [X] =notifications.rs=: =Rule= per kind (tag → mine), defaults (818 /
       7-on-my-818 / signed requests on mine) + optional kinds (1111, 9802,
       7, 9735, 30045, any =p=); prefs in =<data_dir>/notifications.json=;
       =GET /api/v1/notifications= (asks · activity · mine), =GET/PUT
@@ -596,7 +596,7 @@ order on branches off =feat/annotations-table=; each step is shippable alone.
       structural diff, *the owner's next version*
 - [ ] =POST /notifications/:id/merge= (sign next versions, same =d= + kind
       7 =+= + broadcast) · =/decline= (kind 7 =-=, reason as content)
-- [ ] web: Settings › Notifications (checkable kinds, count | list); 🔔
+- [X] web: Settings › Notifications (checkable kinds, count | list); 🔔
       modeline pill (desktop) / ☰ drawer status row (phone) → the list
       (=AnnotationsList= across publications, ask colour); an 818 as an
       ordinary card under its target (=role: ask= in the load pass);

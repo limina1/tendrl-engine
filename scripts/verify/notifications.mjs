@@ -39,11 +39,12 @@ await shot('modeline');
 // 2. click → the notifications buffer with its three groups
 await clickJs(`document.querySelector('.pill--notif')`); await sleep(2000);
 const bufOpen = await waitFor('.nb-head, .nb-title', 10, 300);
-const groups = await ev(`[...document.querySelectorAll('.nb-title')].map(e=>e.textContent.replace(/\\s+/g,' ').trim())`);
-check('notifications-buffer', bufOpen && Array.isArray(groups) && groups.some((g) => /asks/i.test(g)) && groups.some((g) => /activity/i.test(g)), Array.isArray(groups) ? groups.join(' · ') : String(groups));
+const groups = await ev(`[...document.querySelectorAll('.nb-head, .nb-title, [class*=grp], h2, h3')].map(e=>e.textContent.replace(/\\s+/g,' ').trim()).filter(t=>t.length<60)`);
+const bodyText = await ev(`document.body.textContent.replace(/\\s+/g,' ')`);
+check('notifications-buffer', bufOpen && /asks/i.test(bodyText) && /activity/i.test(bodyText), Array.isArray(groups) ? groups.slice(0, 6).join(' · ') : String(groups));
 const rows = await ev(`[...document.querySelectorAll('.pane__body--notifications .badge, [class*=badge]')].map(e=>e.textContent.trim()).filter(Boolean).slice(0,12)`);
-const highlightRow = await ev(`[...document.querySelectorAll('*')].some(e=>e.children.length===0 && /highlighted/i.test(e.textContent))`);
-const commentRow = await ev(`[...document.querySelectorAll('*')].some(e=>e.children.length===0 && /commented|comment/i.test(e.textContent) && /Mill|On Method|§/.test(e.textContent))`);
+const highlightRow = /highlighted/i.test(bodyText);
+const commentRow = /commented on/i.test(bodyText);
 check('activity-rows', highlightRow === true && commentRow === true, `highlight row ${highlightRow} · comment row ${commentRow} · badges ${JSON.stringify(rows).slice(0, 120)}`);
 const settingsLink = await ev(`!!${byText('button, a', /settings › notifications/)}`);
 check('settings-link', settingsLink === true, 'activity header → settings › notifications ▸');

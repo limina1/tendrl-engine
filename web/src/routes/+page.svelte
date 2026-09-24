@@ -252,6 +252,12 @@
 	// Redirect AppState navigation calls to spawn buffers in the shell
 	// instead of route-navigating away from the single-page app.
 	app.setNavigationHandlers({
+		onMergeRequestReview: (id) => {
+			store.openBuffer({
+				className: 'work',
+				buffer: { id: `review:${id}`, kind: 'review', label: 'review', kicker: id.slice(0, 8) }
+			});
+		},
 		onPublication: (pubkey, d_tag) => {
 			store.openBuffer({
 				className: 'work',
@@ -1744,7 +1750,7 @@
 				title="Notifications — what is for you: asks that need an act, and the activity kinds you chose in Settings › Notifications · SPC b o n"
 				aria-label="Notifications"
 				data-tour="ml-notifications"
-			>🔔 {notif.counts.acts} ask{notif.counts.acts === 1 ? '' : 's'}{#if notif.counts.activity_count} · <span class="pill__new">{notif.counts.activity_count} new</span>{/if}</button>
+			>🔔 {notif.counts.acts} ask{notif.counts.acts === 1 ? '' : 's'}{#if notif.counts.activity_count}&nbsp;· <span class="pill__new">{notif.counts.activity_count} new</span>{/if}</button>
 			{#if app.providersState}
 				<span class="agent-pill-wrap" bind:this={agentWrapEl} data-tour="ml-agent">
 					{#if svcActive}

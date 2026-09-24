@@ -23,3 +23,4 @@ curl -s -X POST $B/ingest -H 'Content-Type: application/x-ndjson' --data-binary 
 echo "ROOT=30040:$UPK:$D"
 echo "S1=30041:$UPK:$D-s1"
 echo "IDX=$(tail -1 "$FX" | jq -r .id)"
+echo "USEC=$USEC"   # the owner's key, so a two-key check can log the owner back in
