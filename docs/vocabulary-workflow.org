@@ -311,10 +311,10 @@ source MUST be a 30818).
 │ ▌   ↳ 2 definitions                                                  │
 │ ▌ def  Epistemological anarchism            you·agent · 12:40        │
 │ ▌      The view, after Feyerabend, that no fixed method …            │
-│ ▌      [open as section ▸] [promote → glossary]                      │
+│ ▌      [open as section ▸] [promote → glossary]   ← per event        │
 │ ▌ def  Incommensurability                   you·agent · 12:41        │
 │ ▌      Two paradigms are incommensurable when …                      │
-│ ▌      [open as section ▸] [promote → glossary]                      │
+│ ▌      [open as section ▸] [in glossary · §4 · remove]               │
 │                                                                      │
 │ [relink 2 terms into the text ▸]   ← armed button, diff gate first   │
 └──────────────────────────────────────────────────────────────────────┘
@@ -718,8 +718,11 @@ agent.
   relevant to the topic — sense in this text, background, expansion.
   No second =t: background= note.
 - *Relink the first occurrence per section.*
-- *Promotion is offered, never required.* The ref resolves without it;
-  promoting into the collection is the owner's choice on the same card.
+- *Promotion is offered, never required, and per event.* The ref
+  resolves without it. Each definition card carries its own
+  "promote → glossary"; the glossary bundle lists exactly the
+  definitions promoted so far, and the relink / fork previews offer one
+  checkbox per definition, not a bundle-wide switch.
 - *Several definitions of one term.* The relink cites the one answering
   this request. *nostrdown TODO*: a ref that names several targets and
   lets the reader choose — e.g. ={{ref:coord1,coord2|term}}= resolving
