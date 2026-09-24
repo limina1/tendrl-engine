@@ -2939,8 +2939,12 @@ export function createRequest(req: {
 
 /** The unsigned kind-30041 a request would sign — every event-creating
  *  modal ends in this preview (the tags as they will be emitted). */
+/** The unsigned kind-30041 the create path would sign (`event`, with the
+ *  client tag; `pubkey` when an identity is active) plus the record it
+ *  would persist (`request`). Nothing is stored. */
 export interface RequestPreview {
-	template: { kind: number; content: string; tags: string[][]; created_at?: number };
+	event: { kind: number; content: string; tags: string[][]; created_at?: number; pubkey?: string };
+	request: AnnotationRequest;
 }
 export function previewRequest(req: {
 	root: string;

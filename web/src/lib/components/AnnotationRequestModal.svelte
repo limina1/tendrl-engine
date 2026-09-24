@@ -177,7 +177,7 @@
 	// Refreshed from the handlers that change the form (debounced), not from
 	// an $effect over the whole form — an async read of $state inside an
 	// effect loops (project_effect_async_state_loop).
-	let preview = $state<api.RequestPreview['template'] | null>(null);
+	let preview = $state<api.RequestPreview['event'] | null>(null);
 	let previewOpen = $state(true);
 	let previewTimer: ReturnType<typeof setTimeout> | null = null;
 	let previewSeq = 0;
@@ -205,7 +205,7 @@
 		const seq = ++previewSeq;
 		try {
 			const r = await api.previewRequest(previewBody());
-			if (seq === previewSeq) preview = r.template;
+			if (seq === previewSeq) preview = r.event;
 		} catch {
 			if (seq === previewSeq) preview = null;
 		}
