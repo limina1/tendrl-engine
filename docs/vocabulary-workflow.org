@@ -376,13 +376,14 @@ anything is counted, as they do for insertions.
 
 ** The notifications drawer
 
-Not a settings page about asks: a *notifications drawer* — tendrl's
-one surface for "what can it tell me about". It is a *checkable list*
-of the event kinds tendrl has a verb for, not a free kind-number
-field; what is checked is what the modeline shows on desktop and what
-the ☰ drawer's status section shows on the phone (next to agent
-services and relay status). Asks are the rows that need an act; the
-rest is activity. Each row is a kind, the
+Two surfaces, kept apart. *Choosing* what tendrl tells you about lives
+in the *settings buffer* (Settings › Notifications): a *checkable list*
+of the event kinds tendrl has a verb for, not a free kind-number field.
+*Seeing* what is for you is the *notifications* surface: the 🔔 pill on
+the desktop modeline and the ☰ drawer's status section on the phone
+(next to agent services and relay status), opening the list — asks
+first, then the activity kinds you chose. Asks are the rows that need
+an act; the rest is activity. Each row is a kind, the
 engine's one-line rule shown back ("9802 · a highlight of one of your
 sections"), a checkbox, and whether it counts toward the modeline
 number or only shows in the list. The default acts are checked and
@@ -394,7 +395,7 @@ published), so both shells and =list_asks= over MCP honour the same
 set.
 
 #+begin_example
-Notifications — what tendrl can tell you about
+Settings › Notifications — what tendrl can tell you about
 
   on   818   merge requests on your publications            act   default
   on   7     verdicts on merge requests you sent             act   default
@@ -407,7 +408,7 @@ Notifications — what tendrl can tell you about
   off  30045 someone shelved your publication                 list   ×
 
   count = adds to the modeline number · list = shows in the notifications list only
-  (desktop: modeline pill · phone: ☰ drawer › status)
+  (seen at: desktop 🔔 modeline pill · phone ☰ drawer › status)
 #+end_example
 
 The modeline pill is then "2 asks · 5 new" — acts first, activity
@@ -592,7 +593,7 @@ and returns a structured diff:
 |-------------------+-------------------------------------------------------------------------+---------------------------------------------------------|
 | 818 parse + build | =publication/merge_request.rs=: template, parse, status from kind-7     | —                                                       |
 | The list          | =GET /api/v1/asks= (+ store-stream kind filter, Confirm-gated fetch)    | modeline pill, drawer row → =AnnotationsList= across publications |
-| Notifications     | =notifications.rs=: =Rule= per kind (tag → mine), prefs in =<data_dir>/notifications.json=, =GET/PUT /api/v1/notifications/prefs= | notifications drawer (desktop modeline 🔔 · phone ☰ › status); pill splits act count / activity count |
+| Notifications     | =notifications.rs=: =Rule= per kind (tag → mine), prefs in =<data_dir>/notifications.json=, =GET/PUT /api/v1/notifications/prefs= | choose: =SettingsBuffer= › Notifications · see: 🔔 modeline pill (desktop) / ☰ › status (phone) → the list; pill splits act count / activity count |
 | Routing           | =engine.inbox_relays_for(pubkey)= (10002 via the composition → =read_relays()=) + =destination_set= (inbox ∪ provenance =note.relays()= ∪ hints ∪ mine, each with a reason) | Confirm modal lists each relay with its reason; refuses when inbox and provenance are both unknown |
 | The diff          | =GET /asks/:id/diff=: base pairing, content hunks, index structure diff | =MergeRequestReview.svelte= on the diff-gate primitive  |
 | Merge / decline   | =POST /asks/:id/merge= (sign next versions + react + broadcast), =/decline= | armed button; "open in composer" hand-off               |
@@ -736,10 +737,11 @@ agent.
 - *An ask is an annotation.* Coloured as an ask, structured like a
   comment with an anchor, listed with everything else; no separate
   buffer kind.
-- *Notifications are a checkable list* of the events tendrl has a verb
-  for — a notifications drawer, not a settings page about asks; it
-  feeds the desktop modeline and the phone drawer's status section.
-  The rule per kind is the engine's; the web never builds the filter.
+- *Notifications: choose in settings, see on the bell.* The checkable
+  list of kinds tendrl has a verb for lives in the settings buffer; the
+  🔔 pill (desktop modeline) and the ☰ drawer's status section (phone)
+  show what is for you. The rule per kind is the engine's; the web
+  never builds the filter.
 - *Signed annotation requests on your publication are asks.* Yes.
 
 * Follow-ups
