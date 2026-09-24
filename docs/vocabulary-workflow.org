@@ -1,7 +1,7 @@
 #+TITLE: Vocabulary requests — unpack the words a text leaves undefined
 #+SUBTITLE: Mock-up of the workflow, the events, and where each step lands (plan Phase 5c)
 #+DATE: 2026-09-23
-#+STATUS: mock-up (design/vocabulary-requests, off feat/annotations-table)
+#+STATUS: mock-up (design/vocabulary-requests, off feat/annotations-table) · interactive prototype (no engine, fake data): https://claude.ai/artifact/JFf3nz9UQjPLew6oBj96oB
 #+STARTUP: inlineimages showall
 #+OPTIONS: ^:nil toc:2
 #+PROPERTY: header-args:dot :exports results :cmd dot :cmdline -Tpng -Gdpi=110
