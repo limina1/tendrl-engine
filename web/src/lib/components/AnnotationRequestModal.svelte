@@ -671,7 +671,7 @@
 		flex-wrap: wrap;
 	}
 	.rq-dot {
-		color: var(--id-remote);
+		color: var(--ask);
 	}
 	.rq-title__on {
 		color: var(--base5);
@@ -720,7 +720,7 @@
 		white-space: nowrap;
 	}
 	.rq-chip b {
-		color: var(--id-remote);
+		color: var(--ask);
 	}
 	.rq-chip--select select {
 		font: inherit;
@@ -794,7 +794,7 @@
 		border-right: none;
 	}
 	.rq-seg__opt.on {
-		background: var(--id-remote);
+		background: var(--ask);
 		color: var(--bg);
 	}
 	.rq-style {
@@ -878,7 +878,7 @@
 		border-color: var(--base5);
 	}
 	.rq-btn--post {
-		color: var(--id-remote);
+		color: var(--ask);
 	}
 	.rq-btn:disabled {
 		opacity: 0.5;
@@ -974,10 +974,10 @@
 		transition: background 0.08s;
 	}
 	.rq-word:hover {
-		background: color-mix(in srgb, var(--id-diverged) 28%, transparent);
+		background: color-mix(in srgb, var(--ask) 28%, transparent);
 	}
 	.rq-word.drag {
-		background: color-mix(in srgb, var(--id-diverged) 28%, transparent);
+		background: color-mix(in srgb, var(--ask) 28%, transparent);
 	}
 	.rq-word.on {
 		background: color-mix(in srgb, var(--green) 32%, transparent);
@@ -995,7 +995,7 @@
 		color: var(--fg);
 		background: var(--bg-surface);
 		border: 1px solid var(--panel-border);
-		border-left: 3px solid var(--id-remote);
+		border-left: 3px solid var(--ask);
 		border-radius: var(--r-sm);
 		padding: 6px 10px;
 	}

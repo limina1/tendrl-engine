@@ -66,6 +66,7 @@
   --id-local:        #e9b189;  /* yellow — local-only, not synced */
   --id-remote:       #89b8c2;  /* cyan — fetched from relay */
   --id-draft:        #e27878;  /* red — unsigned draft */
+  --ask:             var(--orange); /* orange — an ask: a request to your agent, a merge request for you (the vocabulary-workflow artifact's accent) */
 
   /* State */
   --state-online:    #b4be82;

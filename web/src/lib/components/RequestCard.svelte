@@ -236,7 +236,7 @@
 	/* A request looks like any other card — author rail, author dot — and
 	   the badge says what it is. No dashed borders. */
 	.rcard {
-		--rq-accent: var(--id-remote);
+		--rq-accent: var(--ask);
 		margin: 8px 0 6px;
 		border: 1px solid var(--panel-border);
 		border-left: 3px solid var(--au, var(--rq-accent));
@@ -255,8 +255,8 @@
 		line-height: 1.2;
 		letter-spacing: 0.08em;
 		text-transform: uppercase;
-		color: var(--id-remote);
-		border: 1px solid color-mix(in srgb, var(--id-remote) 50%, transparent);
+		color: var(--ask);
+		border: 1px solid color-mix(in srgb, var(--ask) 50%, transparent);
 		border-radius: 3px;
 		padding: 1px 6px;
 		white-space: nowrap;
