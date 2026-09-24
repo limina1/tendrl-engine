@@ -5,9 +5,7 @@
 	import type { Highlight } from '$lib/discussions/highlights';
 	import { getAppState } from '$lib/state.svelte';
 	import SectionCard from './SectionCard.svelte';
-	import InsertionCard from './InsertionCard.svelte';
-	import RequestCard from './RequestCard.svelte';
-	import { groupAnswers } from './request-group';
+	import NotesStrip from './NotesStrip.svelte';
 	import { coordMatchesAddr } from '$lib/nostr/nostrdown';
 	import type { ResolutionTracker } from '$lib/nostr/resolution-progress.svelte';
 	import { readingVars } from '$lib/theme/reading.svelte';
@@ -38,7 +36,7 @@
 		siblings = undefined,
 		resolution = undefined,
 		hotAddr = null,
-		notesMargin = false
+		onannotate = undefined
 	}: {
 		sections: LazySection[];
 		currentSection?: number;
@@ -81,9 +79,8 @@
 		/** The annotations table's hovered card anchor — the page lights up
 		 *  (`.anchor-hot`) with a "N cards →" tip when it is that section. */
 		hotAddr?: { root: string; addr: string; count: number } | null;
-		/** D9: text | notes beside each other (a 280 px gutter past the
-		 *  measure) instead of notes under the page. The reader decides. */
-		notesMargin?: boolean;
+		/** The title row's "n annotate" — the annotate window on this section. */
+		onannotate?: ((section: LazySection) => void) | undefined;
 	} = $props();
 
 	const section = $derived(sections[currentSection]);
@@ -192,6 +189,13 @@
 				relays={section.relays}
 				orientation="horizontal"
 			/>
+			{#if onannotate}
+				<button
+					class="section-annotate"
+					onclick={() => onannotate?.(section)}
+					title="Annotate this section (n) — a request to your agent, or a definition by hand"
+				><b>n</b> annotate</button>
+			{/if}
 		</div>
 	{/if}
 	<!-- Reading typography (face / size / measure / leading) rides on the
@@ -213,7 +217,6 @@
 			<div
 				class="section pv-section"
 				class:anchor-hot={hot}
-				class:notes-margin={notesMargin}
 				data-section-addr={`${section.addr.kind}:${section.addr.pubkey}:${section.addr.d_tag}`}
 			>
 				{#if hot}
@@ -231,14 +234,8 @@
 					/>
 				</div>
 				{#if pageRequests.length > 0 || pageInsertions.length > 0}
-					{@const groups = groupAnswers(pageRequests, pageInsertions)}
-					<div class="section__side">
-						{#each pageRequests as rq (rq.id)}
-							<RequestCard request={rq} onchanged={onrequestschanged} answers={groups.answers.get(rq.id) ?? []} onopen={onopeninsertion} onpromoted={oninsertionpromoted} />
-						{/each}
-						{#each groups.rest as ins (ins.coordinate)}
-							<InsertionCard insertion={ins} onopen={onopeninsertion} onpromoted={oninsertionpromoted} />
-						{/each}
+					<div class="section__notes">
+						<NotesStrip requests={pageRequests} insertions={pageInsertions} {onopeninsertion} {onrequestschanged} {oninsertionpromoted} />
 					</div>
 				{/if}
 			</div>
@@ -291,9 +288,23 @@
 		max-width: var(--rd-measure, none);
 		margin-inline: auto;
 	}
-	.pv-section > .section__side {
+	.pv-section > .section__notes {
 		padding: 0 16px 12px;
 	}
+	.section-annotate {
+		margin-left: auto;
+		font-family: var(--font-mono);
+		font-size: var(--t-xs);
+		line-height: 1.4;
+		padding: 1px 6px;
+		border-radius: var(--r-sm);
+		border: 1px solid var(--panel-border);
+		background: transparent;
+		color: var(--base6);
+		cursor: pointer;
+	}
+	.section-annotate b { color: var(--green); font-weight: 700; }
+	.section-annotate:hover { border-color: var(--green); color: var(--fg); }
 	.section.anchor-hot {
 		box-shadow: -3px 0 0 0 var(--id-local);
 	}
@@ -313,48 +324,6 @@
 		pointer-events: none;
 		z-index: 1;
 	}
-	/* D9: text | notes. The page widens by the gutter; the card keeps the
-	   measure in column 1, the notes stack in column 2 with a dashed rail. */
-	.pv-section.notes-margin {
-		max-width: calc(var(--rd-measure, 0px) + 308px);
-		display: grid;
-		grid-template-columns: minmax(0, var(--rd-measure, 1fr)) 280px;
-		column-gap: 28px;
-		align-items: start;
-	}
-	.pv-section.notes-margin > .section__main {
-		grid-column: 1;
-		min-width: 0;
-	}
-	.pv-section.notes-margin > .section__side {
-		grid-column: 2;
-		position: relative;
-		display: flex;
-		flex-direction: column;
-		gap: 8px;
-		padding: 14px 0 0;
-	}
-	.pv-section.notes-margin > .section__side::before {
-		content: '';
-		position: absolute;
-		left: -14px;
-		top: 18px;
-		bottom: 6px;
-		border-left: 1px dashed var(--border);
-	}
-	.pv-section.notes-margin.anchor-hot > .section__side::before {
-		border-left-color: var(--id-local);
-		border-left-style: solid;
-	}
-	.pv-section.notes-margin .section__side :global(.icard),
-	.pv-section.notes-margin .section__side :global(.rcard) {
-		margin: 0;
-	}
-	.pv-section.notes-margin .section__side :global(.icard__text) {
-		font-size: var(--t-xs);
-		line-height: 1.45;
-	}
-
 	.paginated-nav {
 		display: flex;
 		align-items: center;

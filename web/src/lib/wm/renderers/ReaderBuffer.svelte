@@ -14,7 +14,6 @@
 	import * as api from '$lib/api';
 	import { getAppState } from '$lib/state.svelte';
 	import { annotationsBufferId } from '$lib/components/annotations/table-model';
-	import { reading, readingVars, setReadingNotesLayout } from '$lib/theme/reading.svelte';
 	import ContinuousView from '$lib/components/ContinuousView.svelte';
 	import PaginatedView from '$lib/components/PaginatedView.svelte';
 	import FocusGraph, { type GraphNode } from '$lib/components/FocusGraph.svelte';
@@ -2300,6 +2299,19 @@
 			content: parent && s?.content ? s.content : undefined
 		};
 	}
+	// A section title's "n annotate" (both views): the same window, on that
+	// section rather than the current one.
+	function annotateSection(s: LazySection) {
+		if (!publication || !tableRoot) return;
+		const parent = s.addr && s.addr.kind === 30041 ? addrKey(s.addr) : undefined;
+		app.annotationRequest = {
+			root: tableRoot,
+			rootTitle: publication.title ?? null,
+			parent,
+			parentTitle: parent ? (s.title ?? null) : null,
+			content: parent && s.content ? s.content : undefined
+		};
+	}
 	const tableNoteCount = $derived(insertionsLoaded ? pendingInsertionCount : null);
 
 	type TreeNode = { type: 'leaf'; buffer: Buffer } | { type: 'split'; children: TreeNode[] };
@@ -2389,15 +2401,6 @@
 		app.hoverAnchor && tableRoot && app.hoverAnchor.root === tableRoot ? app.hoverAnchor : null
 	);
 
-	// D9 — notes beside the text (margin) only when the pane has room for the
-	// measure plus a 280 px gutter; a split pane or a narrow window falls
-	// back to inline, the phone folds either way. The measure is set in `ch`
-	// of the reading face, so a hidden probe resolves it to pixels.
-	let contentWidth = $state(0);
-	let measurePx = $state(0);
-	const notesMargin = $derived(
-		reading.notesLayout === 'margin' && measurePx > 0 && contentWidth >= measurePx + 320
-	);
 </script>
 
 <!-- Swipe is supplementary — the § toc button is the accessible path. -->
@@ -2683,12 +2686,6 @@
 				</div>
 				<div class="tools-sheet__row">
 				<ReadingControls compact />
-				<button
-					class="notes-layout"
-					class:on={reading.notesLayout === 'margin'}
-					onclick={() => setReadingNotesLayout(reading.notesLayout === 'margin' ? 'inline' : 'margin')}
-					title="Where loaded notes sit: beside the text in the margin (when the pane has room — a split pane or narrow window falls back to inline), or inline under their section"
-				>notes: {reading.notesLayout}</button>
 				</div>
 			</div>
 		</div>
@@ -2842,14 +2839,9 @@
 		{/if}
 		<div
 			class="content rd-content"
-			class:notes-margin={notesMargin}
 			bind:this={contentWrap}
-			bind:clientWidth={contentWidth}
 			onscroll={() => (scrollTops.content = contentWrap?.scrollTop ?? 0)}
 		>
-			<!-- Resolves the reading measure (`ch` of the reading face) to
-			     pixels for the margin-layout gate. Zero height, out of flow. -->
-			<span class="rd-measure-probe" style={readingVars()} bind:clientWidth={measurePx} aria-hidden="true"></span>
 			{#if viewMode === 'continuous'}
 				<ContinuousView
 					bind:this={continuousView}
@@ -2876,7 +2868,7 @@
 					{rootRequests}
 					onrequestschanged={loadRequests}
 					{hotAddr}
-					{notesMargin}
+					onannotate={isDraftMode ? undefined : annotateSection}
 					{resolution}
 				/>
 			{:else}
@@ -2899,7 +2891,7 @@
 					{rootRequests}
 					onrequestschanged={loadRequests}
 					{hotAddr}
-					{notesMargin}
+					onannotate={isDraftMode ? undefined : annotateSection}
 					publicationAtag={`${publication.addr.kind}:${publication.addr.pubkey}:${publication.addr.d_tag}`}
 					{resolution}
 				/>
@@ -3234,38 +3226,6 @@
 		white-space: pre-wrap;
 	}
 	.content { flex: 1; overflow: auto; min-height: 0; position: relative; }
-	/* The measure probe: `width: var(--rd-measure)` in the reading face and
-	   size, so its clientWidth is the measure in pixels. */
-	.rd-measure-probe {
-		display: block;
-		position: absolute;
-		top: 0;
-		left: 0;
-		height: 0;
-		width: var(--rd-measure, 0);
-		font-family: var(--rd-font, var(--font-sans));
-		font-size: var(--rd-size, var(--t-base));
-		visibility: hidden;
-		pointer-events: none;
-	}
-	/* notes: margin | inline — sits with the reading strip, styled like its toggles. */
-	.tools-sheet__row button.notes-layout {
-		flex: 0 0 auto;
-		background: none;
-		border: 1px solid var(--border);
-		border-radius: var(--r-sm, 3px);
-		color: var(--fg-muted);
-		font-family: var(--font-mono);
-		font-size: var(--t-3xs);
-		padding: 3px 8px;
-		min-height: 0;
-		cursor: pointer;
-	}
-	.tools-sheet__row button.notes-layout.on {
-		border-color: var(--id-yours);
-		color: var(--id-yours);
-		background: color-mix(in srgb, var(--id-yours) 12%, transparent);
-	}
 	.empty {
 		flex: 1;
 		display: flex;

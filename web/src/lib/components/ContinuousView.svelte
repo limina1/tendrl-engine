@@ -7,10 +7,8 @@
 	import CommentThread from './CommentThread.svelte';
 	import PoolStateBadges from './PoolStateBadges.svelte';
 	import RichContent from './RichContent.svelte';
-	import InsertionCard from './InsertionCard.svelte';
-	import RequestCard from './RequestCard.svelte';
+	import NotesStrip from './NotesStrip.svelte';
 	import EventLinks from './EventLinks.svelte';
-	import { groupAnswers } from './request-group';
 	import { threadContainsId, type ThreadNode } from '$lib/discussions/thread';
 	import { type Highlight, type HighlightSpan } from '$lib/discussions/highlights';
 	import { coordMatchesAddr, type ResolvedRef, type ParsedToken } from '$lib/nostr/nostrdown';
@@ -41,7 +39,7 @@
 		siblings = undefined,
 		resolution = undefined,
 		hotAddr = null,
-		notesMargin = false,
+		onannotate = undefined,
 		expanded = $bindable<Record<string, boolean>>({}),
 		onscroll = undefined
 	}: {
@@ -84,10 +82,9 @@
 		/** The annotations table's hovered card anchor — the matching section
 		 *  lights up (`.anchor-hot`) with a "N cards →" tip. */
 		hotAddr?: { root: string; addr: string; count: number } | null;
-		/** D9: lay each section out as text | notes (a 280 px gutter beside the
-		 *  measure) instead of notes under the text. The reader decides from
-		 *  the preference and the pane width. */
-		notesMargin?: boolean;
+		/** The section title's "n annotate" — the same door as the section
+		 *  menu's `n` (the annotate window on this section). */
+		onannotate?: ((section: LazySection) => void) | undefined;
 		/** Which nested 30040 indexes are expanded, by addr key. Bindable so
 		 *  the reader can park it across a buffer switch (this component
 		 *  unmounts with its buffer) — view state, owned by the frontend. */
@@ -505,8 +502,9 @@
 
 		return () => observer.disconnect();
 	});
-	// Root-level (front-matter) requests with their answers folded in.
-	const rootGroups = $derived(groupAnswers(rootRequests ?? [], rootInsertions?.before ?? []));
+	// Root-anchored items (front matter, appendix, requests on the
+	// publication itself, merge requests) share one strip at the head.
+	const rootItems = $derived([...(rootInsertions?.before ?? []), ...(rootInsertions?.after ?? [])]);
 </script>
 
 <!-- `readingVars()` puts the reader's typography prefs (face, size, measure,
@@ -514,7 +512,6 @@
      centred in whatever width the pane happens to be. -->
 <div
 	class="continuous-view"
-	class:notes-margin={notesMargin}
 	style={readingVars()}
 	bind:this={containerEl}
 	onscroll={() => onscroll?.(containerEl?.scrollTop ?? 0)}
@@ -525,12 +522,11 @@
 	     Expand/collapse-all moved to the reader's depth toolbar row. -->
 
 	<div class="cv-column">
-	{#each rootRequests ?? [] as rq (rq.id)}
-		<RequestCard request={rq} onchanged={onrequestschanged} answers={rootGroups.answers.get(rq.id) ?? []} onopen={onopeninsertion} onpromoted={oninsertionpromoted} />
-	{/each}
-	{#each rootGroups.rest as ins (ins.coordinate)}
-		<InsertionCard insertion={ins} onopen={onopeninsertion} onpromoted={oninsertionpromoted} />
-	{/each}
+	{#if (rootRequests?.length ?? 0) > 0 || rootItems.length > 0}
+		<div class="cv-root-notes" data-root-notes>
+			<NotesStrip caption="⌂ whole publication" requests={rootRequests ?? []} insertions={rootItems} {onopeninsertion} {onrequestschanged} {oninsertionpromoted} />
+		</div>
+	{/if}
 	{#each visibleRows as row, ri (`${row.index}:${row.section.addr?.pubkey ?? ''}:${row.section.addr?.d_tag ?? ''}`)}
 		{@const section = row.section}
 		{@const i = row.index}
@@ -597,6 +593,13 @@
 							relays={section.relays}
 							orientation="horizontal"
 						/>
+						{#if onannotate}
+							<button
+								class="section-annotate"
+								onclick={() => onannotate?.(section)}
+								title="Annotate this section (n) — a request to your agent, or a definition by hand"
+							><b>n</b> annotate</button>
+						{/if}
 						{#if onviewjson}
 							<button
 								class="section-menu"
@@ -632,19 +635,11 @@
 					<div class="skeleton pending"></div>
 				{/if}
 				</div>
-				<!-- The section's notes: requests first, then the attached
-				     cards. Inline they follow the text; in the margin layout
-				     the same block is the gutter column beside it. -->
+				<!-- The section's notes: a strip of stubs under the text
+				     (requests first, then the attached cards); a stub opens
+				     its full card under the strip. -->
 				{#if asks.length > 0 || attached.length > 0}
-					{@const groups = groupAnswers(asks, attached)}
-					<div class="section__side">
-						{#each asks as rq (rq.id)}
-							<RequestCard request={rq} onchanged={onrequestschanged} answers={groups.answers.get(rq.id) ?? []} onopen={onopeninsertion} onpromoted={oninsertionpromoted} />
-						{/each}
-						{#each groups.rest as ins (ins.coordinate)}
-							<InsertionCard insertion={ins} onopen={onopeninsertion} onpromoted={oninsertionpromoted} />
-						{/each}
-					</div>
+					<NotesStrip requests={asks} insertions={attached} {onopeninsertion} {onrequestschanged} {oninsertionpromoted} />
 				{/if}
 				{#if threadsFor && section.addr}
 					{@const t = threadsFor(section.addr)}
@@ -671,9 +666,6 @@
 			     or every index would be followed by a stray rule. -->
 			<hr class="section-divider" />
 		{/if}
-	{/each}
-	{#each rootInsertions?.after ?? [] as ins (ins.coordinate)}
-		<InsertionCard insertion={ins} onopen={onopeninsertion} onpromoted={oninsertionpromoted} />
 	{/each}
 	{#if sections.length === 0}
 		<p class="empty">No sections loaded</p>
@@ -741,54 +733,6 @@
 		text-transform: uppercase;
 		color: var(--id-local);
 		pointer-events: none;
-	}
-
-	/* --- D9: notes in the margin. The column widens by the gutter and each
-	   section becomes text | notes; the rail at the gutter's left edge is
-	   dashed, solid + lit while the section is hot. Inline (the default
-	   below the width gate) is the plain flow above: side under main. --- */
-	.notes-margin .cv-column {
-		max-width: calc(var(--rd-measure, 0px) + 308px);
-	}
-	.notes-margin .section {
-		display: grid;
-		grid-template-columns: minmax(0, var(--rd-measure, 1fr)) 280px;
-		column-gap: 28px;
-		align-items: start;
-	}
-	.notes-margin .section > .section__main,
-	.notes-margin .section > .cv-threads {
-		grid-column: 1;
-		min-width: 0;
-	}
-	.notes-margin .section > .section__side {
-		grid-column: 2;
-		grid-row: 1 / span 2;
-		position: relative;
-		display: flex;
-		flex-direction: column;
-		gap: 8px;
-		padding-top: 2px;
-	}
-	.notes-margin .section__side::before {
-		content: '';
-		position: absolute;
-		left: -14px;
-		top: 6px;
-		bottom: 6px;
-		border-left: 1px dashed var(--border);
-	}
-	.notes-margin .section.anchor-hot .section__side::before {
-		border-left-color: var(--id-local);
-		border-left-style: solid;
-	}
-	.notes-margin .section__side :global(.icard),
-	.notes-margin .section__side :global(.rcard) {
-		margin: 0;
-	}
-	.notes-margin .section__side :global(.icard__text) {
-		font-size: var(--t-xs);
-		line-height: 1.45;
 	}
 
 	/* Inline nested-publication node — a collapsible folder. The caret
@@ -875,6 +819,27 @@
 		flex-wrap: wrap;
 	}
 	.section-title__text { flex: 1; min-width: 0; }
+	/* "n annotate" — the section's annotate door, quiet until the section
+	   is hovered; the letter wears the theme's green like the window's
+	   own title. */
+	.section-annotate {
+		margin-left: auto;
+		font-family: var(--font-mono);
+		font-size: var(--t-xs);
+		line-height: 1.4;
+		padding: 1px 6px;
+		border-radius: var(--r-sm);
+		border: 1px solid transparent;
+		background: transparent;
+		color: var(--base5);
+		cursor: pointer;
+	}
+	.section-annotate b { color: var(--green); font-weight: 700; }
+	.section:hover .section-annotate,
+	.section-annotate:focus-visible { border-color: var(--panel-border); color: var(--base6); }
+	.section-annotate:hover { border-color: var(--green); color: var(--fg); }
+	.section-annotate + .section-menu { margin-left: 0; }
+	.cv-root-notes { margin: 0 0 10px; }
 	/* Pill-shaped "menu" chip — matches the feed and outline rows so the
 	   affordance reads the same across the reader. */
 	.section-menu {

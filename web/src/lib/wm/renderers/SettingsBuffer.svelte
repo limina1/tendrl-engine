@@ -66,7 +66,6 @@
 		textScalePx
 	} from '$lib/theme/text-scale.svelte';
 	import ReadingControls from '$lib/components/ReadingControls.svelte';
-	import { reading, setReadingNotesLayout, type NotesLayout } from '$lib/theme/reading.svelte';
 	import { shell, type ShellPref, type MenuEdge } from '../shell.svelte';
 	import type { Buffer } from '../types';
 	import { commands, SCOPE_META, SCOPE_ORDER, BASE_KEYS } from '../commands';
@@ -105,13 +104,6 @@
 	const MENU_EDGES: { id: MenuEdge; label: string }[] = [
 		{ id: 'left', label: 'Left' },
 		{ id: 'right', label: 'Right' }
-	];
-
-	// Appearance → Reading → Notes: beside the text or under their section
-	// (docs/annotations-table-contract.org, D9).
-	const NOTES_LAYOUTS: { id: NotesLayout; label: string }[] = [
-		{ id: 'margin', label: 'Margin' },
-		{ id: 'inline', label: 'Inline' }
 	];
 
 	const app = getAppState();
@@ -787,32 +779,6 @@
 			against the text. Saved on this device.
 		</p>
 
-		<div class="settings-row">
-			<span
-				class="settings-label"
-				title="Where loaded annotations sit in the reader: beside the text (margin) or under their section (inline)."
-			>Notes</span>
-			<div class="radio-group">
-				{#each NOTES_LAYOUTS as n (n.id)}
-					<label class="radio">
-						<input
-							type="radio"
-							name="notes-layout"
-							value={n.id}
-							checked={reading.notesLayout === n.id}
-							onchange={() => setReadingNotesLayout(n.id)}
-						/>
-						<span>{n.label}</span>
-					</label>
-				{/each}
-			</div>
-		</div>
-		<p class="settings-hint">
-			Margin puts notes and requests in a gutter beside the text when the pane is
-			wide enough for the measure plus 280&nbsp;px — a split pane or a narrow
-			window falls back to inline, and the phone folds them either way. Also
-			toggled from the reader's <code>T</code> tools row. Saved on this device.
-		</p>
 
 		<div class="settings-row">
 			<span

@@ -25,6 +25,7 @@
 	import type { ResolvedRef, ParsedToken } from '$lib/nostr/nostrdown';
 	import { styleTitle } from '$lib/styles.svelte';
 	import { pubkeyToColor } from '$lib/discussions/colors';
+	import AnnotationThread from './annotations/AnnotationThread.svelte';
 
 	let {
 		insertion,
@@ -372,6 +373,11 @@
 				onclick={() => app.openAddressableInModal({ kind: insertion.role === 'bundle' ? 30040 : 30041, pubkey: ev.pubkey, d_tag: insertion.coordinate.split(':').slice(2).join(':') })}
 				title="Event menu — JSON, comment, broadcast, pool"
 			>menu</button>
+			<button
+				class="icard__act icard__row"
+				onclick={() => app.requestRevealAnnotation(anchor.root, insertion.coordinate)}
+				title="Show this row in the annotations ledger"
+			>≡ row</button>
 			<span class="icard__spacer"></span>
 			{#if isAsk}
 				{#if ownsRoot && askStatus === 'open'}
@@ -506,6 +512,15 @@
 				{/if}
 			</div>
 		{/if}
+		<!-- Replies: kind-1111 comments threaded under this annotation, and
+		     "note in reply" lives on the ledger's full thread. -->
+		<AnnotationThread
+			root={anchor.root}
+			coordinate={insertion.coordinate}
+			author={ev.pubkey}
+			title={title || term}
+			compact
+		/>
 	</div>
 </div>
 {/if}
