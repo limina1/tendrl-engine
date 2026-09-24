@@ -670,8 +670,9 @@
 		gap: 6px;
 		flex-wrap: wrap;
 	}
+	/* the window's name and its anchors are titles: the theme's green, not the ask accent */
 	.rq-dot {
-		color: var(--ask);
+		color: var(--green);
 	}
 	.rq-title__on {
 		color: var(--base5);
@@ -720,7 +721,7 @@
 		white-space: nowrap;
 	}
 	.rq-chip b {
-		color: var(--ask);
+		color: var(--green);
 	}
 	.rq-chip--select select {
 		font: inherit;
