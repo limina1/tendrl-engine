@@ -76,6 +76,7 @@ pub mod nip46;
 pub mod notifications;
 pub mod mcp;
 pub mod requests;
+pub mod reviews;
 pub mod store_events;
 pub mod nostrdown;
 pub mod publication;

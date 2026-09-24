@@ -5984,7 +5984,7 @@ fn map_assistant_sign_error(e: crate::signing::SigningError) -> EngineError {
 /// Who signs a publish: the user's active source (the controller) or the
 /// assistant's in-process key. Returns the pubkey the templates must carry
 /// and the signer.
-async fn resolve_publish_signer(
+pub(crate) async fn resolve_publish_signer(
     engine: &AppState,
     signing: &crate::signing::SigningController,
     sign_as: SignAs,

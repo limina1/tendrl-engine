@@ -84,7 +84,7 @@ pub struct ListQuery {
     pub status: Option<String>,
 }
 
-fn me_or_err(pk: Option<String>) -> Result<String> {
+pub(crate) fn me_or_err(pk: Option<String>) -> Result<String> {
     pk.ok_or_else(|| EngineError::Auth("no identity — log in to see what is for you".into()))
 }
 
@@ -459,16 +459,12 @@ async fn my_read_relays(engine: &AppState, me: &str) -> (Vec<String>, &'static s
     (engine.relays(), "general fetch set (no kind 10002 locally)")
 }
 
-/// POST /api/v1/notifications/fetch — one Confirm-gated pull of every
-/// enabled rule's filter, then the listing.
-pub async fn fetch_handler(
-    State(engine): State<AppState>,
-    Extension(signing): Extension<crate::signing::SigningController>,
-    Json(req): Json<FetchRequest>,
-) -> Result<Json<FetchResponse>> {
-    let me_pk = me_or_err(signing.active_pubkey().await)?;
+/// One Confirm-gated pull of every enabled rule's filter, then the listing —
+/// the engine-level half of `POST /api/v1/notifications/fetch`, shared with
+/// the `fetch_asks` tool.
+pub async fn fetch_notifications(engine: &AppState, me_pk: &str, req: &FetchRequest) -> Result<FetchResponse> {
     let prefs = Prefs::load(engine.data_dir());
-    let me = gather_me(&engine, &me_pk).await?;
+    let me = gather_me(engine, me_pk).await?;
     let enabled = prefs.apply();
     let filters = notifications::filters_for(&enabled, &me, ROW_CAP);
     let mut policy: FetchPolicy = match &req.policy {
@@ -476,7 +472,7 @@ pub async fn fetch_handler(
         None => FetchPolicy::LocalFirst,
     };
     // inbox ∪ provenance of my own events (someone answers on the relay they found me on)
-    let (inbox, inbox_src) = my_read_relays(&engine, &me_pk).await;
+    let (inbox, inbox_src) = my_read_relays(engine, me_pk).await;
     let mut provenance: Vec<String> = Vec::new();
     for c in me.coords.iter().take(50) {
         for r in engine.relay_hints_for_target(c) {
@@ -521,6 +517,16 @@ pub async fn fetch_handler(
     if let Some(o) = op {
         o.complete(fetched);
     }
-    let list = list_notifications(&engine, &me_pk, &prefs, "open").await?;
-    Ok(Json(FetchResponse { relays: if policy == FetchPolicy::LocalOnly { vec![] } else { chosen }, fetched, list }))
+    let list = list_notifications(engine, me_pk, &prefs, "open").await?;
+    Ok(FetchResponse { relays: if policy == FetchPolicy::LocalOnly { vec![] } else { chosen }, fetched, list })
+}
+
+/// POST /api/v1/notifications/fetch
+pub async fn fetch_handler(
+    State(engine): State<AppState>,
+    Extension(signing): Extension<crate::signing::SigningController>,
+    Json(req): Json<FetchRequest>,
+) -> Result<Json<FetchResponse>> {
+    let me_pk = me_or_err(signing.active_pubkey().await)?;
+    Ok(Json(fetch_notifications(&engine, &me_pk, &req).await?))
 }

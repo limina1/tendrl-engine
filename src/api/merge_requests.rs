@@ -462,6 +462,10 @@ pub struct ReviewResponse {
     pub definitions: Vec<ReviewDefinition>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub note: Option<String>,
+    /// The agent's review record (`review_ask`), when one was written — a
+    /// local record beside the ask, never an event.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub review: Option<crate::reviews::Review>,
 }
 
 /// Tag names that carry references — the ones a relink adds and a review
@@ -668,6 +672,7 @@ pub async fn review(engine: &AppState, id: &str, me: &str) -> Result<ReviewRespo
         index,
         definitions,
         note,
+        review: crate::reviews::ReviewStore::new(engine.data_dir()).ok().and_then(|st| st.load(id).ok().flatten()),
         merge_request: mr,
     })
 }
@@ -702,6 +707,23 @@ pub async fn review_handler(
         .or_else(|| engine.my_pubkey())
         .ok_or_else(|| EngineError::Auth("no identity — log in to review a merge request".into()))?;
     Ok(Json(review(&engine, &id, &me).await?))
+}
+
+/// GET /api/v1/merge-requests/:id/review — the agent's review record for
+/// an 818 (`review_ask`), or 404 when none was written.
+pub async fn agent_review_handler(
+    State(engine): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Json<crate::reviews::Review>, EngineError> {
+    let id = id.trim().to_string();
+    if !super::is_hex64(&id) {
+        return Err(EngineError::BadRequest("id must be the 818's 64-hex event id".into()));
+    }
+    let store = crate::reviews::ReviewStore::new(engine.data_dir())?;
+    store
+        .load(&id)?
+        .map(Json)
+        .ok_or_else(|| EngineError::NotFound(format!("no review for merge request {id}")))
 }
 
 #[derive(Debug, Deserialize, Default)]

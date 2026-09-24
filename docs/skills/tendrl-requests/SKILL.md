@@ -1,9 +1,19 @@
 ---
 name: tendrl-requests
-description: Answer the user's open tendrl annotation requests — read each request's anchor through the tendrl MCP, research per its scope (your own web search when asked), write the notes as assistant-signed insertions that point back at the request, and close the record. Use when the user says "check tendrl requests", "answer my annotations", or invokes /tendrl-requests.
+description: Work the user's tendrl asks — annotation requests (answer them as assistant-signed insertions that point back at the request), merge requests on their publications (read the diff, record a review), verdicts on merge requests they sent (report them). Use when the user says "check tendrl", "check tendrl requests", "anything for me?", "answer my annotations", "review the merge request", or invokes /tendrl-requests.
 ---
 
-# Answering tendrl annotation requests
+# Working the user's tendrl asks
+
+Start with `list_asks`: it is what tendrl's 🔔 shows the user — `acts`
+(things that want an act from them), `activity` (the kinds they chose to
+hear about; read-only), `mine` (merge requests they sent, with status),
+`done` (settled asks). Then `list_requests` for their annotation records.
+Three kinds of act come back, each with its own loop below. What you
+never do: merge, decline, relink, or send a merge request — there is no
+tool for it; those are the user's press in the app.
+
+## Annotation requests
 
 The user wrote requests in tendrl's reader (annotate mode → "annotate")
 against places in their publications. Each is a local record the engine
@@ -81,6 +91,56 @@ jq -r .claude_mcp_add` prints the registration line).
      that point at it are its answer; skip `answer_request` for it.
 3. Report to the user: per request, the note titles and where they are
    attached. Never claim anything was published or broadcast.
+
+A signed request on the user's publication written by *someone else*
+shows under `list_asks` → `acts` (`request-on-mine`): list it; answer it
+only if the user says "answer theirs too".
+
+## Merge requests for the user (`acts` rows with `key: 818`)
+
+Someone forked one of the user's publications (a relink, a glossary, a
+promoted note) and asked them to take it. The owner decides; you read
+and review.
+
+1. `get_ask_diff` with the row's `id`. It is the same diff the review
+   screen shows: per section the OWNER'S NEXT VERSION as hunks (`- ` / `+ `
+   / `  ` context; `{{ref:…}}` runs are relinks), `tags_added`, the index
+   change (`added` — a glossary at a slot, `replaced` originals, `moved`,
+   `removed`), `definitions` cited, `base.moved_on` when the target changed
+   since the ask was made (say so — the diff is against the current one).
+2. Read what the hunks change. A relink only wraps words the text already
+   uses; an edit that rewrites the owner's own wording is a different
+   thing and belongs in the findings.
+3. `review_ask` once per 818: `findings` first (sections touched, what
+   each hunk does, what the index gains, moved_on, anything that changes
+   the owner's wording), then `recommendation` — `merge` (take as is),
+   `decline`, or `edit-first` (open the merged result in the composer and
+   change something before signing) — and a `note` for the owner when it
+   helps. This is a local record beside the ask, never an event; the
+   review screen shows it.
+4. Only when the user asked for it: `prepare_merge` saves the merged
+   result as an UNSIGNED draft they sign in the composer (the engine
+   reacts + on the 818 when that publish lands). Never `sign_draft` that
+   draft — it would sign as the assistant.
+5. Report: one line per 818 — from whom, what it changes, your
+   recommendation — and that the merge / decline is theirs to press.
+
+## Verdicts on merge requests the user sent (`mine`, and `acts` rows with `key: 7-on-my-818`)
+
+One line each: merged / declined (with the owner's reason when the
+verdict carries one) / still open. Nothing to do; a declined derivative
+stays on relays as the user's own fork.
+
+## Fetching
+
+`list_asks` reads the local store. When the user asks to look on relays,
+`fetch_asks` pulls the enabled kinds from their read relays (the app may
+pause on a confirmation — wait, do not retry) and returns the same list.
+
+## End of a pass
+
+Close with what still needs the user's key: merges and declines to press,
+drafts to sign, relinks or merge requests to send, broadcasts to confirm.
 
 ## Rules
 

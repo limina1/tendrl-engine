@@ -2624,6 +2624,32 @@ curl -s -X PUT $B/notifications/prefs -H "$J" -d '{"entries":{"818":{"on":false}
 curl -s -X POST $B/notifications/fetch -H "$J" -d '{"policy":"fetch_always"}' | jq -c '{relays, fetched, counts}'
 #+end_src
 
+* Agent tools for asks (plan Phase 5c step 6, branch =feat/notifications=)
+
+Five tools, one catalog (=src/tools.rs=), reachable over MCP and in-app:
+=list_asks= (the 🔔 list, compact rows), =get_ask_diff= (the review screen's
+diff as =- = / =+ = hunks), =review_ask= (findings + recommendation → a LOCAL
+record in =<data_dir>/reviews/<818 id>.json=, never an event), =prepare_merge=
+(the owner's next version as an unsigned draft), =fetch_asks= (Network,
+Confirm-gated). No =merge_ask= / =decline_ask=. Skill:
+=docs/skills/tendrl-requests/SKILL.md= ("work the asks").
+
+#+begin_src bash
+cargo test --lib -- --test-threads=4 tools::tests::asks_are_listed_reviewed_and_never_merged_by_the_agent reviews
+B=localhost:3131; A="Authorization: Bearer $(cat /tmp/verify-vocab-data/mcp-token)"; J='Content-Type: application/json'
+mcp() { curl -s -X POST $B/mcp -H "$J" -H "$A" -d "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/call\",\"params\":{\"name\":\"$1\",\"arguments\":$2}}" | jq -c '.result.structuredContent // .result'; }
+# after merge-requests.sh (an 818 for the owner; owner logged in):
+mcp list_asks '{}' | jq -c '{acts:[.acts[]|{key, id:(.id|.[0:8]), summary, status}], mine:(.mine|length), done:(.done|length), counts}'
+MR=$(mcp list_asks '{}' | jq -r '.acts[]|select(.key=="818")|.id' | head -1)
+mcp get_ask_diff "{\"id\":\"$MR\"}" | jq -c '{role, status, moved_on:.base.moved_on, sections:[.sections[]|{title, hunks:(.hunks|length), tags_added}], index:{added:(.index.added|length), replaced:(.index.replaced|length)}, definitions:(.definitions|length)}'
+mcp get_ask_diff "{\"id\":\"$MR\"}" | jq -r '.sections[0].hunks[0]'          # the unified hunk: "- …" / "+ … {{ref:…}} …"
+mcp review_ask "{\"id\":\"$MR\",\"findings\":[\"2 sections touched\",\"index gains a → Glossary at slot 3\"],\"recommendation\":\"merge\"}" | jq -c '.review'
+curl -s $B/api/v1/merge-requests/$MR/review | jq -c '{recommendation, findings:(.findings|length), by}'      # the record the review screen shows
+curl -s $B/api/v1/merge-requests/$MR/diff | jq -c '.review.recommendation'                                 # folded into the diff too
+mcp prepare_merge "{\"id\":\"$MR\"}" | jq -c '{draft_id, sections, index, signed}'                            # owner only (403 otherwise); nothing signed
+mcp fetch_asks '{}' | jq -c '{relays, fetched, counts}'                                                    # Confirm-gated: approve it in the app (or it returns the local list)
+#+end_src
+
 * Kasten bundle delivery (answer a request whose output is kasten)
 
 One insertion for the whole kasten: the root 30040, anchored to the
