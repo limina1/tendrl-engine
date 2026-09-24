@@ -79,6 +79,8 @@ never happen in the browser.
   *Annotate* (=n=) opens the request window anchored to the section or the
   index (notes · kasten · vocabulary — the same window as annotate mode;
   2026-09-24); *Write a note* (=q=) opens the composer to write one yourself.
+  The Tools sheet (=M=) carries the same door: *annotate §n* opens that
+  window on the current section — M → annotate → the window, every mode.
 
 * Gaps / open edges
 - Nested-publication packed cards, drill-in with breadcrumbs, and parent

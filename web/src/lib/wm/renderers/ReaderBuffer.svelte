@@ -2283,6 +2283,23 @@
 	// the same coordinate its notes are loaded against (`A:<root>`), so a
 	// refocus into a nested index tables that index.
 	const tableRoot = $derived(publication ? addrKey(publication.addr) : null);
+	// M → annotate → the window: open the request window (notes · kasten ·
+	// vocabulary — the same one annotate mode's capture card and the section
+	// menu's `n` open) on the current section, or on the publication itself
+	// when there is none yet. The window fetches the section's content when
+	// the tree row has none.
+	function annotateCurrent() {
+		if (!publication || !tableRoot) return;
+		const s = pristineSections[currentSection];
+		const parent = s?.addr && s.addr.kind === 30041 ? addrKey(s.addr) : undefined;
+		app.annotationRequest = {
+			root: tableRoot,
+			rootTitle: publication.title ?? null,
+			parent,
+			parentTitle: parent ? (s?.title ?? null) : null,
+			content: parent && s?.content ? s.content : undefined
+		};
+	}
 	const tableNoteCount = $derived(insertionsLoaded ? pendingInsertionCount : null);
 
 	type TreeNode = { type: 'leaf'; buffer: Buffer } | { type: 'split'; children: TreeNode[] };
@@ -2524,6 +2541,14 @@
 							? 'Annotate mode is ON — select a passage to ask for notes about it. Click to turn off.'
 							: 'Turn on annotate mode: select a passage to ask your agent for notes about it (a local request; no identity needed)'}
 					>annotate mode{app.annotateMode ? ' ●' : ''}</button>
+					<button
+						class="ins-annotate"
+						onclick={annotateCurrent}
+						disabled={!publication}
+						title={pristineSections[currentSection]?.addr?.kind === 30041
+							? `Annotate §${currentSection + 1}: ask for notes, a kasten, or vocabulary definitions on this section (the section menu's n)`
+							: 'Annotate the publication itself: front matter, an appendix, or a note on the whole'}
+					>annotate {pristineSections[currentSection]?.addr?.kind === 30041 ? `§${currentSection + 1}` : 'the publication'} <span class="tools-key">n</span></button>
 					<button
 						class:active={publicationThreadsOpen}
 						onclick={() => (publicationThreadsOpen = !publicationThreadsOpen)}
@@ -3495,6 +3520,14 @@
 		cursor: pointer;
 	}
 	.tools-sheet__row button:disabled { opacity: 0.5; cursor: not-allowed; }
+	.tools-sheet__row .tools-key {
+		margin-left: 6px;
+		font: 600 var(--t-3xs) / 1.2 var(--font-mono);
+		color: var(--base5);
+		border: 1px solid var(--panel-border);
+		border-radius: 3px;
+		padding: 0 4px;
+	}
 	.tools-sheet__row button.active,
 	.tools-sheet__row button.hl-mode-pill--on {
 		background: var(--id-yours);
