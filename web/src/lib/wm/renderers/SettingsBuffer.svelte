@@ -1440,7 +1440,7 @@
 						<input type="checkbox" checked disabled aria-label={`${r.label} (always on)`} />
 						<span class="notif-kind">{r.kind}</span>
 						<span class="notif-rule">{r.label}</span>
-						<span class="notif-how">{r.verb === 'read' ? 'read' : r.verb}</span>
+						<span class="notif-how">{r.verb.kind === 'act' ? r.verb.label : 'read'}</span>
 						<span class="notif-def">default</span>
 					</div>
 				{/each}
@@ -1467,7 +1467,7 @@
 								<option value="list">list</option>
 							</select>
 						</span>
-						<span class="notif-def">{r.verb === 'read' ? 'read' : r.verb}</span>
+						<span class="notif-def">{r.verb.kind === 'act' ? r.verb.label : 'read'}</span>
 					</div>
 				{/each}
 			</div>

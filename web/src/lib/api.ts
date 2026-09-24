@@ -3201,8 +3201,8 @@ export interface NotificationRule {
 	kind: number;
 	/** The engine's one-line rule ("a highlight of one of your sections"). */
 	label: string;
-	/** `read`, or the act's verb for a fixed row. */
-	verb: 'read' | (string & {});
+	/** `{ kind: 'read' }`, or `{ kind: 'act', label }` for a fixed row. */
+	verb: { kind: 'read' } | { kind: 'act'; label: string };
 	/** True for the rows that need an act (always on, fixed). */
 	act: boolean;
 	fixed: boolean;
