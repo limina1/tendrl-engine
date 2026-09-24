@@ -523,20 +523,20 @@ Design approved 2026-09-24 in [[file:vocabulary-workflow.org][vocabulary-workflo
 [[file:zettel/decision-asks-routing.org][decision-asks-routing]]. Built in
 order on branches off =feat/annotations-table=; each step is shippable alone.
 
-*Step 1 — the ask* (=feat/vocab-request=)
-- [ ] =requests.rs=: =output: vocabulary= + =terms: Vec<String>= on the record
+*Step 1 — the ask* (=feat/vocab-request=, built 2026-09-24: engine =4a75507=, web =a21ec5e=, harness =scripts/verify/vocab-request.mjs= 15/15 live)
+- [X] =requests.rs=: =output: vocabulary= + =terms: Vec<String>= on the record
       and as =term= tags on the signed 30041; =content= generated engine-side
       ("define these words in the context of these events: a, b" / the
       empty form); =context= = the paragraphs the terms fall in
-- [ ] =tools.rs::list_requests= hands =terms= to the agent; skill branch
+- [X] =tools.rs::list_requests= hands =terms= to the agent; skill branch
       =output: vocabulary= → one =propose_insertion= per term with
       =role: definition=
-- [ ] =AnnotationRequestModal=: third output seg; the section content
+- [X] =AnnotationRequestModal=: third output seg; the section content
       rendered word by word (hover · drag-highlight · click a highlight
       removes it); generated content line; *event preview* (unsigned JSON
       + tags) at the foot — the general pattern for every event-creating
       modal (=feat-ui-patterns=)
-- [ ] capture action reads *annotate*; annotate mode + a selection opens
+- [X] capture action reads *annotate*; annotate mode + a selection opens
       the modal with the selection pre-highlighted (≤ 4 words)
 
 *Step 2 — definitions* (=feat/vocab-definitions=)

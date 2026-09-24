@@ -223,6 +223,20 @@ impl AnnotationRequest {
         if let Some(t) = self.title.as_deref().map(str::trim).filter(|t| !t.is_empty()) {
             return t.to_string();
         }
+        // A vocabulary request's task is the generated "define these words…"
+        // line; its title is the terms, not that sentence.
+        if self.output == "vocabulary" {
+            return if self.terms.is_empty() {
+                "Vocabulary request".into()
+            } else {
+                let mut out = format!("Define: {}", self.terms.join(", "));
+                if out.chars().count() > 72 {
+                    out = out.chars().take(72).collect();
+                    out.push('…');
+                }
+                out
+            };
+        }
         let line = self.task.lines().next().unwrap_or("").trim();
         if line.is_empty() {
             return "Request".into();
@@ -584,6 +598,18 @@ mod tests {
         // A notes request has no term tags and reads back empty.
         let plain = AnnotationRequest::new(&root(), None, "x", 1).unwrap().to_template("", 1).unwrap();
         assert!(plain.tags.iter().all(|x| x[0] != "term"));
+    }
+
+    #[test]
+    fn a_vocabulary_request_titles_itself_by_its_terms() {
+        let pk = "a".repeat(64);
+        let mut r = AnnotationRequest::new(&format!("30040:{pk}:d"), None, "x", 1).unwrap();
+        r.output = "vocabulary".into();
+        assert_eq!(r.effective_title(), "Vocabulary request");
+        r.terms = vec!["theory".into(), "already accepted".into()];
+        r.task = vocabulary_task(&r.terms);
+        assert_eq!(r.effective_title(), "Define: theory, already accepted");
+        assert!(!r.effective_title().starts_with("define these words"));
     }
 
     #[test]
