@@ -36,6 +36,30 @@ section under its own =d= when you own the publication; for someone
 else's, it is a derivative plus a *kind-818 merge request* that asks them
 to take it.
 
+* The annotate modal, for vocabulary
+
+Not a term list. The modal shows the *section's own content* and the
+user marks words in it: hover shows the word under the pointer, a
+drag over a word or phrase highlights it, a click on a highlighted
+word removes that highlight. The highlights are the =term= tags. The
+event's =content= is generated, not typed:
+
+#+begin_example
+define these words in the context of these events: epistemological anarchism, incommensurability
+#+end_example
+
+where "these events" are the anchor tags (=A=/=a=/=e=) and whatever the
+=scope= chips add. No highlights = "find the words these events use but
+never define, and define them in their context". The paragraphs the
+highlights fall in travel as =context=.
+
+*Event preview is the general pattern.* Every modal that creates an
+event shows the unsigned JSON it will sign — the tags as they will be
+emitted — the way the event menu shows an event. The annotate modal,
+the relink/fork preview (the derivative + the 818), and the merge
+review (the owner's next version) all end in that preview before the
+armed button.
+
 * Actors and events
 
 | Piece                 | Kind  | Owner            | Tags that matter                                                         | Exists today?                       |
