@@ -2440,7 +2440,19 @@ curl -s -X POST $B/api/v1/annotations/requests/preview -H "$J" -d "{\"root\":\"$
 curl -s -X POST $B/mcp -H "$J" -H "$A" -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"list_requests","arguments":{}}}' | jq -c '.result.structuredContent.requests[]|{id, output, terms}'
 #+end_src
 
-** Definitions — live (ran 2026-09-24: API 8/8, GUI harness 8/8 on a fresh seed)
+** Hand-answer mode — live (ran 2026-09-24: 6/6)
+
+#+begin_src bash
+PORT=3131 scripts/verify/vocab-request-seed.sh > /tmp/seed.env; source /tmp/seed.env
+B=localhost:3131/api/v1; J='Content-Type: application/json'
+curl -s -X POST $B/identity/use -H "$J" -d '{"source":"engine"}'        # a browser profile that never chose a source flips the engine to nip07 — pin it
+curl -s -X POST $B/annotations/requests -H "$J" -d "{\"root\":\"$ROOT\",\"parent\":\"$S1\",\"output\":\"vocabulary\",\"terms\":[\"newcomer\",\"the consistency condition\"],\"sign\":true}" | jq -c '{id, status}'
+node scripts/verify/vocab-answer.mjs --search "id:$IDX" --out /tmp/vocab-answer-shots   # request card → .rcard__mini--answer → .rq-entries (2 .rq-entry[data-kind=definition], terms prefilled) → bodies → .rq-answer-sign ×2 (“sure? sign 2 events”) → window closes
+curl -s -X POST $B/insertions/load -H "$J" -d "{\"root\":\"$ROOT\",\"policy\":\"local_only\"}" | jq -c '[.insertions[]|select(.role=="definition")|{term, by:(.event.pubkey|.[0:8]), request:(.request!=null)}]'   # 2 rows by the OWNER's key, request pointer set
+curl -s "$B/annotations/requests?root=$ROOT&status=all" | jq -c '[.requests[]|{output, status}]'                                                                                      # answered
+#+end_src
+
+* Definitions — live (ran 2026-09-24: API 8/8, GUI harness 8/8 on a fresh seed)
 
 #+begin_src bash
 # after the vocabulary seed (ROOT / S1 / IDX in the env):

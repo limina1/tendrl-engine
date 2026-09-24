@@ -1,0 +1,47 @@
+#!/usr/bin/env node
+// Hand-answer mode: the request card’s “answer it yourself ▸” → one entry per term → armed sign → the engine lists role: definition rows by the USER with the request pointer and the request reads answered.
+import fs from 'node:fs';
+// Usage: node scripts/verify/vocab-answer.mjs --search "id:<index id>" [--out DIR] [--port 3131] — after the seed + a SIGNED vocabulary request by the owner (POST /annotations/requests … "sign":true; pin the signing source first: POST /identity/use {"source":"engine"}); chromium on :9333 with a profile that has used the app before (a fresh profile flips the engine to nip07).
+const argv = process.argv.slice(2); const opt = (n, d) => { const i = argv.indexOf(`--${n}`); return i >= 0 && i + 1 < argv.length ? argv[i + 1] : d; };
+const SEARCH = opt("search", "k:30040"), OUT = opt("out", "/tmp/vocab-answer-shots"), PORT = opt("port", "3131"); fs.mkdirSync(OUT, { recursive: true });
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const tabs = await (await fetch('http://localhost:9333/json')).json(); const page = tabs.find((t) => t.type === 'page');
+const ws = new WebSocket(page.webSocketDebuggerUrl); await new Promise((r) => (ws.onopen = r));
+let seq = 0; const pending = new Map(); ws.onmessage = (m) => { const d = JSON.parse(m.data); if (d.id && pending.has(d.id)) { pending.get(d.id)(d); pending.delete(d.id); } };
+const send = (method, params = {}) => new Promise((r) => { const id = ++seq; pending.set(id, r); ws.send(JSON.stringify({ id, method, params })); });
+const ev = async (e) => (await send('Runtime.evaluate', { expression: e, awaitPromise: true, returnByValue: true })).result?.result?.value ?? null;
+const rectOf = async (js) => ev(`(()=>{const e=(${js}); if(!e) return null; e.scrollIntoView({block:'center'}); const r=e.getBoundingClientRect(); return r.width?{x:r.x+r.width/2,y:r.y+r.height/2}:null})()`);
+const click = async (js) => { const r = await rectOf(js); if (!r) return false; for (const t of ['mouseMoved', 'mousePressed', 'mouseReleased']) await send('Input.dispatchMouseEvent', { type: t, x: r.x, y: r.y, button: 'left', clickCount: 1 }); return true; };
+const byText = (sel, re) => `[...document.querySelectorAll(${JSON.stringify(sel)})].find(b=>${re}.test(b.textContent.replace(/\\s+/g,' ').trim()))`;
+const count = (sel) => ev(`document.querySelectorAll(${JSON.stringify(sel)}).length`);
+const shot = async (name) => { const r = await send('Page.captureScreenshot', { format: 'png' }); fs.writeFileSync(`${OUT}/${name}.png`, Buffer.from(r.result.data, 'base64')); };
+const out = []; const check = (n, ok, d = '') => { out.push(ok); console.log(`${ok ? 'PASS' : 'FAIL'} ${n}${d ? ' — ' + d : ''}`); };
+await send('Page.enable'); await send('Emulation.setDeviceMetricsOverride', { width: 1280, height: 900, deviceScaleFactor: 1, mobile: false });
+await send('Page.navigate', { url: `http://localhost:${PORT}/` }); await sleep(3500);
+await ev(`(()=>{const m=document.querySelector('.nm-modal'); if(m){const c=[...m.querySelectorAll('button')].find(b=>/^confirm/i.test(b.textContent.trim())); if(c) c.click();} document.querySelectorAll('.rf-action--ghost, .rf-close, .dt-skip').forEach(b=>b.click());})()`); await sleep(800);
+await click(`document.querySelector('.rail--research')`); await sleep(900);
+await ev(`(()=>{const i=document.querySelector('.search-panel input, input[placeholder*=exact], .search-input input'); const s=Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set; s.call(i,${JSON.stringify(SEARCH)}); i.dispatchEvent(new Event('input',{bubbles:true})); i.dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',bubbles:true}));})()`); await sleep(2500);
+await click(`document.querySelector('.result-title')`); await sleep(1200);
+await click(byText('[role=dialog] button', /Read publication/)); await sleep(3500);
+await click(byText('.seg button, button', /^scroll$/)); await sleep(1200);
+await click(`document.querySelector('button[title^="Tools"]')`); await sleep(700);
+await click(byText('.tools-sheet__row button, button', /^show( annotations)?$/i)); await sleep(2500);
+check('request-card', (await count('.rcard')) >= 1, `${await count('.rcard')} card(s)`);
+const opened = await click(`document.querySelector('.rcard__mini--answer')`); await sleep(2000);
+check('answer-mode', opened && !!(await ev(`document.querySelector('.rq-entries')`)), `entries block present`);
+const entries = await count('.rq-entry[data-kind=definition]');
+check('entries-per-term', entries === 2, `${entries} definition entries`);
+const terms = await ev(`[...document.querySelectorAll('.rq-entry__term')].map(i=>i.value)`);
+check('entries-prefilled', Array.isArray(terms) && terms.includes('newcomer'), JSON.stringify(terms));
+await ev(`(()=>{const set=Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,'value').set; const bodies=[...document.querySelectorAll('.rq-entry__body')]; const txt=['A theory that arrives after another in the same domain; here, the one the consistency condition judges.','The textbook rule that a new theory must agree with the accepted ones; here, the rule the section argues against.']; bodies.forEach((b,i)=>{ set.call(b, txt[i]); b.dispatchEvent(new Event('input',{bubbles:true})); }); })()`); await sleep(1200);
+await shot('answer-mode');
+const signBtn = `document.querySelector('.rq-answer-sign')`;
+await click(signBtn); await sleep(400);
+const armed = await ev(`${signBtn}?.textContent.trim() ?? ''`);
+check('sign-armed', /sure\? sign 2 event/.test(armed), `"${armed}"`);
+await click(signBtn); await sleep(4000);
+check('signed-closed', !(await ev(`!!document.querySelector('.rq-entries')`)), 'window closed');
+await sleep(1500);
+await shot('after-answer');
+ws.close();
+process.exit(out.every(Boolean) ? 0 : 1);
