@@ -238,6 +238,14 @@ impl AnnotationRequest {
         if let Some(t) = self.title.as_deref().map(str::trim).filter(|t| !t.is_empty()) {
             return t.to_string();
         }
+        // A generated task ("write notes on these events…") is not a title;
+        // name the request by its mode instead.
+        if self.output != "vocabulary" && self.task == generated_task(&self.output, &self.terms) && !self.task.is_empty() {
+            return match self.output.as_str() {
+                "kasten" => "Kasten request".into(),
+                _ => "Notes request".into(),
+            };
+        }
         // A vocabulary request's task is the generated "define these words…"
         // line; its title is the terms, not that sentence.
         if self.output == "vocabulary" {
@@ -634,6 +642,18 @@ mod tests {
         assert_eq!(generated_task("vocabulary", &["x".into()]), "define these words in the context of these events: x");
         assert_eq!(generated_task("ask", &[]), "");
         assert!(OUTPUTS.contains(&"ask"));
+    }
+
+    #[test]
+    fn a_generated_notes_request_titles_itself_by_its_mode() {
+        let pk = "a".repeat(64);
+        let mut r = AnnotationRequest::new(&format!("30040:{pk}:d"), None, &generated_task("notes", &[]), 1).unwrap();
+        assert_eq!(r.effective_title(), "Notes request");
+        r.output = "kasten".into();
+        r.task = generated_task("kasten", &[]);
+        assert_eq!(r.effective_title(), "Kasten request");
+        r.task = "compare the two fables".into();
+        assert_eq!(r.effective_title(), "compare the two fables");
     }
 
     #[test]

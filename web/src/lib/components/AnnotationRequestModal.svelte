@@ -767,6 +767,11 @@
 		color: var(--bg);
 		border-color: var(--id-remote);
 	}
+	/* the window is a scrolling flex column: its children must not shrink
+	   when the content outgrows it, or the segment collapses to a line */
+	.rq-modal > * {
+		flex-shrink: 0;
+	}
 	.rq-seg {
 		display: inline-flex;
 		border: 1px solid var(--panel-border);
