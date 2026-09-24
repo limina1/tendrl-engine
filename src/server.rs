@@ -939,6 +939,10 @@ pub async fn start(opts: ServeOptions) -> anyhow::Result<RunningServer> {
             get(api::requests::list_handler).post(api::requests::create_handler),
         )
         .route(
+            "/api/v1/annotations/requests/preview",
+            post(api::requests::preview_handler),
+        )
+        .route(
             "/api/v1/annotations/requests/:id",
             get(api::requests::get_handler).delete(api::requests::delete_handler),
         )

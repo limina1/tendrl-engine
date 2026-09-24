@@ -5,7 +5,7 @@ description: Answer the user's open tendrl annotation requests — read each req
 
 # Answering tendrl annotation requests
 
-The user wrote requests in tendrl's reader (annotate mode → "ask for notes")
+The user wrote requests in tendrl's reader (annotate mode → "annotate")
 against places in their publications. Each is a local record the engine
 serves over MCP, and optionally a kind-30041 annotation the user signed on
 the section (then it has a `coordinate`); nothing runs until *they* ask you
@@ -57,6 +57,19 @@ jq -r .claude_mcp_add` prints the registration line).
      the notes hang under it as plain NKBIP-01 events with no anchor. Put
      every outbound link in tags (`:a:` / `:r:` header lines in the notes;
      `links` / `tags` on `propose_insertion` for loose notes).
+     `output: vocabulary` → the request's `terms` are the words the user
+     highlighted in the section (its task reads "define these words in
+     the context of these events: …"); an empty list means find the
+     words the section uses but never defines. Write **one
+     `propose_insertion` per term**: `title` = the term as written,
+     `placement` `attach`, `content` = everything about the word *as it
+     is used in the anchored text* — the sense here first, then the
+     background a reader needs, then where the word comes from — in
+     the request's style (the default is a glossary voice: no bullet
+     lists, name the source of the term), `tags` = `[["t",
+     "definition"]]`, `request` = the coordinate, `style` = the
+     request's style. Do not write side notes; one event per term holds
+     it all. Do not define the same term twice.
    - **Close.** For a record (`rq_…`): `answer_request` with `request_id`,
      a one-paragraph `summary` (what you wrote, what you read, what you
      could not find) and `coordinates` — every `30041:…` you stored, or

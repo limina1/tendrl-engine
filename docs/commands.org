@@ -2400,6 +2400,30 @@ pgrep -a -x tendrl-engine | awk '/--port 3131/ {print $1}' | xargs -r kill
 pgrep -a -x chromium | awk '/remote-debugging-port=9333/ {print $1}' | xargs -r kill
 #+end_src
 
+* Vocabulary request (plan Phase 5c step 1, branch =feat/vocab-request=)
+
+A request whose =output= is =vocabulary=: the words the user highlighted
+in the section travel as =term= tags, the task is *generated* by the
+engine (=requests::vocabulary_task=) — "define these words in the context
+of these events: a, b" (none → "find the words these events use but never
+define, and define them in their context") — and the answer is one
+definition insertion per term (=t: definition=). =/preview= returns the
+unsigned 30041 the create path would sign (the modal renders it live).
+
+#+begin_src bash
+cargo test --lib requests::            # vocabulary_task, term tags round-trip
+B=localhost:3132; J='Content-Type: application/json'
+# preview: the unsigned event, nothing persisted — content is generated, one term tag per word
+curl -s -X POST $B/api/v1/annotations/requests/preview -H "$J" -d "{\"root\":\"$ROOT\",\"parent\":\"$S1\",\"output\":\"vocabulary\",\"terms\":[\"incommensurability\",\"epistemological anarchism\"],\"scope\":[\"section\",\"web\"]}" | jq -c '{content:.event.content, terms:[.event.tags[]|select(.[0]=="term")|.[1]], output:[.event.tags[]|select(.[0]=="output")|.[1]], task:.request.task}'
+# create (unsigned record; add "sign":true for the 30041) — same builder, so it matches the preview
+RQ=$(curl -s -X POST $B/api/v1/annotations/requests -H "$J" -d "{\"root\":\"$ROOT\",\"parent\":\"$S1\",\"output\":\"vocabulary\",\"terms\":[\"incommensurability\"]}"); echo "$RQ" | jq -c '{id, output, terms, task}'
+curl -s "$B/api/v1/annotations/requests?root=$ROOT&status=open" | jq -c '.requests[]|{id, output, terms}'
+# a typed task is kept; an empty term list yields the "find the words…" task
+curl -s -X POST $B/api/v1/annotations/requests/preview -H "$J" -d "{\"root\":\"$ROOT\",\"output\":\"vocabulary\"}" | jq -r .event.content
+# the agent sees `output` + `terms` and writes one definition per term
+curl -s -X POST $B/mcp -H "$J" -H "$A" -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"list_requests","arguments":{}}}' | jq -c '.result.structuredContent.requests[]|{id, output, terms}'
+#+end_src
+
 * Kasten bundle delivery (answer a request whose output is kasten)
 
 One insertion for the whole kasten: the root 30040, anchored to the

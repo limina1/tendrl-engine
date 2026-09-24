@@ -10,6 +10,12 @@
 //! `output`, `style`, `context`) — and optionally broadcast. The user signs
 //! it; no assistant identity is involved at ask time.
 //!
+//! A *vocabulary* request (`output: vocabulary`) asks for definitions: its
+//! `terms` are the words the user highlighted in the section (one `term`
+//! tag each; none = "find the words these events use but never define")
+//! and its task is generated, not typed — `vocabulary_task`. Each answer
+//! is one definition insertion per term (`t: definition`).
+//!
 //! An answer is an ordinary insertion anchored to the same parent that
 //! points back with `["request", <request coordinate>]`. A signed request is
 //! answered iff a local 30041 carries that pointer — derived from the store,
@@ -79,9 +85,15 @@ pub struct AnnotationRequest {
     /// The selected text this was asked about.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub context: Option<String>,
-    /// `notes` (loose insertions) or `kasten` (notes plus a bundle index).
+    /// `notes` (loose insertions), `kasten` (notes plus a bundle index) or
+    /// `vocabulary` (one definition insertion per term).
     #[serde(default = "default_output")]
     pub output: String,
+    /// `output: vocabulary` — the words to define, as highlighted in the
+    /// section (one `term` tag each on the signed request). Empty means
+    /// "find the words these events use but never define".
+    #[serde(default)]
+    pub terms: Vec<String>,
     pub created_at: i64,
     #[serde(default)]
     pub status: RequestStatus,
@@ -103,6 +115,34 @@ pub struct AnnotationRequest {
 
 fn default_output() -> String {
     "notes".into()
+}
+
+/// The three things a request can ask for.
+pub const OUTPUTS: &[&str] = &["notes", "kasten", "vocabulary"];
+
+/// The generated task of a vocabulary request. "These events" are the
+/// request's anchor tags and whatever its scope adds — the ask is the
+/// words, in this context, and nothing else is typed.
+pub fn vocabulary_task(terms: &[String]) -> String {
+    let terms = normalize_terms(terms);
+    if terms.is_empty() {
+        "find the words these events use but never define, and define them in their context".to_string()
+    } else {
+        format!("define these words in the context of these events: {}", terms.join(", "))
+    }
+}
+
+/// Trim, drop empties, keep first occurrence (case-insensitive), in order.
+pub fn normalize_terms(terms: &[String]) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for t in terms {
+        let t = t.trim();
+        if t.is_empty() || out.iter().any(|o| o.eq_ignore_ascii_case(t)) {
+            continue;
+        }
+        out.push(t.to_string());
+    }
+    out
 }
 
 pub const SCOPES: &[&str] = &["section", "siblings", "publication", "neighbours", "relays", "web"];
@@ -138,6 +178,7 @@ impl AnnotationRequest {
             scope: vec!["section".into()],
             context: None,
             output: default_output(),
+            terms: Vec::new(),
             created_at,
             status: RequestStatus::Open,
             answer: None,
@@ -146,6 +187,11 @@ impl AnnotationRequest {
             style: None,
             style_title: None,
         })
+    }
+
+    pub fn with_terms(mut self, terms: &[String]) -> Self {
+        self.terms = normalize_terms(terms);
+        self
     }
 
     pub fn with_scope(mut self, scope: &[String]) -> Self {
@@ -204,6 +250,9 @@ impl AnnotationRequest {
             extra.push(vec!["scope".to_string(), self.scope.join(",")]);
         }
         extra.push(vec!["output".to_string(), self.output.clone()]);
+        for t in normalize_terms(&self.terms) {
+            extra.push(vec!["term".to_string(), t]);
+        }
         if let Some(ctx) = self.context.as_deref().map(str::trim).filter(|c| !c.is_empty()) {
             extra.push(vec!["context".to_string(), ctx.to_string()]);
         }
@@ -254,6 +303,13 @@ impl AnnotationRequest {
             scope: Vec::new(),
             context: tag("context"),
             output: tag("output").unwrap_or_else(default_output),
+            terms: normalize_terms(
+                &tags
+                    .iter()
+                    .filter(|t| t.first().map(String::as_str) == Some("term"))
+                    .filter_map(|t| t.get(1).cloned())
+                    .collect::<Vec<_>>(),
+            ),
             created_at: ev.get("created_at").and_then(Value::as_i64).unwrap_or(0),
             status: RequestStatus::Open,
             answer: None,
@@ -493,6 +549,41 @@ mod tests {
         let stray = json!({"kind": 30041, "pubkey": ASST, "tags": [["d", "n1"], ["request", "rq_abc"]]});
         assert_eq!(request_pointer(&stray), None);
         assert_eq!(request_pointer(&json!({"kind": 30041, "tags": [["d", "n"]]})), None);
+    }
+
+    #[test]
+    fn vocabulary_task_is_generated_from_the_terms() {
+        assert_eq!(
+            vocabulary_task(&[" incommensurability ".into(), "epistemological anarchism".into(), "Incommensurability".into(), "".into()]),
+            "define these words in the context of these events: incommensurability, epistemological anarchism"
+        );
+        assert_eq!(
+            vocabulary_task(&[]),
+            "find the words these events use but never define, and define them in their context"
+        );
+        assert!(OUTPUTS.contains(&"vocabulary"));
+    }
+
+    #[test]
+    fn a_vocabulary_request_carries_term_tags_and_reads_them_back() {
+        let terms: Vec<String> = vec!["incommensurability".into(), "epistemological anarchism".into()];
+        let mut r = AnnotationRequest::new(&root(), Some(&sec()), &vocabulary_task(&terms), 3)
+            .unwrap()
+            .with_terms(&terms);
+        r.output = "vocabulary".into();
+        r.parent_event_id = Some(EID.into());
+        let t = r.to_template("", 3).unwrap();
+        let tag = |n: &str| t.tags.iter().filter(|x| x[0] == n).map(|x| x[1].clone()).collect::<Vec<_>>();
+        assert_eq!(tag("output"), vec!["vocabulary"]);
+        assert_eq!(tag("term"), terms, "one term tag per highlighted word, in order");
+        assert_eq!(t.content, "define these words in the context of these events: incommensurability, epistemological anarchism");
+        let ev = json!({ "id": EID, "kind": 30041, "pubkey": PK, "created_at": 3, "content": t.content, "tags": t.tags });
+        let back = AnnotationRequest::from_event(&ev).expect("reads back");
+        assert_eq!(back.output, "vocabulary");
+        assert_eq!(back.terms, terms);
+        // A notes request has no term tags and reads back empty.
+        let plain = AnnotationRequest::new(&root(), None, "x", 1).unwrap().to_template("", 1).unwrap();
+        assert!(plain.tags.iter().all(|x| x[0] != "term"));
     }
 
     #[test]
