@@ -2575,6 +2575,18 @@ curl -s -X POST $B/merge-requests/react -H "$J" -d "{\"id\":\"$MR\",\"verdict\":
 curl -s "$B/merge-requests?role=owner&status=all" | jq -c '.requests[]|{id:.id[0:8], status, verdict:(.verdict.content)}'
 #+end_src
 
+* Merge-request review — live (ran 2026-09-24: API 14/14, GUI 11/11)
+
+#+begin_src bash
+# fresh engine + seed (owner); the API script builds its own 818 (assistant definitions → a requester's foreign relink), then:
+PORT=3131 scripts/verify/merge-review.sh     # requester reads the diff but merge → 403 · owner diff: 2 replaced sections + the glossary added at slot 3, added lines carry {{ref:, next versions keep the owner's d,
+                                             # definitions with promoted_in_source · the reader's load pass lists the 818 as role: ask · notifications: open act → merge (2 sections + index signed under the owner's d, kind-7 +)
+                                             # → notifications done, status merged, the requester's `mine` says merged
+# GUI: seed a second publication, stage an OPEN 818 (definitions → requester relink → owner re-login), then
+node scripts/verify/merge-review.mjs --out /tmp/review-shots   # 🔔 "1 ask" → notifications → review the diff ▸ → .mr[data-status=open][data-role=owner] (header applies cleanly · the ask · index block: + a → Glossary, replaced rows
+                                                               # · 2 added lines with tinted refs · event preview · .mr-agent slot) → armed "sure? sign 3 next versions · react + · broadcast" → ✓ merged, buttons gone → notifications done
+#+end_src
+
 * Notifications — live (ran 2026-09-24: API 7/7, GUI 7/7)
 
 #+begin_src bash

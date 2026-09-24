@@ -584,17 +584,17 @@ order on branches off =feat/annotations-table=; each step is shippable alone.
       the Confirm modal lists relay + reason
 - [X] =/relink= on a foreign root → derivative + 818 (+ 818 event preview)
 
-*Step 5 — notifications + review* (=feat/notifications=: rules/prefs/list/fetch =333b4ea=, web bell/list/settings =e92b061=, live API 7/7 + GUI 7/7 2026-09-24; diff/merge/decline + the review pane in flight)
+*Step 5 — notifications + review* (=feat/notifications=: rules/prefs/list/fetch =333b4ea=, web bell/list/settings =e92b061=, live API 7/7 + GUI 7/7 2026-09-24; review =17e8a59= / web =68bcbb5=; live API 14/14 + GUI 11/11 2026-09-24)
 - [X] =notifications.rs=: =Rule= per kind (tag → mine), defaults (818 /
       7-on-my-818 / signed requests on mine) + optional kinds (1111, 9802,
       7, 9735, 30045, any =p=); prefs in =<data_dir>/notifications.json=;
       =GET /api/v1/notifications= (asks · activity · mine), =GET/PUT
       /notifications/prefs=, =POST /notifications/fetch= (Confirm-gated,
       one filter per rule, my read relays ∪ my provenance relays)
-- [ ] =GET /notifications/:id/diff=: base pairing (the 818's =e=, else
+- [X] =GET /notifications/:id/diff=: base pairing (the 818's =e=, else
       newest local; say when the target moved on), content hunks, index
       structural diff, *the owner's next version*
-- [ ] =POST /notifications/:id/merge= (sign next versions, same =d= + kind
+- [X] =POST /notifications/:id/merge= (sign next versions, same =d= + kind
       7 =+= + broadcast) · =/decline= (kind 7 =-=, reason as content)
 - [X] web: Settings › Notifications (checkable kinds, count | list); 🔔
       modeline pill (desktop) / ☰ drawer status row (phone) → the list
