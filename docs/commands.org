@@ -2410,9 +2410,25 @@ define, and define them in their context") — and the answer is one
 definition insertion per term (=t: definition=). =/preview= returns the
 unsigned 30041 the create path would sign (the modal renders it live).
 
+** Live: scratch engine + CDP harness (ran 2026-09-24, 15/15)
+
+#+begin_src bash
+pnpm -C web build && cargo build
+# scratch config as in "Annotations table — verify" (port 3131, fresh data dir, test relay only)
+./target/debug/tendrl-engine -c /tmp/verify-vocab.toml --port 3131 > /tmp/verify-vocab-engine.log 2>&1 &
+PORT=3131 scripts/verify/vocab-request-seed.sh > /tmp/seed.env; source /tmp/seed.env   # logs a fresh user in, ingests "On Method" (3 sections), prints ROOT / S1 / IDX
+chromium --headless=new --remote-debugging-port=9333 --no-sandbox --user-data-dir=/tmp/cdp-vocab about:blank &
+node scripts/verify/vocab-request.mjs --root "$ROOT" --search "id:$IDX" --out /tmp/vocab-shots
+# checks: app-open · search-result · reader-open · reader-sections · annotate-mode · capture-card (a Range + document mouseup)
+#         · modal-open · modal-vocabulary · words-rendered (.rq-word) · mark-phrase (CDP drag over two words) · generated-line (.rq-gen)
+#         · preview-terms (.rq-preview__pre has "term", the phrase, annotation-request, "vocabulary") · unmark-click · sign-local · request-listed
+#+end_src
+
+** API
+
 #+begin_src bash
 cargo test --lib requests::            # vocabulary_task, term tags round-trip
-B=localhost:3132; J='Content-Type: application/json'
+B=localhost:3131; J='Content-Type: application/json'
 # preview: the unsigned event, nothing persisted — content is generated, one term tag per word
 curl -s -X POST $B/api/v1/annotations/requests/preview -H "$J" -d "{\"root\":\"$ROOT\",\"parent\":\"$S1\",\"output\":\"vocabulary\",\"terms\":[\"incommensurability\",\"epistemological anarchism\"],\"scope\":[\"section\",\"web\"]}" | jq -c '{content:.event.content, terms:[.event.tags[]|select(.[0]=="term")|.[1]], output:[.event.tags[]|select(.[0]=="output")|.[1]], task:.request.task}'
 # create (unsigned record; add "sign":true for the 30041) — same builder, so it matches the preview
