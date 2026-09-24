@@ -309,6 +309,142 @@
 		app.annotationRequest = null;
 	}
 
+	// ---- answer mode: answer a request by hand ---------------------------
+	// vocabulary → one signed definition per term; ask → one signed note;
+	// notes / kasten → the composer with the request pointer. Each entry is
+	// an ordinary insertion carrying ["request", <coordinate>] when the
+	// request is signed; an unsigned record is closed through the answer
+	// endpoint with the coordinates written.
+	type Format = 'markdown' | 'org' | 'asciidoc' | 'plain';
+	type Entry = { term: string; body: string; format: Format };
+	const FORMATS: Format[] = ['markdown', 'org', 'asciidoc', 'plain'];
+	let answering = $state(!!open?.answer);
+	let answer = $state<api.AnnotationRequest | null>(open?.answer ?? null);
+	let entries = $state<Entry[]>([]);
+	let armedAnswer = $state(false);
+	const openHere = $derived(existing.filter((r) => r.status === 'open'));
+	const entryKind = $derived(answer?.output === 'vocabulary' ? 'definition' : 'note');
+	function entriesFor(r: api.AnnotationRequest): Entry[] {
+		if (r.output === 'vocabulary') {
+			const terms = (r.terms ?? []).filter((t) => t.trim());
+			return terms.length ? terms.map((t) => ({ term: t, body: '', format: 'markdown' as Format })) : [{ term: '', body: '', format: 'markdown' as Format }];
+		}
+		return [{ term: `Answer: ${r.task.slice(0, 60)}${r.task.length > 60 ? '…' : ''}`, body: '', format: 'markdown' as Format }];
+	}
+	function startAnswer(r: api.AnnotationRequest) {
+		answer = r;
+		answering = true;
+		armedAnswer = false;
+		entries = entriesFor(r);
+		answerPreviews = [];
+		scheduleAnswerPreview();
+	}
+	function enterAnswerMode() {
+		answering = true;
+		if (!answer && openHere.length === 1) startAnswer(openHere[0]);
+	}
+	function leaveAnswerMode() {
+		answering = false;
+		answer = null;
+		armedAnswer = false;
+	}
+	function addEntry() {
+		entries = [...entries, { term: '', body: '', format: 'markdown' }];
+	}
+	function removeEntry(i: number) {
+		entries = entries.filter((_, k) => k !== i);
+		scheduleAnswerPreview();
+	}
+	function entryRequest(e: Entry, broadcast = false): api.InsertionRequest {
+		const r = answer!;
+		const parent = r.parent && r.parent !== r.root ? r.parent : undefined;
+		return {
+			anchor: { root: r.root, parent, parent_event_id: r.parent_event_id },
+			title: e.term.trim(),
+			content: e.body.trim(),
+			format: e.format === 'markdown' ? undefined : e.format,
+			role: r.output === 'vocabulary' ? 'definition' : 'note',
+			request: r.coordinate,
+			tags: r.style ? [['style', r.style]] : undefined,
+			sign_as: 'user',
+			broadcast
+		};
+	}
+	if (open?.answer) entries = entriesFor(open.answer);
+	// event preview: one unsigned template per entry, debounced from the handlers
+	let answerPreviews = $state<string[]>([]);
+	let answerPreviewTimer: ReturnType<typeof setTimeout> | null = null;
+	let answerPreviewSeq = 0;
+	function scheduleAnswerPreview() {
+		if (answerPreviewTimer) clearTimeout(answerPreviewTimer);
+		answerPreviewTimer = setTimeout(() => void refreshAnswerPreview(), 250);
+	}
+	async function refreshAnswerPreview() {
+		if (!answer) return;
+		const seq = ++answerPreviewSeq;
+		const ready = entries.filter((e) => e.term.trim() && e.body.trim());
+		try {
+			const out = await Promise.all(
+				ready.map(async (e) => {
+					const r = await api.previewInsertion(entryRequest(e));
+					return `{ "kind": ${r.event.kind},\n  "content": ${JSON.stringify(r.event.content)},\n  "tags": [\n${r.event.tags.map((t) => '    ' + tagLine(t)).join(',\n')}\n  ] }`;
+				})
+			);
+			if (seq === answerPreviewSeq) answerPreviews = out;
+		} catch {
+			if (seq === answerPreviewSeq) answerPreviews = [];
+		}
+	}
+	const canSignAnswer = $derived(
+		canSign && !posting && !!answer && entries.length > 0 && entries.every((e) => e.term.trim().length > 0 && e.body.trim().length > 0)
+	);
+	async function signAnswers() {
+		if (!canSignAnswer || !answer) return;
+		if (!armedAnswer) {
+			armedAnswer = true;
+			return;
+		}
+		posting = true;
+		const r = answer;
+		try {
+			const coords: string[] = [];
+			for (const e of entries) {
+				const resp = await api.publishInsertion(entryRequest(e));
+				coords.push(resp.coordinate);
+			}
+			if (!r.coordinate) {
+				await api.answerRequest(r.id, {
+					summary: r.output === 'vocabulary' ? `${coords.length} definition${coords.length === 1 ? '' : 's'} written by hand` : 'an answer written by hand',
+					coordinates: coords
+				});
+			}
+			app.pushToast(r.output === 'vocabulary' ? `${coords.length} definition${coords.length === 1 ? '' : 's'} signed as your answer` : 'answer signed', 'success');
+			app.bumpInsertions();
+			app.bumpRequests();
+			close();
+		} catch (e) {
+			app.pushToast(api.errorMessage(e, 'Signing the answer failed'), 'error', 5000);
+			armedAnswer = false;
+		} finally {
+			posting = false;
+		}
+	}
+	/** notes / kasten: the composer, with the request pointer. */
+	function openComposerFor(r: api.AnnotationRequest) {
+		app.annotationRequest = null;
+		app.insertionComposer = {
+			root: r.root,
+			rootTitle: open?.rootTitle ?? null,
+			parent: r.parent && r.parent !== r.root ? r.parent : undefined,
+			parentTitle: r.parent_title ?? open?.parentTitle ?? null,
+			parentEventId: r.parent_event_id,
+			context: r.context,
+			request: r.coordinate,
+			requestTitle: r.title ?? `${r.task.slice(0, 60)}${r.task.length > 60 ? '…' : ''}`
+		};
+	}
+	const OUTPUT_LABEL: Record<string, string> = { notes: 'notes', kasten: 'kasten', vocabulary: 'vocabulary', ask: 'ask' };
+
 	async function submit() {
 		if (!canPost) return;
 		posting = true;
@@ -368,7 +504,8 @@
 			close();
 		} else if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
 			e.preventDefault();
-			void submit();
+			if (answering) void signAnswers();
+			else void submit();
 		}
 	}
 </script>
@@ -394,13 +531,18 @@
 		<header class="rq-header">
 			<h3 class="rq-title">
 				<span class="rq-dot" aria-hidden="true">●</span>
-				annotate
+				{answering ? 'answer' : 'annotate'}
 				{#if topLevel}
 					<span class="rq-title__on">— on the publication</span>
 				{:else if open?.parentTitle}
 					<span class="rq-title__on">— on <em>{open.parentTitle}</em></span>
 				{/if}
 			</h3>
+			{#if answering}
+				<button class="rq-mini rq-answer-back" onclick={leaveAnswerMode} disabled={posting} title="Back to asking your agent">← ask instead</button>
+			{:else if openHere.length > 0}
+				<button class="rq-mini rq-answer-toggle" onclick={enterAnswerMode} disabled={posting} title="Answer one of the open requests here by hand instead of asking your agent">answer a request ({openHere.length}) ▸</button>
+			{/if}
 			<button class="rq-close" onclick={close} aria-label="Close">×</button>
 		</header>
 
@@ -423,6 +565,7 @@
 			{/if}
 		</div>
 
+		{#if !answering}
 		<div class="rq-label">mode <span class="rq-label__sub">— what your agent answers with: notes · a kasten · definitions · an answer to your question</span></div>
 		<div class="rq-seg" role="radiogroup" aria-label="Mode">
 			<button class="rq-seg__opt" class:on={output === 'notes'} role="radio" aria-checked={output === 'notes'} onclick={() => setOutput('notes')} disabled={posting} title="Loose notes attached to the place">notes</button>
@@ -624,6 +767,91 @@
 					</li>
 				{/each}
 			</ul>
+		{/if}
+		{:else if !answer}
+			<div class="rq-label">open requests here <span class="rq-label__sub">· pick the one to answer by hand</span></div>
+			<div class="rq-picks">
+				{#each openHere as r (r.id)}
+					<button class="rq-pick" onclick={() => startAnswer(r)} disabled={posting}>
+						<span class="rq-pick__badge">{OUTPUT_LABEL[r.output] ?? r.output}</span>
+						<span class="rq-pick__task">{r.title ? `${r.title} — ` : ''}{r.task}</span>
+						{#if r.output === 'vocabulary' && r.terms?.length}
+							<span class="rq-pick__terms">{r.terms.join(', ')}</span>
+						{/if}
+						<span class="rq-pick__meta">{r.coordinate ? 'signed · ' : ''}{relTime(r.created_at)}</span>
+					</button>
+				{/each}
+			</div>
+		{:else}
+			<div class="rq-label">the request <span class="rq-label__sub">· what you are answering</span></div>
+			<div class="rq-ask-line">
+				<span class="rq-pick__badge">{OUTPUT_LABEL[answer.output] ?? answer.output}</span>
+				<span class="rq-ask-line__task">{answer.title ? `${answer.title} — ` : ''}{answer.task}</span>
+			</div>
+			{#if answer.context}
+				<div class="rq-style-preview">{answer.context}</div>
+			{/if}
+			{#if answer.output === 'vocabulary' || answer.output === 'ask'}
+				<div class="rq-label">
+					{answer.output === 'vocabulary' ? 'definitions' : 'your answer'}
+					<span class="rq-label__sub">{answer.output === 'vocabulary' ? '· one signed definition per term, each pointing at the request' : '· one signed note pointing at the request'}</span>
+					{#if answer.output === 'vocabulary'}
+						<button class="rq-mini rq-mini--inline rq-entry-add" onclick={addEntry} disabled={posting}>+ term</button>
+					{/if}
+				</div>
+				<div class="rq-entries">
+					{#each entries as e, i (i)}
+						<div class="rq-entry" data-kind={entryKind}>
+							<div class="rq-entry__row">
+								<input class="rq-input rq-entry__term" data-entry bind:value={e.term} oninput={scheduleAnswerPreview} disabled={posting} placeholder={answer.output === 'vocabulary' ? 'the term, as written' : 'title'} />
+								<select class="rq-select rq-entry__format" bind:value={e.format} onchange={scheduleAnswerPreview} disabled={posting}>
+									{#each FORMATS as f (f)}<option value={f}>{f}</option>{/each}
+								</select>
+								{#if answer.output === 'vocabulary' && entries.length > 1}
+									<button class="rq-mini" onclick={() => removeEntry(i)} disabled={posting} title="Drop this term">×</button>
+								{/if}
+							</div>
+							<textarea class="rq-input rq-entry__body" data-entry bind:value={e.body} oninput={scheduleAnswerPreview} disabled={posting} placeholder={answer.output === 'vocabulary' ? 'the sense here first, then the background a reader needs, then where the word comes from' : 'the answer, in your words — cite with {{ref:…}} where it helps'}></textarea>
+						</div>
+					{/each}
+				</div>
+				<details class="rq-preview" bind:open={previewOpen}>
+					<summary class="rq-label rq-preview__sum">event preview <span class="rq-label__sub">· the unsigned {entryKind === 'definition' ? 'definitions' : 'note'} “sign” will sign — {entries.length} event{entries.length === 1 ? '' : 's'}</span></summary>
+					{#if answerPreviews.length}
+						{#each answerPreviews as pv, i (i)}
+							<pre class="rq-preview__pre">{pv}</pre>
+						{/each}
+					{:else}
+						<div class="rq-help">fill a term and its body — the engine builds the template from them</div>
+					{/if}
+				</details>
+				<div class="rq-help">
+					{#if !canSign}
+						Sign in to sign the answer — it is signed as you, {answer.coordinate ? 'pointing at the signed request' : 'and the local record closes with it'}.
+					{:else}
+						Signed as you, kept local; broadcast is the separate step. {answer.coordinate ? 'Each event points at the request — that is what marks it answered.' : 'The local record closes with the coordinates written.'}
+					{/if}
+				</div>
+				<footer class="rq-foot">
+					<span class="rq-hint">Ctrl-Enter</span>
+					<span class="rq-spacer"></span>
+					<button class="rq-btn" onclick={close} disabled={posting}>Cancel</button>
+					<button class="rq-btn rq-btn--post rq-answer-sign" class:rq-btn--armed={armedAnswer} onclick={signAnswers} disabled={!canSignAnswer}>
+						{posting ? 'signing…' : armedAnswer ? `sure? sign ${entries.length} event${entries.length === 1 ? '' : 's'}` : 'sign · keep local ▸'}
+					</button>
+				</footer>
+			{:else}
+				<div class="rq-help">
+					{answer.output === 'kasten'
+						? 'write it as a note here; a full kasten is the agent\'s job — the composer opens anchored to this place with the request pointer'
+						: 'the composer opens anchored to this place with the request pointer — the note you write there answers it'}
+				</div>
+				<footer class="rq-foot">
+					<span class="rq-spacer"></span>
+					<button class="rq-btn" onclick={close} disabled={posting}>Cancel</button>
+					<button class="rq-btn rq-btn--post rq-answer-compose" onclick={() => openComposerFor(answer!)} disabled={posting}>open the composer ▸</button>
+				</footer>
+			{/if}
 		{/if}
 	</div>
 </div>
@@ -928,6 +1156,103 @@
 		flex-wrap: wrap;
 		gap: 4px;
 		margin-top: 4px;
+	}
+	.rq-answer-toggle,
+	.rq-answer-back {
+		margin-left: auto;
+		margin-right: var(--s-2);
+	}
+	.rq-answer-toggle {
+		color: var(--ask);
+		border-color: color-mix(in srgb, var(--ask) 50%, transparent);
+	}
+	.rq-picks {
+		display: flex;
+		flex-direction: column;
+		gap: 6px;
+	}
+	.rq-pick {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: baseline;
+		gap: 6px 10px;
+		text-align: left;
+		font: inherit;
+		color: var(--fg);
+		background: var(--bg-surface);
+		border: 1px solid var(--panel-border);
+		border-left: 3px solid var(--ask);
+		border-radius: var(--r-sm);
+		padding: 6px 10px;
+		cursor: pointer;
+	}
+	.rq-pick:hover:not(:disabled) {
+		border-color: var(--panel-border-strong);
+		border-left-color: var(--ask);
+	}
+	.rq-pick__badge {
+		font: 600 calc(var(--t-xs) - 3px) / 1.2 var(--font-mono);
+		letter-spacing: 0.08em;
+		text-transform: uppercase;
+		color: var(--ask);
+		border: 1px solid color-mix(in srgb, var(--ask) 50%, transparent);
+		border-radius: 3px;
+		padding: 1px 6px;
+	}
+	.rq-pick__task {
+		flex: 1 1 60%;
+		font-size: var(--t-xs);
+	}
+	.rq-pick__terms,
+	.rq-pick__meta {
+		font: calc(var(--t-xs) - 2px) / 1.3 var(--font-mono);
+		color: var(--base5);
+	}
+	.rq-ask-line {
+		display: flex;
+		align-items: baseline;
+		gap: 10px;
+		font-family: var(--font-serif);
+		font-size: var(--t-md);
+		color: var(--fg);
+		background: var(--bg-surface);
+		border: 1px solid var(--panel-border);
+		border-left: 3px solid var(--ask);
+		border-radius: var(--r-sm);
+		padding: 6px 10px;
+	}
+	.rq-entries {
+		display: flex;
+		flex-direction: column;
+		gap: 8px;
+	}
+	.rq-entry {
+		display: flex;
+		flex-direction: column;
+		gap: 4px;
+		border: 1px solid var(--panel-border);
+		border-left: 3px solid var(--green);
+		border-radius: var(--r-sm);
+		padding: 6px 8px;
+	}
+	.rq-entry__row {
+		display: flex;
+		gap: 6px;
+		align-items: center;
+	}
+	.rq-entry__term {
+		flex: 1;
+	}
+	.rq-entry__body {
+		font-family: var(--font-serif);
+		font-size: var(--t-md);
+		min-height: 72px;
+		resize: vertical;
+	}
+	.rq-btn--armed {
+		background: var(--ask);
+		color: var(--bg);
+		border-color: var(--ask);
 	}
 	.rq-mini {
 		font-family: var(--font-mono);

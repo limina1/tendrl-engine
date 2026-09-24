@@ -118,6 +118,16 @@
 		const [k, pk, ...d] = coord.split(':');
 		app.openAddressableInModal({ kind: Number(k), pubkey: pk, d_tag: d.join(':') });
 	}
+	/** Answer this request by hand: the annotate window in answer mode. */
+	function answerYourself() {
+		app.annotationRequest = {
+			root: r.root,
+			parent: r.parent && r.parent !== r.root ? r.parent : undefined,
+			parentTitle: r.parent_title ?? null,
+			parentEventId: r.parent_event_id,
+			answer: r
+		};
+	}
 	async function remove() {
 		busy = true;
 		try {
@@ -208,6 +218,9 @@
 				</div>
 			{/if}
 			<div class="rcard__actions">
+				{#if !answered}
+					<button class="rcard__mini rcard__mini--answer" onclick={answerYourself} disabled={busy} title={r.output === 'vocabulary' ? 'Write the definitions yourself — one signed entry per term, each pointing at this request' : r.output === 'ask' ? 'Answer the question yourself — a signed note pointing at this request' : 'Write the note yourself in the composer, pointing at this request'}>answer it yourself ▸</button>
+				{/if}
 				{#if answered && isRecord}
 					<button class="rcard__mini" onclick={reopen} disabled={busy}>reopen</button>
 				{/if}
@@ -366,6 +379,10 @@
 		padding: 1px 6px;
 		min-height: 22px;
 		cursor: pointer;
+	}
+	.rcard__mini--answer {
+		color: var(--ask);
+		border-color: color-mix(in srgb, var(--ask) 50%, transparent);
 	}
 	.rcard__mini:hover:not(:disabled) {
 		color: var(--fg);

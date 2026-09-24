@@ -72,6 +72,7 @@
 			content: content.trim(),
 			format: format === 'markdown' ? undefined : format,
 			context: context.trim() || undefined,
+			request: open?.request,
 			broadcast
 		};
 	}
@@ -203,6 +204,9 @@
 				</label>
 			{:else}
 				<span class="ins-chip" title={root}><b>A</b> {rootTitle ?? short(root)}</span>
+			{/if}
+			{#if open?.request}
+				<span class="ins-chip ins-chip--answers" title={open.request}>↳ answers {open.requestTitle ?? short(open.request)}</span>
 			{/if}
 		</div>
 		<div class="ins-help">
@@ -388,6 +392,10 @@
 	.ins-label__sub {
 		text-transform: none;
 		letter-spacing: 0;
+	}
+	.ins-chip--answers {
+		color: var(--ask);
+		border-color: color-mix(in srgb, var(--ask) 50%, transparent);
 	}
 	.ins-anchor {
 		display: flex;

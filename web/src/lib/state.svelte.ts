@@ -131,6 +131,9 @@ export type AnnotationRequestOpen = {
 	 *  (the capture card, the event menu). The vocabulary output renders it
 	 *  word by word for marking; absent, the window fetches the parent. */
 	content?: string;
+	/** Hand-answer mode: the open request being answered here (from the
+	 *  request card's "answer it yourself"). The window opens in answer mode. */
+	answer?: api.AnnotationRequest;
 };
 
 /** Payload that opens the relink modal: the publication and the definition
@@ -159,6 +162,10 @@ export type InsertionComposerOpen = {
 	placement?: 'attach' | 'before' | 'after';
 	/** Selection excerpt → the `context` tag. */
 	context?: string;
+	/** The annotation request this note answers (its coordinate → the
+	 *  `request` tag; the pointer marks a signed request answered). */
+	request?: string;
+	requestTitle?: string;
 };
 
 export function createAppState() {
