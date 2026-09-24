@@ -2624,6 +2624,14 @@ curl -s -X PUT $B/notifications/prefs -H "$J" -d '{"entries":{"818":{"on":false}
 curl -s -X POST $B/notifications/fetch -H "$J" -d '{"policy":"fetch_always"}' | jq -c '{relays, fetched, counts}'
 #+end_src
 
+* Agent tools for asks — live (ran 2026-09-24: 14/14 over MCP)
+
+#+begin_src bash
+PORT=3131 scripts/verify/vocab-request-seed.sh > /tmp/seed.env; source /tmp/seed.env; export ROOT S1 USEC
+DATA_DIR=/tmp/verify-vocab-data PORT=3131 scripts/verify/agent-asks.sh   # stages an open 818 → tools/list has the five ask tools and no merge_ask → list_asks (compact act row) → get_ask_diff (text hunks with {{ref:, index replaced/added)
+                                                                          # → review_ask → <data_dir>/reviews/<818>.json, GET /merge-requests/:id/review, the diff carries `review`, no kind-7 by us → prepare_merge (unsigned draft, 2 sections + index) → the 818 stays open → fetch_asks
+#+end_src
+
 * Agent tools for asks (plan Phase 5c step 6, branch =feat/notifications=)
 
 Five tools, one catalog (=src/tools.rs=), reachable over MCP and in-app:
