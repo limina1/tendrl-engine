@@ -412,6 +412,9 @@
 							{:else}
 								a new version of your index (same <code>d</code>) with the glossary taken out
 							{/if}
+						{:else if glossPreview.owner}
+							<span class="icard__k">index</span>
+							unchanged — your index already lists the glossary
 						{:else}
 							<span class="icard__k">index</span>
 							not yours — the glossary lives under your key and is not in this index

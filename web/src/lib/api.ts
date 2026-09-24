@@ -2889,11 +2889,21 @@ export interface GlossaryRequest {
 export interface GlossaryPreview {
 	/** The unsigned glossary bundle the publish would sign. */
 	glossary: UnsignedTemplate;
-	/** The unsigned new version of the index, or `null` when the index is
-	 *  not the signer's (the glossary then exists only under their key). */
-	index: UnsignedTemplate | null;
+	glossary_coordinate?: string;
+	/** The unsigned new version of the index — present only when the signer
+	 *  owns the root AND its `a → glossary` row must change (absent when the
+	 *  glossary is already listed, or when the index is not the signer's). */
+	index?: UnsignedTemplate | null;
+	index_coordinate?: string;
+	/** Whether the signer owns the root index. Decides the wording, not
+	 *  `index` (which is also absent when nothing about the index changes). */
+	owner?: boolean;
 	/** Definition coordinates the glossary lists after this change. */
 	promoted: string[];
+	/** …and before it. */
+	previous?: string[];
+	sign_as?: string;
+	signer_pubkey?: string;
 	note?: string;
 }
 
