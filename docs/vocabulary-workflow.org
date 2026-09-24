@@ -23,7 +23,9 @@ text". The answers are *definition sections* — ordinary kind-30041
 insertions tagged =t: definition=, one per term, anchored to the passage
 that needed them, several per term allowed because a 30041's =d= is an
 opaque nanoid (unlike NIP-54's slug-as-=d=, which gives every author one
-article per word). The text is then *relinked*: each term becomes a
+article per word). One event per term holds everything relevant to
+it — the sense here, background, expansion — rather than a definition
+plus side notes. The text is then *relinked*: each term becomes a
 nostrdown ={{ref:<coordinate>|term}}= pointing at /that one definition
 event/ — not a =[[term]]= wikilink, which unpacks to every article whose
 =d= happens to match. A coordinate ref resolves sibling-first and
@@ -350,11 +352,13 @@ anything is counted, as they do for insertions.
 
 ** The preference
 
-Settings → *Asks*: the default rows fixed and greyed, then a list the
-user appends to — a kind number (or a pick from the kinds tendrl
-knows), a one-line rule shown back ("9802 · a highlight of one of your
-sections"), on/off, and whether it counts toward the modeline number
-or only shows in the list. Persisted engine-side in
+Settings → *Asks*: a *checkable list* of the event kinds tendrl has a
+verb for — not a free kind-number field. Each row is a kind, the
+engine's one-line rule shown back ("9802 · a highlight of one of your
+sections"), a checkbox, and whether it counts toward the modeline
+number or only shows in the list. The default acts are checked and
+fixed; the rest start unchecked. A kind appears here the day the
+engine gains a verb for it, so the list is the engine's table, mirrored. Persisted engine-side in
 =<data_dir>/asks.json= (like =relays.json= / =providers.json=: local
 state, never a Nostr event — nothing about what you want to hear is
 published), so both shells and =list_asks= over MCP honour the same
@@ -370,7 +374,8 @@ Settings › Asks — what tendrl lists for you
   on   9802  highlights of your sections                     count  ×
   on   1111  comments on your publications                   list   ×
   off  7     reactions to anything of yours                  list   ×
-  [+ add a kind ▾]   9735 zaps · 1111 · 9802 · 7 · 30045 shelved you · custom…
+  off  9735  zaps to you                                     list   ×
+  off  30045 someone shelved your publication                 list   ×
 
   count = adds to the modeline number · list = shows in the buffer only
 #+end_example
@@ -401,9 +406,9 @@ digraph inbox {
 
   subgraph cluster_web { label="Web"; style="rounded"; color="#bbb"; fontsize=10;
     pill   [label="modeline pill\n\"2 asks · 5 new\" (desktop)\ndrawer row (phone)"];
-    buf    [label="asks buffer\nasks | activity | mine\nSPC b o i", fillcolor="#cfe2ff"];
+    buf    [label="asks list = AnnotationsList\nacross publications, grouped\n(cards coloured as asks)", fillcolor="#cfe2ff"];
     review [label="merge-request review\n(diff + one armed button)", fillcolor="#cfe2ff"];
-    card   [label="card under the target\nin the reader / table\n(\"merge? · 2 sections\")"];
+    card   [label="the same card under its anchor\nin the reader / table\n(\"merge? · 2 sections\")"];
     pill -> buf -> review;
     card -> review;
   }
@@ -424,10 +429,15 @@ digraph inbox {
   other: Confirm-gated, =#p= you on your *read* relays — the inbox
   half of your kind 10002, where others write to reach you (NIP-65).
   See /Relay routing/ below.
-- *Two doors.* The count on the modeline (a pill next to agent
-  services, the drawer's status section on the phone) opens the asks
-  buffer; the same 818 also shows as a card under the section it
-  targets, so an owner reading their own text meets it in place.
+- *An ask is an annotation.* An 818 has an anchor (its =a= target) and
+  a body (what it asks), so it renders as the same card everything
+  else does — under its section in the reader, on the annotations
+  table — coloured as an ask and structured like a comment with an
+  anchor. No ask-specific surface. The cross-publication view is that
+  same card list (=AnnotationsList=) grouped by publication, opened
+  from the modeline count (a pill next to agent services; the drawer's
+  status section on the phone). Opening a card jumps to its anchor;
+  the review sits on the card.
 - *Never a push.* No OS notification, no badge that demands clearing.
   An ignored 818 just stays open; the requester sees "open" on their
   side and nothing more.
@@ -551,13 +561,13 @@ and returns a structured diff:
 | Step              | Engine                                                                  | Web                                                     |
 |-------------------+-------------------------------------------------------------------------+---------------------------------------------------------|
 | 818 parse + build | =publication/merge_request.rs=: template, parse, status from kind-7     | —                                                       |
-| The list          | =GET /api/v1/asks= (+ store-stream kind filter, Confirm-gated fetch)    | modeline pill, drawer row, =asks= buffer (=SPC b o i=)  |
+| The list          | =GET /api/v1/asks= (+ store-stream kind filter, Confirm-gated fetch)    | modeline pill, drawer row → =AnnotationsList= across publications |
 | Preference        | =asks.rs=: =AskRule= per kind (tag → mine), =AsksPrefs= in =<data_dir>/asks.json=, =GET/PUT /api/v1/asks/prefs= | Settings › Asks; modeline splits act count / activity count |
 | Routing           | =engine.inbox_relays_for(pubkey)= (10002 via the composition → =read_relays()=) + =destination_set= (inbox ∪ provenance =note.relays()= ∪ hints ∪ mine, each with a reason) | Confirm modal lists each relay with its reason; refuses when inbox and provenance are both unknown |
 | The diff          | =GET /asks/:id/diff=: base pairing, content hunks, index structure diff | =MergeRequestReview.svelte= on the diff-gate primitive  |
 | Merge / decline   | =POST /asks/:id/merge= (sign next versions + react + broadcast), =/decline= | armed button; "open in composer" hand-off               |
-| In place          | 818s folded into =insertions/load= as =role: merge_request=             | card under the target section / index                   |
-| Agent             | =list_asks= · =get_ask_diff= · =review_ask= · =prepare_merge= · =fetch_asks= (=tools.rs=, one catalog, MCP + in-app) | =/tendrl-requests= skill; asks buffer "ask the assistant" |
+| In place          | 818s folded into =insertions/load= as =role: ask= (anchor = the =a= target) | the ordinary card, ask colour, review on the card       |
+| Agent             | =list_asks= · =get_ask_diff= · =review_ask= · =prepare_merge= · =fetch_asks= (=tools.rs=, one catalog, MCP + in-app) | =/tendrl-requests= skill; "ask the assistant" on the asks list |
 
 
 * The agent's side: gathering asks, still a pull
@@ -568,7 +578,7 @@ breaks the moment a request comes from someone else. But the line from
 [[file:zettel/decision-requests-are-events.org][the requests decision]]
 holds: *nothing wakes the agent*. "Listening" is the user typing "check
 tendrl" (external harness, =/tendrl-requests=) or pressing "ask the
-assistant" in the asks buffer (in-app, agent services). Both read the
+assistant" on the asks list (in-app, agent services). Both read the
 same list through the same tools; both stop where the user's key is
 needed.
 
@@ -658,7 +668,7 @@ reacting =+= as part of that publish.
 
 ** In-app, the same
 
-The asks buffer's "ask the assistant" runs the same tools on the agent
+The asks list's "ask the assistant" runs the same tools on the agent
 service (=needs_service= / =needs_funding= as for any turn). The
 review's summary panel is =review_ask='s output rendered inline, not a
 second implementation.
@@ -672,36 +682,42 @@ subscription and the store stream may announce an 818 the moment it
 lands; the agent still reads on the user's word. Live store, pulled
 agent.
 
-* Open questions (defaults stated)
+* Decisions (answered 2026-09-24)
 
-- *One definition per term per answer, or several?* Default one; the
-  agent may write a second with =t: background= if the term needs a
-  history, and that is an ordinary note.
-- *Relink every occurrence or the first per section?* Default first per
-  section. Every occurrence makes prose unreadable and the =a= tag is
-  the same either way.
-- *Promote at all?* Optional. The ref resolves without it; promotion
-  puts the glossary in the reading order and the TOC. Default: offer it
-  on the same card, do not require it.
-- *Two definitions of one term, which does the relink cite?* The one
-  answering this request; if several answer it, the card asks. A
-  =[[term]]= would have hidden this choice; the coordinate makes it
-  explicit.
-- *Global 30818 as well?* No. That is the ambiguity being moved away
-  from; a term that wants a global article is a separate act.
-- *Merge-request status.* NIP-25 =+= / =-= only. An open 818 stays a
+- *One event per term.* A single vocabulary event encompasses anything
+  relevant to the topic — sense in this text, background, expansion.
+  No second =t: background= note.
+- *Relink the first occurrence per section.*
+- *Promotion is offered, never required.* The ref resolves without it;
+  promoting into the collection is the owner's choice on the same card.
+- *Several definitions of one term.* The relink cites the one answering
+  this request. *nostrdown TODO*: a ref that names several targets and
+  lets the reader choose — e.g. ={{ref:coord1,coord2|term}}= resolving
+  to a list, rendered as a chooser. Tracked below under follow-ups.
+- *No global 30818.*
+- *Merge-request status.* NIP-25 =+= / =-= only; an open 818 stays a
   card until a reaction lands; no draft/closed states.
-- *Who may relink a foreign publication into a derivative?* Anyone, as
-  with any fork; the 818 is a request, not a claim.
-- *Is the asks list a buffer or a profile tab?* Default a buffer: it
-  spans publications and has its own verb, unlike Repositories / Spells
-  which list what you own.
-- *Where does a kind the user adds get its rule?* From the engine's
-  table; a kind it does not know falls to =p= you. Adding a smarter rule
-  is a code change, on purpose: the web never builds the filter.
-- *Do signed annotation requests on your publication count as asks?*
-  Default yes, low in the list, with no verb but "read"; the owner may
-  answer with their own agent or ignore.
+- *Anyone may relink a foreign publication into a derivative.* They are
+  offering a merge request for editing the document, or they fork it
+  and make it their own structure. The 818 is a request, not a claim.
+- *An ask is an annotation.* Coloured as an ask, structured like a
+  comment with an anchor, listed with everything else; no separate
+  buffer kind.
+- *The preference is a checkable list* of the events tendrl has a verb
+  for. The rule per kind is the engine's; the web never builds the
+  filter.
+- *Signed annotation requests on your publication are asks.* Yes.
+
+* Follow-ups
+
+- *nostrdown multi-target ref* — ={{ref:a,b|display}}= (and =embed=?):
+  tokenizer accepts a comma list of entities, =resolve_refs= returns
+  =targets: [...]= per span, =RichContent= shows a chooser; emits one
+  =a= tag per target. Needed the moment two definitions answer one term.
+- *Live relay subscription for asks* — the engine may hold =#p me= open
+  on the read relays; the agent still reads on the user's word.
+- *=inbox_relays_for(pubkey)= + =destination_set=* — the two routing
+  helpers (see /Relay routing/).
 
 * Related
 - [[file:insertions-plan.org][Insertions plan]] — Phase 5c goes here
