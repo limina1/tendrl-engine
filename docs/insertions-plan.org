@@ -631,17 +631,17 @@ in [[file:annotations-ledger-contract.org][annotations-ledger-contract]]
 as the ledger. Six tracks in ONE worktree (=feat/annotations-ledger=, off
 =feat/annotations-table=) with disjoint files; the harness runs at the end.
 
-- [ ] *Track 0* — contract + prototype committed; =api.ts=
+- [X] *Track 0* — contract + prototype committed; =api.ts=
       (=LoadedInsertion.reply_to=, =replies= map, =InsertionRequest.reply_to=);
       =state.svelte.ts= (=revealAnnotation= / =requestRevealAnnotation=,
       =InsertionComposerOpen.replyTo=, the page's =onAnnotationsTable= slot)
-- [ ] *Track A — engine* (=src/api/insertions.rs=, =publication/insertion.rs=,
+- [X] *Track A — engine* (=src/api/insertions.rs=, =publication/insertion.rs=,
       =tools.rs=): =reply_to= on =POST /insertions= → =["q", coord, hint, pk]=
       (400 outside the root); =insertions/load= rows carry =reply_to=, the
       body's =replies: true= returns coordinate → kind-1111 count (one
       =#A= query); =propose_insertion= takes =reply_to=; pure
       =reply_counts= + tests
-- [ ] *Track B — the ledger* (=AnnotationsBuffer=, =components/annotations/*=):
+- [X] *Track B — the ledger* (=AnnotationsBuffer=, =components/annotations/*=):
       =ledger-model.ts= (rows, four groupings, =flatOrder=, facet counts,
       spell round trip); =LedgerHeader= (spell · + annotate · group ·
       rows|board · facets who/where/what/when); =LedgerRows= / =LedgerRow= /
@@ -649,27 +649,27 @@ as the ledger. Six tracks in ONE worktree (=feat/annotations-ledger=, off
       =AnnotationThread= (kind-1111 replies, sign reply, note in reply);
       keys j/k/Enter/Esc/g/n; the canvas files, the mobile list and
       =actions/draggable= deleted
-- [ ] *Track C — the reader* (=ContinuousView=, =PaginatedView=, =ReaderBuffer=,
+- [X] *Track C — the reader* (=ContinuousView=, =PaginatedView=, =ReaderBuffer=,
       =reading.svelte.ts=, =SettingsBuffer=, =InsertionCard=): the =.strip= of
       =.stub=s under each section, one open card per section; "n annotate"
       in the section title row; the margin layout and its preference
       removed; =InsertionCard= gains "≡ row" and the compact thread
-- [ ] *Track D — the windows* (=AnnotationRequestModal=, =RequestCard=,
+- [X] *Track D — the windows* (=AnnotationRequestModal=, =RequestCard=,
       =InsertionComposerModal=): answer mode one term at a time (term
       picker with defined/signed/skipped, "+ another term…", sign pages
       and closes on the last, skip, the second-definition warning);
       "define them myself ▸" from vocabulary mode; "define a term yourself ▸"
       on an answered vocabulary request; the composer's =replyTo= chip
-- [ ] *Track E — the review* (=MergeRequestReviewBuffer=, =DiffBlock=,
+- [X] *Track E — the review* (=MergeRequestReviewBuffer=, =DiffBlock=,
       =+page.svelte=): the review takes the reader's leaf in a split
       ("← reader" restores it); status strip, the ask, "what changes"
       tiles, the definitions being linked, per-section =details=, the
       thread, the sticky footer whose verdict stays; the page registers
       =onAnnotationsTable=
-- [ ] *Track F — docs + verify*: this phase; zettel; commands.org
+- [X] *Track F — docs + verify*: this phase; zettel; commands.org
       "Annotations ledger — verify"; =scripts/verify/annotations-ledger-seed.sh=
       + =annotations-ledger.mjs= (the table harness removed)
-- [ ] live: the harness green on a fresh seed (split · groups · facets ·
+- [X] live: the harness green on a fresh seed (split · groups · facets ·
       thread + reply · answer the ask · define a term · relink · review in
       the reader's leaf · strip · reveal · hover · scroll · phone)
 

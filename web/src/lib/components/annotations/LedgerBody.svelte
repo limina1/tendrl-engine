@@ -327,6 +327,7 @@
 		count={row.replies}
 		parent={row.parent}
 		{parentTitle}
+		onreplied={onchanged}
 	/>
 </div>
 

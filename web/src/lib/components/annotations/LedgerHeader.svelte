@@ -257,6 +257,10 @@
 		align-items: center;
 	}
 	.facet { display: inline-flex; align-items: center; gap: 3px; flex-wrap: wrap; }
+	/* Phone: one line that scrolls sideways (the contract's mobile rule). */
+	:global(.abuf.phone) .facets { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; padding: 4px 8px 6px; }
+	:global(.abuf.phone) .facets::-webkit-scrollbar { display: none; }
+	:global(.abuf.phone) .facet { flex-wrap: nowrap; }
 	.facet__lab {
 		color: var(--base4);
 		letter-spacing: 0.08em;
