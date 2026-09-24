@@ -37,7 +37,14 @@
 	let title = $state('');
 	let context = $state(open?.context ?? '');
 	let scope = $state<string[]>(['section']);
-	let output = $state<'notes' | 'kasten' | 'vocabulary'>('notes');
+	let output = $state<'notes' | 'kasten' | 'vocabulary'>(app.annotationRequest?.output ?? 'notes');
+	// A vocabulary preset (from the composer's segment) needs the section text at once.
+	let presetApplied = false;
+	$effect(() => {
+		if (presetApplied) return;
+		presetApplied = true;
+		if (output === 'vocabulary') setOutput('vocabulary');
+	});
 	let sign = $state(false);
 	let broadcast = $state(false);
 	let posting = $state(false);
@@ -293,7 +300,7 @@
 	/** The same anchor, in the composer: the user writes the note instead of asking for it. */
 	function writeItYourself() {
 		if (!open) return;
-		const { content: _content, ...anchor } = open;
+		const { content: _content, output: _output, ...anchor } = open;
 		app.annotationRequest = null;
 		app.insertionComposer = anchor;
 	}
@@ -393,7 +400,6 @@
 					<span class="rq-title__on">— on <em>{open.parentTitle}</em></span>
 				{/if}
 			</h3>
-			<button class="rq-mini rq-mini--self" onclick={writeItYourself} disabled={posting} title="Skip the request: write the note yourself, anchored here (the composer)">write it yourself →</button>
 			<button class="rq-close" onclick={close} aria-label="Close">×</button>
 		</header>
 
@@ -416,8 +422,9 @@
 			{/if}
 		</div>
 
-		<div class="rq-label">output</div>
-		<div class="rq-seg" role="radiogroup" aria-label="Output">
+		<div class="rq-label">mode <span class="rq-label__sub">— write it yourself, or ask your agent for notes, a kasten, or vocabulary</span></div>
+		<div class="rq-seg" role="radiogroup" aria-label="Mode">
+			<button class="rq-seg__opt" role="radio" aria-checked="false" onclick={writeItYourself} disabled={posting} title="Write the note yourself, anchored here — the composer (signs as you)">write</button>
 			<button class="rq-seg__opt" class:on={output === 'notes'} role="radio" aria-checked={output === 'notes'} onclick={() => setOutput('notes')} disabled={posting} title="Loose notes attached to the place">notes</button>
 			<button class="rq-seg__opt" class:on={output === 'kasten'} role="radio" aria-checked={output === 'kasten'} onclick={() => setOutput('kasten')} disabled={posting} title="Several notes plus an index grouping them — promotable as a sub-chapter">kasten</button>
 			<button class="rq-seg__opt" class:on={output === 'vocabulary'} role="radio" aria-checked={output === 'vocabulary'} onclick={() => setOutput('vocabulary')} disabled={posting} title="One definition event per word, anchored here — highlight the words in the text">vocabulary</button>
@@ -631,11 +638,6 @@
 		display: flex;
 		flex-direction: column;
 		gap: 5px;
-	}
-	.rq-mini--self {
-		margin-left: auto;
-		margin-right: var(--s-2);
-		color: var(--base6);
 	}
 	.rq-header {
 		display: flex;
