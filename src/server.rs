@@ -943,6 +943,14 @@ pub async fn start(opts: ServeOptions) -> anyhow::Result<RunningServer> {
             post(api::insertions::fork_preview_handler),
         )
         .route(
+            "/api/v1/publication/relink",
+            post(api::insertions::relink_publish_handler),
+        )
+        .route(
+            "/api/v1/publication/relink/preview",
+            post(api::insertions::relink_preview_handler),
+        )
+        .route(
             "/api/v1/annotations/requests",
             get(api::requests::list_handler).post(api::requests::create_handler),
         )

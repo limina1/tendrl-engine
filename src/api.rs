@@ -10190,6 +10190,110 @@ mod chat_api_tests {
         assert_eq!(ix2.tags.iter().filter(|t| t[0] == "a").count(), 1);
     }
 
+    /// Relink (plan Phase 5c step 3): the owner's sections get new versions
+    /// under the same `d` whose first occurrence of each defined term is a
+    /// `{{ref:<definition>|term}}`, with one `a` per definition; a section
+    /// with no occurrence is untouched; a stranger sees the diff but may not
+    /// publish; a second relink is a no-op because refs are protected spans.
+    #[tokio::test]
+    async fn test_relink_own_publication_to_definitions() {
+        use crate::identity::{encode_nsec, IdentitySession};
+        use crate::publication::insertion::{event_tags, index_children};
+        const USER_SEC: &str = "000000000000000000000000000000000000000000000000000000000000000b";
+        const ASST_SEC: &str = "000000000000000000000000000000000000000000000000000000000000000c";
+
+        let dir = tempfile::tempdir().unwrap();
+        let mut engine = crate::engine::Engine::new(dir.path()).unwrap();
+        let user = Arc::new(Mutex::new(IdentitySession::new()));
+        let user_pk = user.lock().unwrap().login_nsec(&encode_nsec(USER_SEC).unwrap()).unwrap();
+        let asst = Arc::new(Mutex::new(IdentitySession::new()));
+        let asst_pk = asst.lock().unwrap().login_nsec(&encode_nsec(ASST_SEC).unwrap()).unwrap();
+        engine.set_user_session(user.clone());
+        engine.set_assistant_session(asst.clone());
+        engine.set_assistant_signing(crate::signing::SigningController::new(asst));
+        let engine = Arc::new(engine);
+        std::mem::forget(dir);
+        let cx = crate::tools::ToolCx { engine: engine.clone(), chat: Arc::new(Mutex::new(ChatState::new())) };
+
+        // The assistant owns a two-section index; only §2 uses the terms.
+        let saved = crate::tools::dispatch(&cx, "save_draft", json!({ "title": "On Method", "sections": [
+            { "title": "The consistency condition", "content": "A new theory must agree with the theories already accepted." },
+            { "title": "Against method", "content": "What the textbook calls epistemological anarchism is only the record.\n\nTheir incommensurability is not a failure of care; incommensurability again." }
+        ] })).await.unwrap();
+        let out = crate::tools::dispatch(&cx, "sign_draft", json!({ "draft_id": saved["draft_id"] })).await.unwrap();
+        let index = crate::query::query_by_id(engine.ndb(), out["publication_id"].as_str().unwrap()).unwrap().unwrap();
+        let root = crate::publication::insertion::event_coordinate(&index).unwrap();
+        let children = index_children(&index);
+        let (s1, s2) = (children[0].clone(), children[1].clone());
+
+        let mut coords = Vec::new();
+        for term in ["epistemological anarchism", "incommensurability"] {
+            let d = crate::tools::dispatch(&cx, "propose_insertion", json!({
+                "root": root, "parent": s2, "role": "definition", "title": term, "content": format!("{term}, as used here.")
+            })).await.unwrap();
+            coords.push(d["coordinate"].as_str().unwrap().to_string());
+        }
+
+        // Preview as the owner: §2 changes with two hunks, §1 is unchanged.
+        let req = insertions::RelinkRequest { root: root.clone(), ..Default::default() };
+        let pv = insertions::relink_templates(&engine, &req, &asst_pk).await.unwrap();
+        assert!(pv.owner);
+        assert_eq!(pv.definitions.len(), 2, "defaults to every local definition on the root");
+        assert_eq!(pv.hunk_count, 2);
+        assert_eq!(pv.sections.len(), 1);
+        assert_eq!(pv.unchanged, vec![s1.clone()]);
+        assert!(pv.skipped.is_empty());
+        let sec = &pv.sections[0];
+        assert_eq!(sec.coordinate, s2);
+        assert_eq!(sec.hunks.len(), 2);
+        assert!(sec.hunks[0].line_after.contains(&format!("{{{{ref:{}|epistemological anarchism}}}}", coords[0])));
+        assert_eq!(sec.template.content.matches("{{ref:").count(), 2);
+        assert_eq!(sec.tags_added.len(), 2);
+        assert!(sec.template.tags.iter().any(|t| t[0] == "d"), "same d");
+        // A stranger sees the same diff but is told it is not theirs.
+        let pv_user = insertions::relink_templates(&engine, &req, &user_pk).await.unwrap();
+        assert!(!pv_user.owner && pv_user.note.is_some() && pv_user.hunk_count == 2);
+        // Naming a non-definition is refused.
+        let bad = insertions::RelinkRequest { root: root.clone(), definitions: Some(vec![s1.clone()]), ..Default::default() };
+        assert!(insertions::relink_templates(&engine, &bad, &asst_pk).await.is_err());
+
+        // Sign + store as the owner (what the publish handler does).
+        let signer = engine.assistant_signing().unwrap();
+        let mut t = pv.sections.into_iter().next().unwrap().template;
+        t.pubkey = Some(asst_pk.clone());
+        let new_s2 = signer.sign(t).await.unwrap();
+        let _ = finalize_publish(&engine, None, vec![new_s2.clone()], false, None, true).await.unwrap();
+        let (_, pk, d) = crate::publication::insertion::coord_parts(&s2).unwrap();
+        let stored = engine.get_addressable(30041, pk, d, crate::engine::FetchPolicy::LocalOnly).await.unwrap().unwrap();
+        assert_eq!(stored["id"], new_s2["id"], "the new version is the newest");
+        let content = stored["content"].as_str().unwrap();
+        assert_eq!(content.matches("{{ref:").count(), 2);
+        assert!(content.contains("care; incommensurability again."), "only the first occurrence is linked");
+        let tags = event_tags(&stored);
+        for c in &coords {
+            assert!(tags.iter().any(|t| t[0] == "a" && &t[1] == c), "a → {c}");
+        }
+        assert!(tags.iter().any(|t| t[0] == "T" && t[1] == "against-method"));
+
+        // Idempotent: the refs are protected spans.
+        let pv2 = insertions::relink_templates(&engine, &req, &asst_pk).await.unwrap();
+        assert_eq!(pv2.hunk_count, 0);
+        assert!(pv2.sections.is_empty());
+        assert_eq!(pv2.unchanged.len(), 2);
+
+        // Glossary in the same call: the index gains a → glossary.
+        let req3 = insertions::RelinkRequest {
+            root: root.clone(),
+            glossary: Some(insertions::RelinkGlossaryEdit { add: vec![coords[1].clone()], remove: vec![] }),
+            ..Default::default()
+        };
+        let pv3 = insertions::relink_templates(&engine, &req3, &asst_pk).await.unwrap();
+        assert_eq!(pv3.promoted, vec![coords[1].clone()]);
+        assert!(pv3.glossary.is_some());
+        let ix = pv3.index.expect("owner's index changes");
+        assert_eq!(ix.tags.iter().filter(|t| t[0] == "a").last().unwrap()[1], pv3.glossary_coordinate.clone().unwrap());
+    }
+
     /// Requests end to end: an unsigned record → listed open → answered by the
     /// assistant tool (coordinates recorded, no reply event since nothing was
     /// signed); a signed request → a kind-1111 mention of the assistant in the

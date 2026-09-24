@@ -1295,6 +1295,356 @@ pub async fn fork_publish_handler(
     }))
 }
 
+// ---------------------------------------------------------------------------
+// POST /api/v1/publication/relink  ·  /preview — own publication (step 3)
+//
+// Rewrite the root's sections so the first occurrence of each defined term
+// points at its definition event (`{{ref:<coord>|term}}`), as new versions
+// under the same `d`. Owner only: a non-owner sees the full preview (the
+// diff is the same) but publishing is the derivative + merge-request path
+// (step 4). Optionally the same publish promotes definitions into the
+// glossary (the step-2 helpers), so one armed button does both.
+
+#[derive(Debug, Deserialize, Default)]
+#[serde(default)]
+pub struct RelinkGlossaryEdit {
+    pub add: Vec<String>,
+    pub remove: Vec<String>,
+}
+
+#[derive(Debug, Deserialize, Default)]
+#[serde(default)]
+pub struct RelinkRequest {
+    /// The publication: `30040:pubkey:d`.
+    pub root: String,
+    /// Definition coordinates to link (`30041:pk:d`, local, `t: definition`,
+    /// anchored to `root`). Default: every local definition on the root.
+    pub definitions: Option<Vec<String>>,
+    /// Optional per-event glossary promotion in the same publish.
+    pub glossary: Option<RelinkGlossaryEdit>,
+    pub sign_as: Option<SignAs>,
+    /// Default false: sign and keep local.
+    pub broadcast: bool,
+    pub relays: Option<Vec<String>>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct RelinkDefinition {
+    pub coordinate: String,
+    pub term: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct RelinkSkipped {
+    pub coordinate: String,
+    pub why: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct RelinkPreview {
+    pub root: String,
+    /// Whether the signer owns the root index (publishing requires it here).
+    pub owner: bool,
+    /// The definitions the relink pointed at, in the order they were tried.
+    pub definitions: Vec<RelinkDefinition>,
+    /// Sections that change: hunks + the unsigned next version each.
+    pub sections: Vec<crate::publication::relink::RelinkedSection>,
+    /// Sections with no occurrence outside a protected span.
+    pub unchanged: Vec<String>,
+    /// Children of the index that were not relinked, and why.
+    pub skipped: Vec<RelinkSkipped>,
+    pub hunk_count: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub glossary: Option<EventTemplate>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub glossary_coordinate: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub index: Option<EventTemplate>,
+    pub index_coordinate: String,
+    /// Glossary entries after the edit (empty when no glossary edit asked).
+    pub promoted: Vec<String>,
+    pub sign_as: SignAs,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub signer_pubkey: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
+}
+
+fn definition_term(ev: &Value) -> String {
+    event_tags(ev)
+        .iter()
+        .find(|t| t.first().map(String::as_str) == Some("title"))
+        .and_then(|t| t.get(1))
+        .map(|s| s.trim().to_string())
+        .unwrap_or_default()
+}
+
+/// The definitions to link: the named ones (each checked) or every local
+/// definition anchored to the root.
+async fn relink_definitions(
+    engine: &AppState,
+    root: &str,
+    named: Option<&[String]>,
+) -> Result<Vec<RelinkDefinition>, EngineError> {
+    let mut out: Vec<RelinkDefinition> = Vec::new();
+    match named {
+        Some(list) => {
+            for c in list {
+                let c = c.trim();
+                let (k, pk, d) = coord_parts(c)
+                    .ok_or_else(|| EngineError::BadRequest(format!("definitions: not a coordinate: `{c}`")))?;
+                if k != 30041 {
+                    return Err(EngineError::BadRequest(format!("definitions: `{c}` is not a 30041")));
+                }
+                let ev = engine
+                    .get_addressable(30041, pk, d, FetchPolicy::LocalOnly)
+                    .await?
+                    .ok_or_else(|| EngineError::NotFound(format!("definitions: `{c}` is not in the local store")))?;
+                if !is_definition(&ev) {
+                    return Err(EngineError::BadRequest(format!(
+                        "definitions: `{c}` is not a definition (no `t: definition`)"
+                    )));
+                }
+                if !InsertionAnchor::from_event(&ev).is_some_and(|a| a.root == root) {
+                    return Err(EngineError::BadRequest(format!("definitions: `{c}` is not anchored to {root}")));
+                }
+                let term = definition_term(&ev);
+                if term.is_empty() {
+                    return Err(EngineError::BadRequest(format!("definitions: `{c}` has no title (the term)")));
+                }
+                if !out.iter().any(|o| o.coordinate == c) {
+                    out.push(RelinkDefinition { coordinate: c.to_string(), term });
+                }
+            }
+        }
+        None => {
+            let loaded = load_insertions(
+                engine,
+                InsertionsLoadRequest { root: root.to_string(), policy: Some("local_only".into()), ..Default::default() },
+            )
+            .await?;
+            for i in loaded.insertions.into_iter().filter(|i| i.role == InsertionRole::Definition) {
+                let term = i.term.clone().unwrap_or_else(|| definition_term(&i.event));
+                if !term.trim().is_empty() {
+                    out.push(RelinkDefinition { coordinate: i.coordinate, term });
+                }
+            }
+        }
+    }
+    Ok(out)
+}
+
+/// Compute the relink for `signer_pubkey`: every changed section's next
+/// version, the glossary/index templates when a glossary edit was asked.
+pub(crate) async fn relink_templates(
+    engine: &AppState,
+    req: &RelinkRequest,
+    signer_pubkey: &str,
+) -> Result<RelinkPreview, EngineError> {
+    let root = req.root.trim().to_string();
+    let (rk, rpk, rd) = coord_parts(&root)
+        .filter(|(k, _, _)| *k == 30040)
+        .ok_or_else(|| {
+            EngineError::BadRequest(format!("root must be a 30040:pubkey:d coordinate, got `{root}`"))
+        })?;
+    let (rpk, rd) = (rpk.to_string(), rd.to_string());
+    let owner = signer_pubkey == rpk;
+    let index = engine
+        .get_addressable(rk as u64, &rpk, &rd, FetchPolicy::LocalFirst)
+        .await?
+        .ok_or_else(|| EngineError::NotFound(format!("index {root} not found")))?;
+    let definitions = relink_definitions(engine, &root, req.definitions.as_deref()).await?;
+    let defs: Vec<(String, String)> = definitions.iter().map(|d| (d.term.clone(), d.coordinate.clone())).collect();
+    let now = super::unix_now_i64();
+
+    let mut sections = Vec::new();
+    let mut unchanged = Vec::new();
+    let mut skipped = Vec::new();
+    for child in index_children(&index) {
+        let Some((k, pk, d)) = coord_parts(&child) else {
+            skipped.push(RelinkSkipped { coordinate: child.clone(), why: "not a coordinate".into() });
+            continue;
+        };
+        if k != 30041 {
+            skipped.push(RelinkSkipped { coordinate: child.clone(), why: format!("kind {k} — a sub-index is not relinked") });
+            continue;
+        }
+        let Some(ev) = engine.get_addressable(30041, pk, d, FetchPolicy::LocalOnly).await? else {
+            skipped.push(RelinkSkipped { coordinate: child.clone(), why: "not in the local store".into() });
+            continue;
+        };
+        if defs.is_empty() {
+            unchanged.push(child.clone());
+            continue;
+        }
+        match crate::publication::relink::relink_section(&ev, &defs, now) {
+            Some(r) => sections.push(r),
+            None => unchanged.push(child.clone()),
+        }
+    }
+    let hunk_count = sections.iter().map(|s| s.hunks.len()).sum();
+
+    let mut note = if owner {
+        None
+    } else {
+        Some(format!(
+            "you do not own {root}: this is the diff a derivative would carry; publishing it is a merge request to the owner (step 4)"
+        ))
+    };
+    let (mut glossary, mut glossary_coordinate, mut ix, mut promoted) = (None, None, None, Vec::new());
+    if let Some(g) = &req.glossary {
+        if !g.add.is_empty() || !g.remove.is_empty() {
+            let gr = GlossaryRequest { root: root.clone(), add: g.add.clone(), remove: g.remove.clone(), ..Default::default() };
+            let gp = glossary_templates(engine, &gr, signer_pubkey).await?;
+            glossary = Some(gp.glossary);
+            glossary_coordinate = Some(gp.glossary_coordinate);
+            ix = gp.index;
+            promoted = gp.promoted;
+            if note.is_none() {
+                note = gp.note;
+            }
+        }
+    }
+    Ok(RelinkPreview {
+        root: root.clone(),
+        owner,
+        definitions,
+        sections,
+        unchanged,
+        skipped,
+        hunk_count,
+        glossary,
+        glossary_coordinate,
+        index: ix,
+        index_coordinate: root,
+        promoted,
+        sign_as: SignAs::User,
+        signer_pubkey: None,
+        note,
+    })
+}
+
+/// POST /api/v1/publication/relink/preview — the diff and every unsigned
+/// next version, for the named signer (a non-owner still gets the diff).
+pub async fn relink_preview_handler(
+    State(engine): State<AppState>,
+    Extension(signing): Extension<crate::signing::SigningController>,
+    Json(req): Json<RelinkRequest>,
+) -> Result<Json<RelinkPreview>, EngineError> {
+    let sign_as = req.sign_as.unwrap_or(SignAs::User);
+    let signer_pubkey = preview_pubkey(&engine, &signing, sign_as).await;
+    let mut preview = relink_templates(
+        &engine,
+        &req,
+        signer_pubkey
+            .as_deref()
+            .unwrap_or(crate::publication::insertion::PUBKEY_PLACEHOLDER),
+    )
+    .await?;
+    for s in preview.sections.iter_mut() {
+        crate::signing::ensure_client_tag(&mut s.template.tags);
+        s.template.pubkey = signer_pubkey.clone();
+    }
+    if let Some(g) = preview.glossary.as_mut() {
+        crate::signing::ensure_client_tag(&mut g.tags);
+        g.pubkey = signer_pubkey.clone();
+    }
+    if let Some(i) = preview.index.as_mut() {
+        crate::signing::ensure_client_tag(&mut i.tags);
+        i.pubkey = signer_pubkey.clone();
+    }
+    preview.sign_as = sign_as;
+    preview.signer_pubkey = signer_pubkey;
+    Ok(Json(preview))
+}
+
+#[derive(Debug, Serialize)]
+pub struct RelinkedSectionEvent {
+    pub coordinate: String,
+    pub event: Value,
+}
+
+#[derive(Debug, Serialize)]
+pub struct RelinkPublishResponse {
+    pub root: String,
+    pub owner: bool,
+    /// The signed new versions of the changed sections, ingested.
+    pub sections: Vec<RelinkedSectionEvent>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub index: Option<Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub glossary: Option<Value>,
+    pub hunk_count: usize,
+    pub promoted: Vec<String>,
+    pub signed_as: SignAs,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
+    #[serde(flatten)]
+    pub publish: PublishResponse,
+}
+
+/// POST /api/v1/publication/relink — sign the changed sections (+ glossary
+/// and index when asked) as the named source; owner only; local until
+/// broadcast.
+pub async fn relink_publish_handler(
+    State(engine): State<AppState>,
+    Extension(signing): Extension<crate::signing::SigningController>,
+    Json(req): Json<RelinkRequest>,
+) -> Result<Json<RelinkPublishResponse>, EngineError> {
+    let sign_as = req.sign_as.unwrap_or(SignAs::User);
+    let (pubkey, signer) = super::resolve_publish_signer(&engine, &signing, sign_as).await?;
+    let preview = relink_templates(&engine, &req, &pubkey).await?;
+    if !preview.owner {
+        return Err(EngineError::BadRequest(format!(
+            "{} is not yours: relinking it is a derivative plus a merge request to its owner, not a new version",
+            preview.root
+        )));
+    }
+    if preview.sections.is_empty() && preview.glossary.is_none() {
+        return Err(EngineError::BadRequest("nothing to relink: no term occurs outside code, headings or existing links".into()));
+    }
+    let mut sections = Vec::with_capacity(preview.sections.len());
+    let mut section_events = Vec::with_capacity(preview.sections.len() + 1);
+    for s in preview.sections {
+        let mut t = s.template;
+        t.pubkey = Some(pubkey.clone());
+        let ev = signer.sign(t).await.map_err(super::map_publish_sign_error)?;
+        sections.push(RelinkedSectionEvent { coordinate: event_coordinate(&ev).unwrap_or(s.coordinate), event: ev.clone() });
+        section_events.push(ev);
+    }
+    let glossary = match preview.glossary {
+        Some(mut g) => {
+            g.pubkey = Some(pubkey.clone());
+            let ev = signer.sign(g).await.map_err(super::map_publish_sign_error)?;
+            section_events.push(ev.clone());
+            Some(ev)
+        }
+        None => None,
+    };
+    let index = match preview.index {
+        Some(mut i) => {
+            i.pubkey = Some(pubkey.clone());
+            Some(signer.sign(i).await.map_err(super::map_publish_sign_error)?)
+        }
+        None => None,
+    };
+    let publish = super::finalize_publish(&engine, index.clone(), section_events, req.broadcast, req.relays.clone(), true)
+        .await?
+        .0;
+    Ok(Json(RelinkPublishResponse {
+        root: preview.root,
+        owner: preview.owner,
+        sections,
+        index,
+        glossary,
+        hunk_count: preview.hunk_count,
+        promoted: preview.promoted,
+        signed_as: sign_as,
+        note: preview.note,
+        publish,
+    }))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

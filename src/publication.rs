@@ -17,6 +17,7 @@ use serde_json::Value;
 
 pub mod compose;
 pub mod insertion;
+pub mod relink;
 pub mod tree_emit;
 
 /// Kind constants for NKBIP-01 publications

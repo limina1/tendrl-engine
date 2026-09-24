@@ -987,6 +987,17 @@ fn is_word_byte(b: u8) -> bool {
 /// absent from the edits. Pure.
 pub fn link_terms(content: &str, format: RelinkFormat, terms: &[(String, String)]) -> (String, Vec<LinkedTerm>) {
     let protected = protected_spans(content, format);
+    // A term the text already references — a `{{ref:<that coordinate>|…}}`
+    // token, or any ref whose display text is the term — is done: the
+    // relink is "the first occurrence", not "every occurrence that is not
+    // yet a token", so a second pass changes nothing.
+    let existing = parse(content);
+    let already = |term: &str, coord: &str| {
+        existing.iter().any(|r| {
+            (matches!(r.kind, RefKind::Ref) && r.raw_target.eq_ignore_ascii_case(coord))
+                || r.display.as_deref().is_some_and(|d| d.trim().eq_ignore_ascii_case(term.trim()))
+        })
+    };
     let in_protected = |s: usize, e: usize| protected.iter().any(|&(ps, pe)| s < pe && e > ps);
     let lower = content.to_lowercase();
     // to_lowercase can change byte lengths for some scripts; fall back to the
@@ -997,7 +1008,7 @@ pub fn link_terms(content: &str, format: RelinkFormat, terms: &[(String, String)
     let mut edits: Vec<LinkedTerm> = Vec::new();
     for (term, coord) in ordered {
         let words: Vec<String> = term.split_whitespace().map(|w| w.to_lowercase()).collect();
-        if words.is_empty() {
+        if words.is_empty() || already(term, coord) {
             continue;
         }
         let mut from = 0usize;
@@ -1515,14 +1526,16 @@ mod tests {
 
     #[test]
     fn link_terms_skips_code_headings_links_and_existing_tokens() {
-        let c = "# incommensurability as a heading\n\nUse `incommensurability` in code, [incommensurability](https://x.y) in a link,\n{{ref:foo|incommensurability}} already, and here incommensurability at last.\n\n```\nincommensurability in a fence\n```\n";
+        // (an existing token whose display IS the term would count as "already
+        // referenced" — see the idempotence test — so this one displays otherwise)
+        let c = "# incommensurability as a heading\n\nUse `incommensurability` in code, [incommensurability](https://x.y) in a link,\n{{ref:foo|see incommensurability above}} already, and here incommensurability at last.\n\n```\nincommensurability in a fence\n```\n";
         let (out, edits) = link_terms(c, RelinkFormat::Markdown, &[t("incommensurability", "b9w1qe")]);
         assert_eq!(edits.len(), 1, "{edits:?}");
         assert!(out.contains("and here {{ref:30041:"), "{out}");
         assert!(out.contains("|incommensurability}} at last"));
         assert!(out.contains("`incommensurability`"));
         assert!(out.contains("[incommensurability](https://x.y)"));
-        assert!(out.contains("{{ref:foo|incommensurability}}"));
+        assert!(out.contains("{{ref:foo|see incommensurability above}}"));
         assert!(out.starts_with("# incommensurability as a heading"));
     }
 
@@ -1546,6 +1559,21 @@ mod tests {
         assert_eq!(edits.len(), 1);
         assert!(out.contains("prose") && out.contains("; the {{ref:30041:"), "{out}");
         assert!(out.contains("=consistency condition="));
+    }
+
+    #[test]
+    fn link_terms_is_idempotent_once_a_term_is_referenced() {
+        let c = "Their incommensurability is plain; incommensurability again.";
+        let (once, e1) = link_terms(c, RelinkFormat::Markdown, &[t("incommensurability", "b9w1qe")]);
+        assert_eq!(e1.len(), 1);
+        assert!(once.contains("plain; incommensurability again"), "the second occurrence stays plain");
+        let (twice, e2) = link_terms(&once, RelinkFormat::Markdown, &[t("incommensurability", "b9w1qe")]);
+        assert!(e2.is_empty(), "a referenced term is done: {e2:?}");
+        assert_eq!(twice, once);
+        // …and a ref to another definition of the same word counts too
+        let other = "{{ref:30041:abc:zz|Incommensurability}} and incommensurability.";
+        let (_, e3) = link_terms(other, RelinkFormat::Markdown, &[t("incommensurability", "b9w1qe")]);
+        assert!(e3.is_empty());
     }
 
     #[test]

@@ -2470,6 +2470,32 @@ curl -s -X POST $B/insertions/glossary -H "$J" -d "{\"root\":\"$ROOT\",\"remove\
 curl -s -X POST $B/insertions/glossary/preview -H "$J" -d "{\"root\":\"$ROOT\",\"add\":[\"$S1\"]}" | jq -r .error
 #+end_src
 
+* Relink (plan Phase 5c step 3, branch =feat/vocab-relink=)
+
+Your own publication: every section whose text uses a defined term gets a
+*new version under the same =d=* with the first occurrence rewritten as
+={{ref:<definition coordinate>|term as written}}= and one =a= tag per
+definition (=nostrdown::link_terms=, engine-side; code, headings, native
+links and existing tokens are never touched). Optionally the same publish
+promotes definitions into the glossary. A stranger gets the preview (the
+diff) but not the publish — that is the derivative + kind-818 path (step 4).
+
+#+begin_src bash
+cargo test --lib -- --test-threads=4 nostrdown::tests::link_terms relink test_relink_own_publication   # pure + handler-level
+B=localhost:3131/api/v1; J='Content-Type: application/json'
+# after the "Definitions (step 2)" recipe: two definitions on $ROOT by the owner's assistant, or write them with role: definition
+# preview — sections that change (hunks with line_before / line_after, tags_added, the unsigned template), unchanged, skipped
+curl -s -X POST $B/publication/relink/preview -H "$J" -d "{\"root\":\"$ROOT\"}" | jq -c '{owner, hunks:.hunk_count, changed:[.sections[]|{coordinate, n:(.hunks|length), added:.tags_added}], unchanged, skipped, note}'
+curl -s -X POST $B/publication/relink/preview -H "$J" -d "{\"root\":\"$ROOT\"}" | jq -r '.sections[0].hunks[]|"- "+.line_before+"\n+ "+.line_after'
+# publish (owner; sign_as user by default; local until broadcast) — optionally promote in the same call
+RL=$(curl -s -X POST $B/publication/relink -H "$J" -d "{\"root\":\"$ROOT\",\"glossary\":{\"add\":[\"$D1\"]}}"); echo "$RL" | jq -c '{owner, hunk_count, sections:[.sections[].coordinate], index:(.index!=null), glossary:(.glossary!=null), promoted}'
+# the stored section now carries the refs + a tags; the reader resolves them sibling-first, then as direct pointers
+curl -s "$B/events/$(echo "$RL" | jq -r '.sections[0].event.id')" | jq -c '{content, a:[.tags[]|select(.[0]=="a")|.[1]]}'
+# idempotent: a second preview reports no hunks (refs are protected spans)
+curl -s -X POST $B/publication/relink/preview -H "$J" -d "{\"root\":\"$ROOT\"}" | jq -c '{hunk_count, unchanged:(.unchanged|length)}'
+# a stranger: the diff, owner:false, and publish → 400
+#+end_src
+
 * Kasten bundle delivery (answer a request whose output is kasten)
 
 One insertion for the whole kasten: the root 30040, anchored to the
