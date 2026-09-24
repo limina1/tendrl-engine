@@ -151,6 +151,9 @@
 		<div class="rcard__body">
 			{#if r.scope.length > 0}
 				<div class="rcard__line"><span class="rcard__k">scope</span> {r.scope.join(' · ')} · {r.output}</div>
+				{#if r.output === 'vocabulary'}
+					<div class="rcard__line"><span class="rcard__k">terms</span> {r.terms?.length ? r.terms.join(', ') : 'find them'}</div>
+				{/if}
 			{/if}
 			{#if r.style}
 				<div class="rcard__line">

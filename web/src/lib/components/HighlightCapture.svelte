@@ -68,7 +68,8 @@
 			parent: pending.addr,
 			parentTitle,
 			parentEventId: pending.eventId,
-			context: excerpt
+			context: excerpt,
+			content: pending.content
 		};
 		window.getSelection()?.removeAllRanges();
 		dismiss();
@@ -379,7 +380,7 @@
 		class="hc-popover"
 		class:hc-popover--mobile={mobile}
 		role="dialog"
-		aria-label={askMode ? 'Ask for notes about this passage' : 'Publish highlight'}
+		aria-label={askMode ? 'Annotate this passage' : 'Publish highlight'}
 		onfocusin={() => (touched = true)}
 	>
 		<textarea
@@ -390,12 +391,12 @@
 			aria-label={askMode ? 'Selected passage (editable)' : 'Highlighted text (editable)'}
 		></textarea>
 		{#if askMode}
-			<div class="hc-note">annotate mode — this passage becomes the request's context</div>
+			<div class="hc-note">annotate mode — this passage becomes the request's context (vocabulary: its words are pre-highlighted)</div>
 			<div class="hc-foot">
 				<span class="hc-hint">{text.trim().length} chars</span>
 				<span class="hc-spacer"></span>
 				<button class="hc-btn" onclick={dismiss}>Cancel</button>
-				<button class="hc-btn hc-btn--post" onclick={ask} disabled={text.trim().length < 3}>ask for notes →</button>
+				<button class="hc-btn hc-btn--post" onclick={ask} disabled={text.trim().length < 3}>annotate →</button>
 			</div>
 		{:else}
 		{#if edited}

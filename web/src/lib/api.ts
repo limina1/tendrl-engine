@@ -2871,7 +2871,10 @@ export interface AnnotationRequest {
 	task: string;
 	scope: string[];
 	context?: string;
-	output: 'notes' | 'kasten';
+	output: 'notes' | 'kasten' | 'vocabulary';
+	/** `output: vocabulary` — the words to define (the `term` tags); empty =
+	 *  "find the words these events use but never define". */
+	terms: string[];
 	created_at: number;
 	status: 'open' | 'answered';
 	answer?: AnnotationRequestAnswer;
@@ -2918,13 +2921,41 @@ export function createRequest(req: {
 	task: string;
 	scope?: string[];
 	context?: string;
-	output?: 'notes' | 'kasten';
+	output?: 'notes' | 'kasten' | 'vocabulary';
+	/** `output: vocabulary` — the highlighted words; the engine generates the
+	 *  content line from them ("define these words in the context of these
+	 *  events: …"). */
+	terms?: string[];
 	style?: string;
 	sign?: boolean;
 	broadcast?: boolean;
 	relays?: string[];
 }) {
 	return fetchJson<AnnotationRequest & { event?: NostrEvent }>('/api/v1/annotations/requests', {
+		method: 'POST',
+		body: JSON.stringify(req)
+	});
+}
+
+/** The unsigned kind-30041 a request would sign — every event-creating
+ *  modal ends in this preview (the tags as they will be emitted). */
+export interface RequestPreview {
+	template: { kind: number; content: string; tags: string[][]; created_at?: number };
+}
+export function previewRequest(req: {
+	root: string;
+	parent?: string;
+	parent_event_id?: string;
+	parent_title?: string;
+	title?: string;
+	task?: string;
+	scope?: string[];
+	context?: string;
+	output?: 'notes' | 'kasten' | 'vocabulary';
+	terms?: string[];
+	style?: string;
+}) {
+	return fetchJson<RequestPreview>('/api/v1/annotations/requests/preview', {
 		method: 'POST',
 		body: JSON.stringify(req)
 	});

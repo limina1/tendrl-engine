@@ -125,6 +125,10 @@ export type AnnotationRequestOpen = {
 	roots?: { coord: string; title: string | null }[];
 	/** Selection excerpt the ask is about. */
 	context?: string;
+	/** The anchored section's full source content, when the opener has it
+	 *  (the capture card, the event menu). The vocabulary output renders it
+	 *  word by word for marking; absent, the window fetches the parent. */
+	content?: string;
 };
 
 /** Payload that opens the insertion composer. */
