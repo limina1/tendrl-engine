@@ -350,22 +350,27 @@ preference, not a query the web has to build. An unknown kind gets the
 generic =p= rule. Muted authors and the ignore list apply before
 anything is counted, as they do for insertions.
 
-** The preference
+** The notifications drawer
 
-Settings → *Asks*: a *checkable list* of the event kinds tendrl has a
-verb for — not a free kind-number field. Each row is a kind, the
+Not a settings page about asks: a *notifications drawer* — tendrl's
+one surface for "what can it tell me about". It is a *checkable list*
+of the event kinds tendrl has a verb for, not a free kind-number
+field; what is checked is what the modeline shows on desktop and what
+the ☰ drawer's status section shows on the phone (next to agent
+services and relay status). Asks are the rows that need an act; the
+rest is activity. Each row is a kind, the
 engine's one-line rule shown back ("9802 · a highlight of one of your
 sections"), a checkbox, and whether it counts toward the modeline
 number or only shows in the list. The default acts are checked and
 fixed; the rest start unchecked. A kind appears here the day the
 engine gains a verb for it, so the list is the engine's table, mirrored. Persisted engine-side in
-=<data_dir>/asks.json= (like =relays.json= / =providers.json=: local
+=<data_dir>/notifications.json= (like =relays.json= / =providers.json=: local
 state, never a Nostr event — nothing about what you want to hear is
 published), so both shells and =list_asks= over MCP honour the same
 set.
 
 #+begin_example
-Settings › Asks — what tendrl lists for you
+Notifications — what tendrl can tell you about
 
   on   818   merge requests on your publications            act   default
   on   7     verdicts on merge requests you sent             act   default
@@ -377,10 +382,11 @@ Settings › Asks — what tendrl lists for you
   off  9735  zaps to you                                     list   ×
   off  30045 someone shelved your publication                 list   ×
 
-  count = adds to the modeline number · list = shows in the buffer only
+  count = adds to the modeline number · list = shows in the notifications list only
+  (desktop: modeline pill · phone: ☰ drawer › status)
 #+end_example
 
-The modeline number is then "2 asks · 5 new" — acts first, activity
+The modeline pill is then "2 asks · 5 new" — acts first, activity
 second, and the second half is whatever the user turned on. Nothing
 here is a push; the number sits there until the buffer is opened.
 =fetch_asks= pulls exactly the enabled kinds with =#p me= (plus =#a= /
@@ -396,7 +402,7 @@ digraph inbox {
 
   subgraph cluster_engine { label="Engine"; style="rounded"; color="#bbb"; fontsize=10;
     store  [label="nostrdb\n818 · 7 · 30041 requests", fillcolor="#e2e3e5"];
-    prefs  [label="asks.json\ndefault kinds + the user's\n(rule per kind, count | list)", fillcolor="#fff3cd"];
+    prefs  [label="notifications.json\ndefault kinds + the user's\n(rule per kind, count | list)", fillcolor="#fff3cd"];
     asks   [label="GET /api/v1/asks\nenabled kinds · engine's rule per kind\n#p me · #a / #A my coordinates\nstatus from kind-7 by the owner\n(newest wins, like git status)", fillcolor="#fff3cd"];
     prefs -> asks;
     stream [label="store stream\nIngested{kind: 818}", fillcolor="#e2e3e5"];
@@ -405,7 +411,7 @@ digraph inbox {
   }
 
   subgraph cluster_web { label="Web"; style="rounded"; color="#bbb"; fontsize=10;
-    pill   [label="modeline pill\n\"2 asks · 5 new\" (desktop)\ndrawer row (phone)"];
+    pill   [label="notifications\nmodeline pill (desktop)\n☰ drawer › status (phone)\n\"2 asks · 5 new\""];
     buf    [label="asks list = AnnotationsList\nacross publications, grouped\n(cards coloured as asks)", fillcolor="#cfe2ff"];
     review [label="merge-request review\n(diff + one armed button)", fillcolor="#cfe2ff"];
     card   [label="the same card under its anchor\nin the reader / table\n(\"merge? · 2 sections\")"];
@@ -562,7 +568,7 @@ and returns a structured diff:
 |-------------------+-------------------------------------------------------------------------+---------------------------------------------------------|
 | 818 parse + build | =publication/merge_request.rs=: template, parse, status from kind-7     | —                                                       |
 | The list          | =GET /api/v1/asks= (+ store-stream kind filter, Confirm-gated fetch)    | modeline pill, drawer row → =AnnotationsList= across publications |
-| Preference        | =asks.rs=: =AskRule= per kind (tag → mine), =AsksPrefs= in =<data_dir>/asks.json=, =GET/PUT /api/v1/asks/prefs= | Settings › Asks; modeline splits act count / activity count |
+| Notifications     | =notifications.rs=: =Rule= per kind (tag → mine), prefs in =<data_dir>/notifications.json=, =GET/PUT /api/v1/notifications/prefs= | notifications drawer (desktop modeline 🔔 · phone ☰ › status); pill splits act count / activity count |
 | Routing           | =engine.inbox_relays_for(pubkey)= (10002 via the composition → =read_relays()=) + =destination_set= (inbox ∪ provenance =note.relays()= ∪ hints ∪ mine, each with a reason) | Confirm modal lists each relay with its reason; refuses when inbox and provenance are both unknown |
 | The diff          | =GET /asks/:id/diff=: base pairing, content hunks, index structure diff | =MergeRequestReview.svelte= on the diff-gate primitive  |
 | Merge / decline   | =POST /asks/:id/merge= (sign next versions + react + broadcast), =/decline= | armed button; "open in composer" hand-off               |
@@ -703,9 +709,10 @@ agent.
 - *An ask is an annotation.* Coloured as an ask, structured like a
   comment with an anchor, listed with everything else; no separate
   buffer kind.
-- *The preference is a checkable list* of the events tendrl has a verb
-  for. The rule per kind is the engine's; the web never builds the
-  filter.
+- *Notifications are a checkable list* of the events tendrl has a verb
+  for — a notifications drawer, not a settings page about asks; it
+  feeds the desktop modeline and the phone drawer's status section.
+  The rule per kind is the engine's; the web never builds the filter.
 - *Signed annotation requests on your publication are asks.* Yes.
 
 * Follow-ups
