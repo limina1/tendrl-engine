@@ -1,3 +1,4 @@
+import { DEFAULT_COMPOSE_FORMAT } from '$lib/layers/registry';
 import { goto } from '$app/navigation';
 import {
 	searchConfig,
@@ -179,6 +180,10 @@ function _createAppState() {
 	// 30023 blog / 30818 wiki / custom = a single atomic event. Owned here (not
 	// in ComposeView) so resuming a draft can restore the editor's mode.
 	let composeKind = $state(30040);
+	// Default content format for every section (canonical mimetype). The
+	// composer's own heading syntax is Markdown, so that is the default; the
+	// engine stamps the resolved value as each 30041's `m` tag at publish.
+	let composeFormat = $state<string>(DEFAULT_COMPOSE_FORMAT);
 	// Body for atomic kinds. Owned here (not in ComposeView) so a buffer
 	// switch doesn't drop a part-written atomic body; ComposeView seeds it
 	// from the section contents on first switch to an atomic kind.
@@ -186,6 +191,7 @@ function _createAppState() {
 	let composeAtomicSeeded = $state(false);
 	const compose = $derived<ComposeState>({
 		title: composeTitle,
+		format: composeFormat,
 		tags: composeTags,
 		sections: composeSections,
 		source_publication_addr: composeSourcePubAddr,
@@ -2156,6 +2162,7 @@ function _createAppState() {
 			const canSign = identityCanSign(identityStatus);
 			await api.publish({
 				title: `Chat export ${new Date().toISOString().slice(0, 10)}`,
+				format: 'text/markdown',
 				tags: [],
 				sections: fragments.map(f => ({
 					title: `[${f.role}]`,
@@ -2259,12 +2266,13 @@ function _createAppState() {
 		return sections.map((s) => {
 			const baseTags = s.tags.map((t) => [t.name, t.value] as [string, string]);
 			if (!s.source_addr) {
-				return { kind: 'editable', title: s.title, tags: baseTags, content: s.content };
+				return { kind: 'editable', title: s.title, format: s.format, tags: baseTags, content: s.content };
 			}
 			if (sectionDiverged(s)) {
 				return {
 					kind: 'forked',
 					title: s.title,
+					format: s.format,
 					tags: baseTags,
 					original_addr: s.source_addr,
 					content: s.content,
@@ -2314,6 +2322,7 @@ function _createAppState() {
 				const blocks = toPublishBlocks(sections);
 				resp = await api.publishBlocks({
 					title: pubTitle,
+					format: composeFormat,
 					tags: pubTags.map((t) => [t.name, t.value] as [string, string]),
 					blocks,
 					source_publication_addr: composeSourcePubAddr,
@@ -2325,10 +2334,12 @@ function _createAppState() {
 			} else {
 				resp = await api.publish({
 					title: pubTitle,
+					format: composeFormat,
 					tags: pubTags.map((t) => [t.name, t.value] as [string, string]),
 					sections: sections.map((s) => ({
 						title: s.title,
 						content: s.content,
+						format: s.format,
 						level: s.level,
 						tags: s.tags.map((t) => [t.name, t.value] as [string, string]),
 						// Reuse the matched section's d-tag on republish, else
@@ -2396,6 +2407,7 @@ function _createAppState() {
 		try {
 			const resp = await api.publish({
 				title,
+				format: composeFormat,
 				tags: tags.map((t) => [t.name, t.value] as [string, string]),
 				sections: [],
 				kind,
@@ -2562,10 +2574,12 @@ function _createAppState() {
 		try {
 			const resp = await api.saveDraft({
 				title,
+				format: composeFormat,
 				tags: tags.map((t) => [t.name, t.value] as [string, string]),
 				sections: sections.map((s) => ({
 					title: s.title,
 					content: s.content,
+					format: s.format,
 					level: s.level,
 					tags: s.tags.map((t) => [t.name, t.value] as [string, string]),
 					slot: s.slot,
@@ -2606,6 +2620,7 @@ function _createAppState() {
 						origin: 'compose' as const,
 						level: s.level,
 						slot: s.slot,
+						format: s.format,
 						// Keep the pinned section coordinate: publish must
 						// replace the same 30041, not mint a fresh nanoid.
 						d_tag: s.d_tag
@@ -2621,6 +2636,8 @@ function _createAppState() {
 			composeDTag = cs.d_tag ?? null;
 			// Restore the output kind so an atomic draft reopens atomic.
 			composeKind = cs.kind ?? 30040;
+			// Legacy drafts carry no format: fall back to the composer default.
+			composeFormat = cs.format ?? DEFAULT_COMPOSE_FORMAT;
 			// Blank + unseeded so ComposeView re-seeds the atomic body from the
 			// freshly loaded sections rather than showing a stale one.
 			composeAtomicBody = '';
@@ -2688,6 +2705,7 @@ function _createAppState() {
 			try {
 				const resp = await api.previewPublication({
 					title: meta.title,
+					format: composeFormat,
 					tags: meta.tags.map((t) => [t.name, t.value] as [string, string]),
 					sections: [],
 					kind: meta.kind,
@@ -2721,6 +2739,7 @@ function _createAppState() {
 			if (hasProvenance) {
 				const resp = await api.previewPublicationBlocks({
 					title: pubTitle,
+					format: composeFormat,
 					tags: pubTags.map((t) => [t.name, t.value] as [string, string]),
 					blocks: toPublishBlocks(sections),
 					source_publication_addr: composeSourcePubAddr,
@@ -2732,10 +2751,12 @@ function _createAppState() {
 			} else {
 				const resp = await api.previewPublication({
 					title: pubTitle,
+					format: composeFormat,
 					tags: pubTags.map((t) => [t.name, t.value] as [string, string]),
 					sections: sections.map((s) => ({
 						title: s.title,
 						content: s.content,
+						format: s.format,
 						level: s.level,
 						tags: s.tags.map((t) => [t.name, t.value] as [string, string]),
 						slot: s.slot
@@ -3725,6 +3746,7 @@ function _createAppState() {
 		composeTags = [];
 		composeDTag = null; // fresh publication identity
 		composeKind = 30040; // default back to publication
+		composeFormat = DEFAULT_COMPOSE_FORMAT;
 		composeAtomicBody = '';
 		composeAtomicSeeded = false;
 		previewVisible = false;
@@ -3773,10 +3795,14 @@ function _createAppState() {
 			if (!loadedSections.length) return;
 			const resp = await api.publish({
 				title: publication.title ?? 'Untitled',
+				// Re-publishing someone's sections: carry each one's declared (or
+				// inherited) format; a section that declares nothing is plain text.
+				format: 'text/plain',
 				tags: [],
 				sections: loadedSections.map(s => ({
 					title: s.title ?? '',
 					content: s.content ?? '',
+					format: s.effective_format ?? undefined,
 					tags: []
 				})),
 				sign: canSign,
@@ -5386,6 +5412,8 @@ function _createAppState() {
 		set composeDefaultMode(v: ComposeDefaultMode) { composeDefaultMode = v; },
 		get composeKind() { return composeKind; },
 		set composeKind(v: number) { composeKind = v; },
+		get composeFormat() { return composeFormat; },
+		set composeFormat(v: string) { composeFormat = v; },
 		get composeAtomicBody() { return composeAtomicBody; },
 		set composeAtomicBody(v: string) { composeAtomicBody = v; },
 		get composeAtomicSeeded() { return composeAtomicSeeded; },

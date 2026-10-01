@@ -717,6 +717,8 @@ export interface DraftComposeSection {
 	content: string;
 	level: number;
 	d_tag?: string;
+	/** Per-section content-format override; absent = inherit the draft's. */
+	format?: string;
 	tags: { name: string; value: string }[];
 	/** Transclude slot target (naddr/coordinate) — set when this item is a slot,
 	 *  restored on resume so the `{{slot:…}}` line comes back. */
@@ -726,6 +728,8 @@ export interface DraftComposeSection {
 export interface DraftComposeState {
 	title: string;
 	d_tag?: string;
+	/** Default content format (canonical mimetype). Absent on legacy drafts. */
+	format?: string;
 	/** Output kind — absent/30040 = publication; any other kind = atomic draft
 	 *  (blog/wiki/custom) so resume reopens the composer in the right mode. */
 	kind?: number;
@@ -745,10 +749,13 @@ export interface DraftPublication {
 
 export interface SaveDraftPayload {
 	title: string;
+	/** Default content format (canonical mimetype) — restored on resume. */
+	format?: string;
 	tags: [string, string][];
 	sections: {
 		title: string;
 		content: string;
+		format?: string;
 		level?: number;
 		tags: [string, string][];
 		d_tag?: string;
@@ -1655,10 +1662,17 @@ export function search(
 
 export interface PublishRequest {
 	title: string;
+	/** Content format of every section (or of the atomic body): a canonical
+	 *  mimetype (`text/markdown` | `text/org` | `text/asciidoc` | `text/plain`)
+	 *  or its short name. REQUIRED — the engine stamps it as each 30041's `m`
+	 *  tag and refuses (400) without it. Never written on the 30040. */
+	format: string;
 	tags: [string, string][];
 	sections: {
 		title: string;
 		content: string;
+		/** Per-section override of the request's `format`. */
+		format?: string;
 		tags: [string, string][];
 		level?: number;
 		/** Reuse this section d-tag (republish replace) instead of minting. */
@@ -1728,6 +1742,8 @@ export type PublishBlock =
 	| {
 			kind: 'editable';
 			title: string;
+			/** Per-block override of the request's `format`. */
+			format?: string;
 			tags: [string, string][];
 			content: string;
 			/** Reuse this 30041 d-tag (nanoid) on republish; omit to mint fresh. */
@@ -1744,6 +1760,7 @@ export type PublishBlock =
 	| {
 			kind: 'forked';
 			title: string;
+			format?: string;
 			tags: [string, string][];
 			original_addr: { kind: number; pubkey: string; d_tag: string };
 			content: string;
@@ -1754,6 +1771,8 @@ export type PublishBlock =
 
 export interface PublishBlocksRequest {
 	title: string;
+	/** Content format for every event-emitting block — see PublishRequest. */
+	format: string;
 	tags: [string, string][];
 	/** Reuse this index d-tag (nanoid) on republish; omit to mint fresh. */
 	d_tag?: string;

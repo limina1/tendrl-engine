@@ -493,6 +493,10 @@ export interface ContextItem {
 	 *  save/publish replace the same addressable event instead of minting a
 	 *  fresh nanoid — {{ref:d-tag}} references stay valid across publishes. */
 	d_tag?: string;
+	/** Per-section content-format override (canonical mimetype). Absent =
+	 *  inherit the compose-level `format`. Resolved at publish: the engine
+	 *  stamps the result as the section's `m` tag. */
+	format?: string;
 }
 
 export type SyncMode = 'reactive' | 'explicit';
@@ -502,6 +506,9 @@ export type ComposeDefaultMode = 'full' | 'plain';
 
 export interface ComposeState {
 	title: string;
+	/** Default content format for every section (canonical mimetype, e.g.
+	 *  `text/markdown`). Required by the publish API; sections may override. */
+	format: string;
 	tags: TagEntry[];
 	sections: ContextItem[];
 	/** When the draft was seeded from an existing publication, this is the
