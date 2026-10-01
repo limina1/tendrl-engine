@@ -9,6 +9,7 @@
 //! Extracted from the former `tree::state` ratatui TUI state machine as part
 //! of the frontend/backend boundary cleanup.
 
+use crate::error::EngineError;
 use crate::publication::NAddr;
 
 /// Focus position within compose mode
@@ -91,6 +92,11 @@ pub struct SectionCompose {
     /// enclosing 30040 index at this ordinal position and mints NO 30041 of its
     /// own. See `normalize_slot_coord` and `docs/nostrdown-spec.md`.
     pub slot_coord: Option<String>,
+    /// Content-format override for this section (`markdown` | `org` |
+    /// `asciidoc` | `plain` or a `text/*` mimetype). `None` = inherit the
+    /// publication's [`ComposeState::format`]. Resolved + stamped as the `m`
+    /// tag by [`ComposeState::stamp_section_mimetypes`] before emission.
+    pub format: Option<String>,
 }
 
 impl Default for SectionCompose {
@@ -105,6 +111,7 @@ impl Default for SectionCompose {
             current_tag_name: String::new(),
             current_tag_value: String::new(),
             slot_coord: None,
+            format: None,
         }
     }
 }
@@ -156,6 +163,12 @@ pub struct ComposeState {
     /// whose body is the whole compose, not a section graph. Persisted so a
     /// resumed draft reopens in the right mode (cf. NIP-37's `k` tag).
     pub kind: Option<u32>,
+    /// Default content format for every section (and the body of an atomic
+    /// event): `markdown` | `org` | `asciidoc` | `plain` or a `text/*`
+    /// mimetype. Required at publish — the engine refuses to emit a 30041
+    /// without a declared format (decision-mimetype-tag.org). Sections may
+    /// override via [`SectionCompose::format`].
+    pub format: Option<String>,
     /// Tags for the publication (30040)
     pub tags: Vec<TagEntry>,
     /// Sections (30041 events)
@@ -176,10 +189,60 @@ pub struct ComposeState {
     pub auto_update: AutoUpdateMode,
 }
 
+/// Replace (or add) the `["m", <mimetype>]` tag in a compose tag list.
+pub fn stamp_mimetype(tags: &mut Vec<TagEntry>, mimetype: &str) {
+    tags.retain(|t| t.name != "m");
+    tags.push(TagEntry {
+        name: "m".to_string(),
+        value: mimetype.to_string(),
+    });
+}
+
+/// Resolve the content format a section/event declares: its own override,
+/// else the publication default. Canonicalizes short names and aliases
+/// (`crate::mimetype::canonical`). `Err` when nothing is declared or the
+/// value is not a known text markup — publishing never guesses.
+pub fn resolve_format(own: Option<&str>, default: Option<&str>) -> Result<&'static str, EngineError> {
+    let raw = own
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .or(default.map(str::trim).filter(|s| !s.is_empty()))
+        .ok_or_else(|| {
+            EngineError::BadRequest(
+                "`format` is required: declare the content format (markdown | org | asciidoc | plain, \
+                 or a text/* mimetype) — the engine stamps it as the `m` tag on every section"
+                    .into(),
+            )
+        })?;
+    crate::mimetype::canonical(raw).ok_or_else(|| {
+        EngineError::BadRequest(format!(
+            "unknown content format {raw:?}: expected markdown | org | asciidoc | plain \
+             (or text/markdown | text/org | text/asciidoc | text/plain)"
+        ))
+    })
+}
+
 impl ComposeState {
     /// Create a new empty compose state
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Stamp every content-bearing section with its resolved `m` mimetype
+    /// tag (own override, else [`Self::format`]). Transclude slots mint no
+    /// 30041 and are skipped. The index (`self.tags`) is never stamped —
+    /// `m` describes section content, and tendrl writes nothing on 30040s.
+    /// Call before any builder; `Err` aborts the publish with a 400.
+    pub fn stamp_section_mimetypes(&mut self) -> Result<(), EngineError> {
+        let default = self.format.clone();
+        for sc in &mut self.sections {
+            if sc.slot_coord.is_some() {
+                continue;
+            }
+            let m = resolve_format(sc.format.as_deref(), default.as_deref())?;
+            stamp_mimetype(&mut sc.tags, m);
+        }
+        Ok(())
     }
 
     /// Reset the compose state for a new composition
@@ -854,6 +917,8 @@ pub struct ComposeBlock {
     /// same addressable event. Imported blocks never use it — the index
     /// references the original's own coordinate.
     pub d_tag: Option<String>,
+    /// Content-format override for this block (see [`SectionCompose::format`]).
+    pub format: Option<String>,
 }
 
 impl ComposeBlock {
@@ -892,6 +957,9 @@ pub struct ComposeBlockState {
     /// then persistent so title edits never break the addressable identity.
     pub d_tag: Option<String>,
     pub tags: Vec<TagEntry>,
+    /// Default content format for every block that emits a 30041 — see
+    /// [`ComposeState::format`].
+    pub format: Option<String>,
     pub auto_update: AutoUpdateMode,
     /// When this draft was seeded from an existing 30040, this is its NAddr.
     /// Used to emit a `fork`-marker `a` tag on the new publication index so
@@ -911,10 +979,26 @@ impl ComposeBlockState {
             title: String::new(),
             d_tag: None,
             tags: Vec::new(),
+            format: None,
             auto_update: AutoUpdateMode::default(),
             source_publication_addr: None,
             source_publication_event_id: None,
         }
+    }
+
+    /// Block-draft twin of [`ComposeState::stamp_section_mimetypes`]:
+    /// `Editable` and `Forked` blocks emit a 30041 and get their resolved `m`
+    /// tag; `Imported` blocks emit no event and are skipped.
+    pub fn stamp_block_mimetypes(&mut self) -> Result<(), EngineError> {
+        let default = self.format.clone();
+        for b in &mut self.blocks {
+            if matches!(b.kind, BlockKind::Imported { .. }) {
+                continue;
+            }
+            let m = resolve_format(b.format.as_deref(), default.as_deref())?;
+            stamp_mimetype(&mut b.tags, m);
+        }
+        Ok(())
     }
 
     /// Append an empty editable block
@@ -931,6 +1015,7 @@ impl ComposeBlockState {
             tags: Vec::new(),
             collapsed: false,
             d_tag: None,
+            format: None,
         });
         self.block_cursor = self.blocks.len() - 1;
     }
@@ -951,6 +1036,7 @@ impl ComposeBlockState {
             tags: Vec::new(),
             collapsed: false,
             d_tag: None,
+            format: None,
         });
         self.block_cursor = self.blocks.len() - 1;
     }
@@ -1063,6 +1149,79 @@ impl ComposeBlockState {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn m_of(tags: &[TagEntry]) -> Vec<String> {
+        tags.iter().filter(|t| t.name == "m").map(|t| t.value.clone()).collect()
+    }
+
+    #[test]
+    fn stamp_mimetype_replaces_rather_than_duplicates() {
+        let mut tags = vec![
+            TagEntry { name: "t".into(), value: "x".into() },
+            TagEntry { name: "m".into(), value: "text/org".into() },
+        ];
+        stamp_mimetype(&mut tags, "text/markdown");
+        assert_eq!(m_of(&tags), vec!["text/markdown"]);
+        assert_eq!(tags.len(), 2, "the other tag survives");
+    }
+
+    #[test]
+    fn resolve_format_override_default_aliases_and_errors() {
+        assert_eq!(resolve_format(Some("org"), Some("markdown")).unwrap(), "text/org");
+        assert_eq!(resolve_format(None, Some("markdown")).unwrap(), "text/markdown");
+        assert_eq!(resolve_format(Some("text/x-asciidoc"), None).unwrap(), "text/asciidoc");
+        assert_eq!(resolve_format(Some("  "), Some("plain")).unwrap(), "text/plain");
+        assert!(resolve_format(None, None).is_err(), "nothing declared → refuse");
+        assert!(resolve_format(Some("html"), None).is_err(), "unknown → refuse");
+        assert!(resolve_format(Some("application/json"), None).is_err());
+    }
+
+    #[test]
+    fn stamp_section_mimetypes_stamps_sections_only_and_skips_slots() {
+        let mut compose = ComposeState {
+            format: Some("markdown".into()),
+            tags: vec![TagEntry { name: "t".into(), value: "nostr".into() }],
+            sections: vec![
+                SectionCompose { title: "A".into(), ..Default::default() },
+                SectionCompose { title: "B".into(), format: Some("org".into()), ..Default::default() },
+                SectionCompose {
+                    title: "slot".into(),
+                    slot_coord: Some(format!("30041:{}:x", "ab".repeat(32))),
+                    ..Default::default()
+                },
+            ],
+            ..Default::default()
+        };
+        compose.stamp_section_mimetypes().unwrap();
+        assert_eq!(m_of(&compose.sections[0].tags), vec!["text/markdown"]);
+        assert_eq!(m_of(&compose.sections[1].tags), vec!["text/org"], "override wins");
+        assert!(m_of(&compose.sections[2].tags).is_empty(), "slots mint no 30041");
+        assert!(m_of(&compose.tags).is_empty(), "the index is never stamped");
+
+        // No default and no override on a content section → refused.
+        let mut bare = ComposeState {
+            sections: vec![SectionCompose::default()],
+            ..Default::default()
+        };
+        assert!(bare.stamp_section_mimetypes().is_err());
+    }
+
+    #[test]
+    fn stamp_block_mimetypes_skips_imported_blocks() {
+        let mut state = ComposeBlockState::new();
+        state.format = Some("asciidoc".into());
+        state.add_editable();
+        state.add_imported(
+            NAddr::new(30041, &"ab".repeat(32), "orig"),
+            "text".into(),
+            "alice".into(),
+            "Orig".into(),
+        );
+        state.blocks[0].format = Some("plain".into());
+        state.stamp_block_mimetypes().unwrap();
+        assert_eq!(m_of(&state.blocks[0].tags), vec!["text/plain"]);
+        assert!(m_of(&state.blocks[1].tags).is_empty(), "imported emits no event");
+    }
 
     #[test]
     fn normalize_slot_coord_accepts_only_30040_30041() {

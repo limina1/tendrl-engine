@@ -393,6 +393,10 @@ fn build_section_index_event(
 
     let custom_tags = ComposeState::tags_to_nostr_format(&section_tags_vec);
     for tag_vec in &custom_tags {
+        // `m` declares the 30041's *content* format; an index carries none.
+        if tag_vec.first().map(String::as_str) == Some("m") {
+            continue;
+        }
         tags.push(serde_json::to_value(tag_vec).unwrap_or(json!([])));
     }
     for tag_vec in ComposeState::author_n_tags(&custom_tags) {

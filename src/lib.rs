@@ -66,6 +66,7 @@ pub mod error;
 pub mod git;
 pub mod identity;
 pub mod llm;
+pub mod mimetype;
 pub mod providers;
 pub mod network;
 pub mod nip11;

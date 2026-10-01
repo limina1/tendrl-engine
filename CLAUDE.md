@@ -123,7 +123,8 @@ as the source of truth for any future frontend (web today; others via the API):
 
 - **`parser.rs`**: line-by-line classification for compose (headings/attributes/code
   blocks → which event kind 30040/30041 a line generates). Pure function, no UI state.
-- **`content.rs`**: `ContentDetector` — content-format detection. Pure.
+- (No content-format *detection* here any more: a section's markup is whatever its
+  `m` tag declares — `src/mimetype.rs` — never sniffed from the text.)
 - **`node.rs`**: `TreeNode`/`NodeId` structure + accessors. Pure data.
 
 The **compose payload structs** (`ComposeState`, `SectionCompose`, `TagEntry`,
@@ -182,6 +183,15 @@ sections and embeds new events on a 60-second interval when embeddings are enabl
 - **`signing.rs`**: Pluggable `Signer` trait + `InProcessSigner`. The engine is the
   signing orchestrator; callers turn an `EventTemplate` into a `SignedEvent` without
   knowing the key source (engine ncryptsec, NIP-07, future NIP-46).
+- **`mimetype.rs`**: the content-format contract, pure. `canonical()` (alias table:
+  `text/x-…` spellings, short names, legacy `format` values → the four canonical
+  mimetypes; `application/json` and other non-text → `None`), `from_tags` /
+  `from_event` (`m` first, `format` fallback, never sniffs). Publishing declares a
+  format at the compose-state boundary (`ComposeState::stamp_section_mimetypes` /
+  `ComposeBlockState::stamp_block_mimetypes` — every 30041 gets `["m", …]`, indexes
+  never; `PublishRequest.format` is required → 400 otherwise). The publication
+  stream (`PubLoadEvent::Index`/`Leaf`) ships `format` (own), `effective_format`
+  (own → nearest enclosing `text/*` index → none), `format_source`, `format_from`.
 - **`nip11.rs`**: NIP-11 relay information document fetch + cache (process-wide,
   normalized URL keys, 1-hour TTL)
 - **`nip42.rs`**: NIP-42 relay auth, pure: the kind-22242 `auth_template`,
@@ -386,7 +396,13 @@ stored `whats-up` — no need to hand-normalize; quote values containing spaces.
   file is **never** broadcast as a Nostr event (no auto-publishing kind 10002 /
   30002 from UI edits — see `project_publishing_philosophy`).
 - **Content modes**: Sections support Markdown, Org Mode, AsciiDoc, and PlainText,
-  detected from event tags.
+  declared by the `["m", <mimetype>]` tag (canonical `text/markdown` / `text/org` /
+  `text/asciidoc` / `text/plain`; legacy `["format", …]` read as an alias) — see
+  `mimetype.rs`. **Tag or nothing, no heuristics**: the engine refuses to publish a
+  section without a declared format and stamps `m` on every 30041 (never on a 30040);
+  the reader inherits an untagged section's format from the nearest enclosing index
+  that declares a `text/*` `m`, else the user picks. Decision:
+  `docs/zettel/decision-mimetype-tag.org`.
 - **nostrdb read lock**: Never run nostrdb queries concurrently — `query.rs` holds a
   global mutex for a reason (see module docs).
 - **Nostr event kinds used**: 0 (metadata), 3 (contacts), 777 (spells — saved
