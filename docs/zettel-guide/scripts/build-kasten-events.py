@@ -72,6 +72,11 @@ DANGLING_RE = re.compile(r"^\s*[-*+]\s+[`=~]([a-z0-9][a-z0-9-]*)[`=~]")
 
 
 FORMATS = {".adoc": "asciidoc", ".md": "markdown", ".org": "org"}
+# `m` = the content mimetype readers key on (NIP-94 / NKBIP-06 `m`; the
+# engine's canonical vocabulary — src/mimetype.rs). Emitted on every 30041
+# next to the legacy `format` name; never on a 30040 index
+# (decision-mimetype-tag.org).
+MIME = {"asciidoc": "text/asciidoc", "markdown": "text/markdown", "org": "text/org"}
 NOTE_EXTS = (".adoc", ".md", ".org")
 
 FENCES = ("----", "....", "|===", "====", "--")
@@ -453,7 +458,8 @@ class Kasten:
         # "T" = the note's human topic handle (short-title slug); sibling
         # {{ref:}} resolution matches on d-tag, T, and normalized title
         tags = [["d", self.dtag(stem)], ["title", title],
-                ["T", t_slug(title)], ["format", fmt]]
+                ["T", t_slug(title)], ["format", fmt],
+                ["m", MIME.get(fmt, "text/plain")]]
         for key, value in note["header"]:
             if key in ("title",) or key in self.drop_tags or not value:
                 continue
@@ -476,7 +482,8 @@ class Kasten:
                                            self.index_fmt)
         title = self.sanitize(title, tag_value=True)
         tags = [["d", dtag], ["title", title], ["T", t_slug(title)],
-                ["format", self.index_fmt], ["type", "meta"]]
+                ["format", self.index_fmt],
+                ["m", MIME.get(self.index_fmt, "text/plain")], ["type", "meta"]]
         tags += [["ref", self.dtag(r)] for r in sorted(refs) if r != self.name]
         return {"kind": 30041,
                 "content": self.sanitize(unwrap_adoc(content, self.index_fmt)),
@@ -628,7 +635,9 @@ class Kasten:
                 tags = [(t[0], t[1]) for t in ev["tags"]
                         if t[0] not in ("d", "title", "T", "w", "ref")]
             fmt = next((t[1] for t in ev["tags"] if t[0] == "format"),
-                       self.index_fmt)
+                       next((k for k, v in MIME.items()
+                             for t in ev["tags"] if t[0] == "m" and t[1] == v),
+                            self.index_fmt))
             sections.append({"title": title,
                              "content": demote(content, row["level"], fmt),
                              "tags": tags, "level": row["level"],

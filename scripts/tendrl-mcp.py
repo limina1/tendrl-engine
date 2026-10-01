@@ -180,6 +180,11 @@ TOOLS = [
                     "type": "string",
                     "description": "Publication title"
                 },
+                "format": {
+                    "type": "string",
+                    "enum": ["markdown", "org", "asciidoc", "plain"],
+                    "description": "Content format of every section. REQUIRED — the engine stamps it as each 30041's `m` mimetype tag (never on the index) and refuses without it. Use markdown unless the publication you are adding to says otherwise."
+                },
                 "sections": {
                     "type": "array",
                     "description": "List of sections, each with title and content",
@@ -187,7 +192,8 @@ TOOLS = [
                         "type": "object",
                         "properties": {
                             "title": {"type": "string", "description": "Section title"},
-                            "content": {"type": "string", "description": "Section content (markdown or plain text)"},
+                            "content": {"type": "string", "description": "Section content, in the declared `format`"},
+                            "format": {"type": "string", "enum": ["markdown", "org", "asciidoc", "plain"], "description": "Override the publication-level format for this section only"},
                             "tags": {
                                 "type": "array",
                                 "description": "Optional tags for this section as [name, value] pairs",
@@ -218,7 +224,7 @@ TOOLS = [
                     "items": {"type": "string"}
                 }
             },
-            "required": ["title", "sections"]
+            "required": ["title", "format", "sections"]
         }
     },
     {
@@ -421,12 +427,16 @@ def handle_tool_call(name, args):
         return json.dumps(result, indent=2)
 
     elif name == "tendrl_publish":
+        if not args.get("format"):
+            return json.dumps({"error": "`format` is required (markdown | org | asciidoc | plain): every section declares its content format; the engine stamps it as the m tag"})
         body = {
             "title": args["title"],
+            "format": args["format"],
             "sections": [
                 {
                     "title": s["title"],
                     "content": s["content"],
+                    **({"format": s["format"]} if s.get("format") else {}),
                     "tags": s.get("tags", [])
                 }
                 for s in args["sections"]
@@ -503,8 +513,15 @@ def handle_tool_call(name, args):
                 })
             # Use override title, or first page title, or filename
             title = args.get("title") or pages[0].get("title") or filename
+            # Content format from the source file's extension: markup files
+            # keep their markup; extracted documents (PDF/DOCX/EPUB/…) are
+            # plain text. The engine stamps it as every 30041's `m` tag.
+            ext = os.path.splitext(filename)[1].lower()
+            fmt = {".md": "markdown", ".markdown": "markdown", ".org": "org",
+                   ".adoc": "asciidoc", ".asciidoc": "asciidoc"}.get(ext, "plain")
             body = {
                 "title": title,
+                "format": fmt,
                 "sections": sections,
                 "tags": args.get("tags", []),
                 "sign_as": "assistant" if args.get("sign") else None,
