@@ -1,0 +1,51 @@
+#+TITLE: Composer formatting — a format selector now, buttons over source next, no WYSIWYG
+#+TYPE: idea
+#+STATUS: partial
+#+DATE: 2026-10-01
+
+The composer never declared what markup a section was written in; the
+engine now refuses to publish without it
+([[file:decision-mimetype-tag.org][decision]]). That forced the first piece
+of formatting UI into the composer, and set the direction for the rest.
+
+* Shipped (2026-10-01)
+
+- A *format* select in the mode bar next to *kind*: Markdown (default —
+  the composer's own heading syntax is Markdown), Org, AsciiDoc, Plain.
+  It is the document default; the engine stamps the resolved value as
+  every 30041's =m= tag.
+- A compact select on each section card: =inherit (<document format>)=
+  plus the explicit values — a mixed document is just sections with
+  different tags. Read-only (imported) sections cannot set one; they
+  emit no event.
+- Both ride on every publish / preview / blocks / atomic / draft payload;
+  a resumed draft restores both; a legacy draft without one falls back to
+  Markdown. Plain-mode re-parse keeps the document format but, like tags,
+  loses per-section overrides (per-card state).
+
+* Next: formatting buttons over source
+
+A real WYSIWYG that round-trips three markups is not worth building: it
+needs a per-format serializer, and the formats disagree on what a
+heading or a link even is. The entry point that fits the reader's
+decorated-source default is *buttons over source* — Doom's org toolbar,
+not Google Docs:
+
+- The selector names the format; the buttons insert *that* format's
+  markup — bold becomes =**x**= or =*x*= depending on the selection, a
+  fence button asks for the language, a heading button uses =#= / =*= /
+  ===.
+- The decorated-source base (the same registry the reader uses) shows
+  the result styled in place in the editor — CodeMirror language modes
+  are Lezer grammars, so a =grammar= layer serves both surfaces.
+- Nostrdown's reference builder already works this way (insert a ={{ }}=
+  token at the cursor); formatting buttons are the same gesture.
+
+A rendered contenteditable editor stays out of scope unless there is
+appetite later; it would reuse the base registry.
+
+* Related
+- [[file:index.org][Index]]
+- [[file:idea-rendering-layers.org][Rendering layers]]
+- [[file:decision-mimetype-tag.org][Decision: content format is the m tag]]
+- [[file:feat-publishing.org][Publishing]]

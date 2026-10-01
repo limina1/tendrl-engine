@@ -70,6 +70,16 @@ never happen in the browser.
   tracker (a torn-down element reads 0) and the offsets are re-applied
   once the tree settles, twice, unless the user scrolls first. Rationale in
   [[file:decision-buffer-state-homes.org][where buffer state lives]].
+- Rendering layers (2026-10-01): opt-in bases over the source text
+  (=web/src/lib/layers/=). A =src= / =md= toolbar chip shows the base in
+  force; T → *render* picks per buffer (source + enabled bases) and
+  promotes a pick with armed "always for <mimetype>" / "always for this
+  book" buttons. Decision: the section's =m= tag → the enclosing index's
+  → the user — never a guess; a =?highlight= link forces source. Style
+  spans ride =applyStyles= over =buildSegments= so the 1:1 offset mapping
+  (highlights, nostrdown) is untouched. Design + checklist:
+  [[file:idea-rendering-layers.org][Rendering layers]];
+  [[file:decision-mimetype-tag.org][the m-tag decision]].
 
 * Gaps / open edges
 - Nested-publication packed cards, drill-in with breadcrumbs, and parent

@@ -2137,3 +2137,52 @@ curl -s -X DELETE $B/providers/ppq | jq .configured           # false
 Web: =pnpm -C web build= then open =http://127.0.0.1:3057/?shell=mobile= — the
 drawer's *agent services* row reads "add one" until a service exists; the
 modal is =AgentServicesModal.svelte= (mounted in =+layout=).
+
+* Rendering layers + the m-tag contract (branch =feat/rendering-layers=)
+
+Every 30041 tendrl publishes carries =["m", <mimetype>]=; indexes never do;
+the reader decorates only when the user has enabled a base. Design:
+=docs/zettel/idea-rendering-layers.org=, =decision-mimetype-tag.org=.
+
+** Unit tests
+
+#+begin_src sh
+cargo test --lib -- --test-threads=4 mimetype            # alias table, m-before-format, application/json → none
+cargo test --lib -- --test-threads=4 stamp_ resolve_format flat_publish nested_publish block_publish
+cargo test --lib -- --test-threads=4 test_stream_tree    # effective_format inheritance on the stream
+cargo test --lib -- --test-threads=4 tree::              # ContentMode::from_tags over m
+pnpm -C web check && pnpm -C web build                   # lezer lands in its own chunk: grep -l ATXHeading web/build/_app/immutable/chunks/*.js
+#+end_src
+Expected: all green; exactly one chunk matches, no entry/node file does.
+
+** End-to-end via an isolated engine (never the user's :3030)
+
+#+begin_src sh
+S=/tmp/tendrl-layers; mkdir -p $S
+printf 'initial_relays=["wss://theforest.nostr1.com"]\ntimeout_ms=8000\n[network]\nmode="confirm"\n[embedding]\nenabled=false\n' > $S/config.toml
+cargo build && ./target/debug/tendrl-engine -c $S/config.toml --port 3058 --data-dir $S/data --no-open &
+B=http://127.0.0.1:3058/api/v1
+# 1. no format → 400
+curl -s -X POST $B/publish/preview -H 'content-type: application/json' -d '{"title":"T","tags":[],"sections":[{"title":"A","content":"a","tags":[]}],"sign":false,"broadcast":false}' | jq .
+# 2. document default org, one section overrides markdown → index has no m; sections carry text/org + text/markdown
+curl -s -X POST $B/publish/preview -H 'content-type: application/json' -d '{"title":"T","format":"org","tags":[],"sections":[{"title":"A","content":"* a","tags":[]},{"title":"B","content":"# b","format":"markdown","tags":[]}],"sign":false,"broadcast":false}' | jq '[.events[] | {kind, m: [.tags[] | select(.[0]=="m") | .[1]]}]'
+#+end_src
+Expected: =invalid … format is required= (400), then
+=[{"kind":30040,"m":[]},{"kind":30041,"m":["text/org"]},{"kind":30041,"m":["text/markdown"]}]=.
+
+** Reader walk (built SPA at =http://127.0.0.1:3058/=)
+
+1. Open any publication: body is source; no =src= chip until a layer is
+   enabled. Settings → Layers → enable *Markdown (decorated source)*.
+2. Open a section with =["m","text/markdown"]= → headings/emphasis styled,
+   text unchanged; T → render hint reads "from this section's m tag".
+3. Open an untagged foreign section → source; hint "no format tag; pick a
+   base"; click *Markdown* → styled; click *always for this book* twice →
+   toast; reload → still styled; Settings → Layers → *By book* row present.
+4. Select text across a styled heading in highlight mode → the NIP-84
+   quote equals the source slice (sigils included); a ={{ref:}}= inside
+   =**bold**= is still a chip. Open =…?highlight=<id>= → forced source,
+   chips disabled, mark lands.
+5. Composer: mode bar *format* select + per-section *inherit (Markdown)*;
+   preview JSON shows =m= on every 30041, none on the 30040; save draft →
+   reload → both selects restored.

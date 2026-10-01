@@ -229,7 +229,9 @@ sections and embeds new events on a 60-second interval when embeddings are enabl
   coordinate is admissible wherever an entity is (canonicalized to its naddr,
   never slug-normalized). The web (`RichContent.svelte`) merges resolved spans with NIP-84
   highlight spans onto one overlay — the same parse/resolve/render split as
-  highlights. Publish emits `["w", topic]` tags (single-letter, relay-indexable)
+  highlights. Rendering-layer style spans (`web/src/lib/layers/`, opt-in
+  decorated-source bases keyed by the section's `m` tag) are applied as a
+  post-pass over that merge, never inside it, so refs keep their offsets. Publish emits `["w", topic]` tags (single-letter, relay-indexable)
   for `{{wiki:}}` / `[[ ]]` refs, plus `ref`/`a`/`q`/`p` tags per reference kind
   (`reference_tags()`).
 - **`user_data.rs`**: NIP-01/02/51/65 profile data — parses kind 0/3/10000/10002/

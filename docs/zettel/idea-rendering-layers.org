@@ -1,0 +1,149 @@
+#+TITLE: Rendering layers — opt-in bases, grammars and block renderers over source text
+#+TYPE: idea
+#+STATUS: plan
+#+DATE: 2026-10-01
+
+The reader shows every section as one =pre-wrap= run of the stored text
+with two engine-resolved overlays merged onto it (NIP-84 highlights,
+nostrdown refs). A *rendering layer* is something the reader may put over
+that text once the user has switched it on. Nothing is on by default: a
+fresh install reads exactly as before.
+
+Branch: =feat/rendering-layers= (milestone 1 shipped 2026-10-01).
+
+* The model
+
+Three granularities, each preserving more of the source than the next:
+
+1. *Span decoration* ("decorated source") — the text stays byte-identical;
+   a base contributes style spans over UTF-16 offsets (headings, emphasis,
+   fences, links, dimmed sigils). This is org-mode's and CodeMirror's
+   model, and the default reading mode when a base is active. Highlights
+   and nostrdown keep their 1:1 DOM-offset ↔ content mapping for free.
+2. *Block replacement* — a fenced block with an info string is replaced
+   by a figure (Graphviz, Mermaid, PlantUML…), with a toggle back to
+   source. Text outside the fence keeps its offsets; a highlight inside
+   forces that block back to source. The babel source-block model.
+3. *Whole-section rendering* — the base replaces the text with HTML.
+   Needs placeholder substitution for nostrdown tokens and quote
+   re-anchoring for highlights, and highlight *capture* must be disabled
+   there (a NIP-84 quote taken from rendered text would not anchor back
+   to the source for any client). Last, opt-in, read-only.
+
+Layer kinds in the registry (=web/src/lib/layers/registry.ts=): =base=
+(keyed by mimetype), =grammar= (code-fence syntax colouring, keyed by info
+string), =block= (fence → figure). Milestone 1 ships =base= only; the
+other two slot in beside =BaseImpl=.
+
+* Precedence — tag or user, never heuristics
+
+Which base renders a section (=layers/resolve.ts=):
+
+1. =?highlight=<id>= deep link → source, forced (the anchor must land).
+2. The per-buffer pick (T → render chips; =null= = source). Explicit beats
+   remembered.
+3. "Always for this book" binding (30040 coordinate).
+4. "Always for <mimetype>" binding, keyed by the section's *effective
+   format* — its own =m= tag, else the one inherited from the nearest
+   enclosing index that declares one, resolved engine-side in the tree
+   stream ([[file:decision-mimetype-tag.org][decision]]).
+5. The first *enabled* base registered for that format.
+6. Source.
+
+Disabled layers never resolve, so the Settings → Layers toggle is the
+single opt-in. A binding value of =source= means "never decorate this".
+Bindings and the enabled set live in =tendrl.layers= (localStorage,
+per-device, never an event); the un-promoted pick lives in the buffer's
+view state and dies with it. Syncing bindings via a kind-30078 settings
+event would be a deliberate opt-in under the publishing philosophy.
+
+* Execution tiers (where a renderer runs)
+
+| Tier | Examples | Desktop | Android | Emacs |
+|------+----------+---------+---------+-------|
+| In-browser JS / WASM | =@lezer/markdown=, uniorg, asciidoctor.js, mermaid, Graphviz via =@viz-js/viz=, pikchr | yes | yes (WebView runs WASM) | n/a |
+| Engine-side local tool | =dot=, =plantuml.jar=, ditaa, LaTeX | if installed | no | via the engine |
+| Remote render server | Kroki, a PlantUML server | Confirm-gated | Confirm-gated | Confirm-gated |
+
+Plus the fourth option that makes mobile robust: *render at publish time*.
+The author's desktop has the tools; tendrl renders every diagram block
+when a kasten is built or a section is published, publishes the SVG as an
+addressable artifact (Blossom blob / file-metadata event) and tags the
+fence with its reference. A phone, a reader without PlantUML, and every
+other NKBIP client get the picture with no toolchain; a reader with the
+tool can re-render. The diagram becomes a citable thing — the
+reference-manager answer, and an AsciiDoc =image::= macro pointing at the
+blob is universal across clients.
+
+Install tiers: bundled lazy chunks (the Markdown base today — fetched
+only once enabled and needed; keep the Android build slim); downloadable
+packs (zip of ES modules + WASM with a pinned hash into
+=<data_dir>/layers/<id>/=, Confirm-gated, served by the engine — works
+on Android because the engine runs in-process there; a pack index can be
+a Nostr event with a Blossom blob, as zapstore already distributes the
+app); native tools detected, never installed.
+
+* Security constraints
+
+- Untrusted relay content runs these renderers. Mermaid has had XSS bugs:
+  strict security level + sanitized SVG. PlantUML's =!include= reads
+  local files: sandbox profile. WASM renderers are the safest tier.
+- Rendered Markdown would carry image URLs; fetching them leaks the
+  reader's address to arbitrary hosts, against the spirit of Confirm
+  mode. Remote images stay placeholders until approved or a per-relay
+  trust setting allows them.
+- Nothing renders unless opted in; deep links force the text-preserving
+  mode.
+
+* Milestone 1 — shipped (2026-10-01)
+
+- [X] =src/mimetype.rs= + the publish contract (every 30041 stamped with
+  =m=, indexes never; =PublishRequest.format= required); heuristic
+  detector deleted — [[file:decision-mimetype-tag.org][decision]]
+- [X] Tree stream ships =format= / =effective_format= / =format_source= /
+  =format_from=; section JSON ships =format=
+- [X] =web/src/lib/layers/=: registry, =tendrl.layers= store, pure
+  resolver, lazy loader with a plain cache + one version signal
+- [X] One base: Markdown decorated source over =@lezer/markdown= (GFM),
+  own chunk
+- [X] Style spans as a post-pass over =buildSegments= (=applyStyles=):
+  text runs split at style boundaries, atoms/highlights untouched; sigils
+  dimmed via =.ly-mark=, never hidden
+- [X] Reader: =src= / =md= toolbar chip; T → render row (source + enabled
+  bases; two-step armed "always for <mimetype>" / "always for this book");
+  =?highlight= forces source
+- [X] Settings → Layers: enable toggles, binding tables with remove
+- [X] Composer: document-level format select + per-section
+  inherit/override, sent on every publish / preview / blocks / draft
+  payload — [[file:idea-composer-formatting.org][composer formatting]]
+- [X] Scripts: =tendrl-mcp.py= (=format= required), kasten builder emits
+  =m=
+
+* Next milestone
+
+- [ ] Fence-block renderers: registry kind =block=, first renderer
+  Graphviz via =@viz-js/viz= (WASM, works in the Android WebView), lazy
+  chunk, SVG sanitized; toggle back to source per block
+- [ ] Code grammars (=grammar= kind): Lezer grammars per fence info
+  string, shared with the composer's CodeMirror
+- [ ] Org and AsciiDoc decorated-source bases (uniorg / asciidoctor.js —
+  the latter is ~2 MB, so a downloadable pack rather than a bundled chunk)
+- [ ] Engine-side local-tool executor (=POST /api/v1/render=: dot /
+  plantuml detection, content-hash cache, sandbox profile, timeout)
+- [ ] Remote render server (Kroki) behind Confirm mode
+- [ ] Publish-time rendering: diagrams → Blossom / file-metadata
+  artifact, fence tagged with the reference
+- [ ] Downloadable layer packs (=<data_dir>/layers/<id>/=, hash-pinned,
+  Confirm-gated)
+- [ ] Whole-section rendered mode (placeholder substitution for
+  nostrdown + quote re-anchoring for highlights; capture disabled)
+- [ ] =DocBuffer= (single-section view) gets the same decision + spans
+- [ ] Optional: sync bindings via kind 30078 (explicit opt-in)
+
+* Related
+- [[file:index.org][Index]]
+- [[file:decision-mimetype-tag.org][Decision: content format is the m tag]]
+- [[file:idea-composer-formatting.org][Composer formatting]]
+- [[file:feat-reader.org][Reader]] — where the picker lives
+- [[file:feat-nostrdown.org][Nostrdown]] — the overlay that must survive every layer
+- [[file:feat-ui-patterns.org][UI patterns]] — armed buttons, toasts
