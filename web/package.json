@@ -25,6 +25,8 @@
     "@codemirror/commands": "^6.10.3",
     "@codemirror/state": "^6.6.0",
     "@codemirror/view": "^6.41.1",
+    "@lezer/common": "1.5.3",
+    "@lezer/markdown": "1.7.2",
     "@replit/codemirror-vim": "^6.3.0",
     "codemirror": "^6.0.2",
     "qrcode": "^1.5.4"

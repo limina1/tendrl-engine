@@ -18,6 +18,8 @@
 		type ParsedToken
 	} from '$lib/nostr/nostrdown';
 	import type { ResolutionTracker } from '$lib/nostr/resolution-progress.svelte';
+	import type { StyleSpan } from '$lib/layers/registry';
+	import { applyStyles, styleClass } from '$lib/layers/style-segments';
 
 	const app = getAppState();
 
@@ -26,6 +28,7 @@
 		spans = [],
 		refs = [],
 		tokens = [],
+		styles = [],
 		resolution = undefined,
 		focusedHighlightId = null,
 		muted = false,
@@ -38,6 +41,10 @@
 		/** Engine-parsed token spans for the pre-resolution "resolving" chips
 		 *  (from `api.parseNostrdown`); superseded by `refs` once `/resolve` lands. */
 		tokens?: ParsedToken[];
+		/** Rendering-layer style spans (a decorated-source base's output —
+		 *  see lib/layers). Pure decoration over the unchanged text: applied
+		 *  after the atom/highlight merge, so they survive any overlap. */
+		styles?: StyleSpan[];
 		/** The enclosing reader's resolution tracker (threaded as a prop, not
 		 *  context — see resolution-progress). Absent → inert. */
 		resolution?: ResolutionTracker;
@@ -55,7 +62,9 @@
 
 	let rootEl = $state<HTMLElement | undefined>();
 
-	const segments = $derived(buildSegments(content, spans, refs, tokens, focusedHighlightId));
+	const segments = $derived(
+		applyStyles(buildSegments(content, spans, refs, tokens, focusedHighlightId), styles)
+	);
 
 	// Progress is reported by the embed/quote/slot cards themselves (each knows
 	// when it's still fetching a not-local event from relays — the actually-slow
@@ -160,7 +169,7 @@
      source span) so selection capture can map DOM positions back to UTF-16
      content offsets. Text runs get a style-free wrapper span for the same
      reason — inline and inert inside the pre-wrap. -->
-{#snippet atom(seg: ContentSegment)}{#if seg.type === 'ref'}{#if seg.ref.kind === 'embed' || seg.ref.kind === 'quote' || seg.ref.kind === 'slot'}<span data-src-start={seg.srcStart} data-src-end={seg.srcEnd}><EmbedCard ref={seg.ref} onopen={openRef} {resolution} /></span>{:else}<button class="nd-ref nd-ref--{seg.ref.kind}" class:nd-unresolved={!seg.ref.found} class:nd-backfilling={backfilling && !seg.ref.found} data-src-start={seg.srcStart} data-src-end={seg.srcEnd} onclick={(e) => openRef(seg.ref, e)} onmouseenter={(e) => showPreview(e, seg.ref)} onmouseleave={hidePreview} onfocus={(e) => showPreview(e, seg.ref)} onblur={hidePreview} disabled={!seg.ref.coord && !(seg.ref.event_kind === 0 && seg.ref.author_pubkey) && !seg.ref.event_id && seg.ref.kind !== 'wiki'} title={refTitle(seg.ref)}>{seg.ref.kind === 'mention' ? '@' : ''}{seg.ref.label}</button>{/if}{:else if seg.type === 'token'}{#if seg.kind === 'wiki'}<button class="nd-token nd-token--wiki nd-token--live" data-src-start={seg.srcStart} data-src-end={seg.srcEnd} title="wiki: {seg.target} — resolving… click to search" onclick={() => app.openSearchFor(`k:30818 d:${seg.target}`, seg.target)}>{seg.display || seg.target}</button>{:else}<span class="nd-token nd-token--{seg.kind}" data-src-start={seg.srcStart} data-src-end={seg.srcEnd} title="{seg.kind}: {seg.target} — resolving…">{seg.display || seg.target}</span>{/if}{:else if seg.type === 'text'}<span data-src-start={seg.srcStart}>{seg.text}</span>{/if}{/snippet}
+{#snippet atom(seg: ContentSegment)}{#if seg.type === 'ref'}{#if seg.ref.kind === 'embed' || seg.ref.kind === 'quote' || seg.ref.kind === 'slot'}<span data-src-start={seg.srcStart} data-src-end={seg.srcEnd}><EmbedCard ref={seg.ref} onopen={openRef} {resolution} /></span>{:else}<button class="nd-ref nd-ref--{seg.ref.kind} {styleClass(seg.styles) ?? ''}" class:nd-unresolved={!seg.ref.found} class:nd-backfilling={backfilling && !seg.ref.found} data-src-start={seg.srcStart} data-src-end={seg.srcEnd} onclick={(e) => openRef(seg.ref, e)} onmouseenter={(e) => showPreview(e, seg.ref)} onmouseleave={hidePreview} onfocus={(e) => showPreview(e, seg.ref)} onblur={hidePreview} disabled={!seg.ref.coord && !(seg.ref.event_kind === 0 && seg.ref.author_pubkey) && !seg.ref.event_id && seg.ref.kind !== 'wiki'} title={refTitle(seg.ref)}>{seg.ref.kind === 'mention' ? '@' : ''}{seg.ref.label}</button>{/if}{:else if seg.type === 'token'}{#if seg.kind === 'wiki'}<button class="nd-token nd-token--wiki nd-token--live {styleClass(seg.styles) ?? ''}" data-src-start={seg.srcStart} data-src-end={seg.srcEnd} title="wiki: {seg.target} — resolving… click to search" onclick={() => app.openSearchFor(`k:30818 d:${seg.target}`, seg.target)}>{seg.display || seg.target}</button>{:else}<span class="nd-token nd-token--{seg.kind} {styleClass(seg.styles) ?? ''}" data-src-start={seg.srcStart} data-src-end={seg.srcEnd} title="{seg.kind}: {seg.target} — resolving…">{seg.display || seg.target}</span>{/if}{:else if seg.type === 'text'}<span class={styleClass(seg.styles)} data-src-start={seg.srcStart}>{seg.text}</span>{/if}{/snippet}
 <!-- A highlight is a <mark> AROUND its parts (text runs + any ref/token it
      spans), so a wikilink under a highlight stays a live link. The mark
      carries no data-src-end: selection capture resolves the innermost stamped
@@ -211,6 +220,36 @@
 	.section-content.muted {
 		color: var(--fg-muted);
 	}
+
+	/* Rendering-layer decoration (lib/layers). Class names are built at runtime
+	   so they escape Svelte scoping — hence :global under .section-content.
+	   Inline-only, never display/visibility: every source character stays in
+	   flow at its true offset. Sigils are dimmed, not hidden. */
+	.section-content :global(.ly-h1) { font-size: 1.6em; font-weight: 650; line-height: 1.25; }
+	.section-content :global(.ly-h2) { font-size: 1.4em; font-weight: 650; line-height: 1.3; }
+	.section-content :global(.ly-h3) { font-size: 1.2em; font-weight: 600; }
+	.section-content :global(.ly-h4) { font-size: 1.08em; font-weight: 600; }
+	.section-content :global(.ly-h5),
+	.section-content :global(.ly-h6) { font-weight: 600; }
+	.section-content :global(.ly-em) { font-style: italic; }
+	.section-content :global(.ly-strong) { font-weight: 700; }
+	.section-content :global(.ly-strike) { text-decoration: line-through; }
+	.section-content :global(.ly-code),
+	.section-content :global(.ly-fence) {
+		font-family: var(--font-mono);
+		font-size: 0.92em;
+		background: color-mix(in srgb, var(--fg) 7%, transparent);
+		border-radius: 3px;
+		box-decoration-break: clone;
+		-webkit-box-decoration-break: clone;
+	}
+	.section-content :global(.ly-lang) { color: var(--fg-muted); font-size: 0.85em; }
+	.section-content :global(.ly-link) { color: var(--accent); text-decoration: underline; text-underline-offset: 0.15em; }
+	.section-content :global(.ly-url) { color: var(--fg-muted); }
+	.section-content :global(.ly-quote) { color: var(--fg-muted); font-style: italic; }
+	.section-content :global(.ly-hr) { color: var(--fg-muted); letter-spacing: 0.2em; }
+	.section-content :global(.ly-th) { font-weight: 650; }
+	.section-content :global(.ly-mark) { opacity: 0.45; font-weight: 400; font-style: normal; }
 
 	.hl-overlay {
 		color: inherit;

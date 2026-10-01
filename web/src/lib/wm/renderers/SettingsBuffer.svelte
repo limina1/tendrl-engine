@@ -33,6 +33,8 @@
 		textScalePx
 	} from '$lib/theme/text-scale.svelte';
 	import ReadingControls from '$lib/components/ReadingControls.svelte';
+	import { layers, setLayerEnabled, bindMimetype, bindPublication } from '$lib/layers/store.svelte';
+	import { LAYERS, SOURCE_ID, layerById } from '$lib/layers/registry';
 	import { shell, type ShellPref, type MenuEdge } from '../shell.svelte';
 	import type { Buffer } from '../types';
 	import { commands, SCOPE_META, SCOPE_ORDER, BASE_KEYS } from '../commands';
@@ -776,6 +778,62 @@
 			Puts the mobile bar's ☰ menu on the left or right edge (handedness).
 			Mobile shell only; applies instantly, saved on this device.
 		</p>
+		</div>
+	</details>
+
+	<details class="settings-group">
+		<summary class="settings-group-title">Layers</summary>
+		<div class="settings-group-body">
+		<p class="settings-hint">
+			Rendering layers are opt-in. Nothing is decorated until you enable a base
+			here; a section whose <code>m</code> tag (or its book's) names a format
+			you have a base for then renders with it, and the reader's
+			<code>T</code> → render row picks per buffer and can remember the choice.
+			A layer only styles the stored text in place — nothing is rewritten, so
+			highlights and references keep their offsets. Saved on this device.
+		</p>
+		{#each LAYERS as l (l.id)}
+			<div class="settings-row">
+				<span class="settings-label" title="for {l.mimetypes.join(', ')}">{l.label}</span>
+				<label class="switch">
+					<input
+						type="checkbox"
+						checked={layers.enabled.includes(l.id)}
+						onchange={(e) => setLayerEnabled(l.id, e.currentTarget.checked)}
+					/>
+					<span class="switch-text">{layers.enabled.includes(l.id) ? 'on' : 'off'}</span>
+				</label>
+			</div>
+		{/each}
+		{#if Object.keys(layers.byMimetype).length > 0}
+			<div class="settings-row settings-row--stack">
+				<span class="settings-label" title="Remembered from the reader's “always for …” button">By format</span>
+				<ul class="layer-bindings">
+					{#each Object.entries(layers.byMimetype) as [mt, id] (mt)}
+						<li>
+							<code>{mt}</code> → {id === SOURCE_ID ? 'source' : (layerById(id)?.label ?? id)}
+							{#if id !== SOURCE_ID && !layers.enabled.includes(id)}<em>(disabled)</em>{/if}
+							<button type="button" onclick={() => bindMimetype(mt, null)}>remove</button>
+						</li>
+					{/each}
+				</ul>
+			</div>
+		{/if}
+		{#if Object.keys(layers.byPublication).length > 0}
+			<div class="settings-row settings-row--stack">
+				<span class="settings-label" title="Remembered from the reader's “always for this book” button">By book</span>
+				<ul class="layer-bindings">
+					{#each Object.entries(layers.byPublication) as [coord, id] (coord)}
+						<li>
+							<code title={coord}>{coord.split(':')[2]} · {coord.split(':')[1].slice(0, 8)}…</code>
+							→ {id === SOURCE_ID ? 'source' : (layerById(id)?.label ?? id)}
+							{#if id !== SOURCE_ID && !layers.enabled.includes(id)}<em>(disabled)</em>{/if}
+							<button type="button" onclick={() => bindPublication(coord, null)}>remove</button>
+						</li>
+					{/each}
+				</ul>
+			</div>
+		{/if}
 		</div>
 	</details>
 
@@ -2549,5 +2607,32 @@
 		font-size: var(--t-2xs);
 		color: var(--id-forked);
 		flex-shrink: 0;
+	}
+
+	/* Layers group — binding lists. */
+	.layer-bindings {
+		list-style: none;
+		margin: 0;
+		padding: 0;
+		font-size: var(--t-xs);
+		display: flex;
+		flex-direction: column;
+		gap: 4px;
+	}
+	.layer-bindings li {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 6px;
+		align-items: center;
+	}
+	.layer-bindings em { color: var(--fg-muted); font-style: normal; }
+	.layer-bindings button {
+		background: transparent;
+		border: 0;
+		padding: 0;
+		color: var(--accent);
+		cursor: pointer;
+		font: inherit;
+		text-decoration: underline;
 	}
 </style>
