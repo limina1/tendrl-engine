@@ -58,27 +58,34 @@ pub struct FormatInherit {
     pub from: NAddr,
 }
 
-/// `format_source` values on `PubLoadEvent::Index` / `Leaf`.
-pub const FORMAT_SOURCE_OWN: &str = "own";
-pub const FORMAT_SOURCE_INHERITED: &str = "inherited";
-pub const FORMAT_SOURCE_NONE: &str = "none";
+/// `format_source` values on `PubLoadEvent::Index` / `Leaf` (shared with the
+/// single-event endpoints via `crate::mimetype`).
+pub const FORMAT_SOURCE_OWN: &str = crate::mimetype::SOURCE_OWN;
+pub const FORMAT_SOURCE_KIND: &str = crate::mimetype::SOURCE_KIND;
+pub const FORMAT_SOURCE_INHERITED: &str = crate::mimetype::SOURCE_INHERITED;
+pub const FORMAT_SOURCE_NONE: &str = crate::mimetype::SOURCE_NONE;
 
 /// Resolve a node's `(format, effective_format, format_source, format_from)`
-/// from its own declaration and whatever its ancestors declared. Tag-only —
-/// there is deliberately no content sniffing (decision-mimetype-tag.org).
+/// from its own declaration, what its kind defines by spec, and whatever its
+/// ancestors declared — in that order (a spec beats an ancestor's
+/// declaration). Tag-or-spec only — there is deliberately no content
+/// sniffing (decision-mimetype-tag.org). In a 30040/30041 tree the kind
+/// rule never fires (NKBIP-01 fixes no format), but the order is principled.
 fn format_fields(
     own: Option<&'static str>,
+    by_kind: Option<&'static str>,
     inherited: Option<&FormatInherit>,
 ) -> (Option<String>, Option<String>, &'static str, Option<NAddr>) {
-    match (own, inherited) {
-        (Some(m), _) => (Some(m.into()), Some(m.into()), FORMAT_SOURCE_OWN, None),
-        (None, Some(inh)) => (
+    match (own, by_kind, inherited) {
+        (Some(m), _, _) => (Some(m.into()), Some(m.into()), FORMAT_SOURCE_OWN, None),
+        (None, Some(m), _) => (None, Some(m.into()), FORMAT_SOURCE_KIND, None),
+        (None, None, Some(inh)) => (
             None,
             Some(inh.mimetype.clone()),
             FORMAT_SOURCE_INHERITED,
             Some(inh.from.clone()),
         ),
-        (None, None) => (None, None, FORMAT_SOURCE_NONE, None),
+        (None, None, None) => (None, None, FORMAT_SOURCE_NONE, None),
     }
 }
 
@@ -88,8 +95,12 @@ fn leaf_pub_event(
     leaf: &Value,
     inherited: Option<&FormatInherit>,
 ) -> PubLoadEvent {
-    let (format, effective_format, format_source, format_from) =
-        format_fields(crate::mimetype::from_event(leaf), inherited);
+    let leaf_kind = leaf.get("kind").and_then(|k| k.as_u64()).unwrap_or(addr.kind);
+    let (format, effective_format, format_source, format_from) = format_fields(
+        crate::mimetype::from_event(leaf),
+        crate::mimetype::for_kind(leaf_kind),
+        inherited,
+    );
     let content = leaf.get("content").and_then(|v| v.as_str()).map(String::from);
     let title = leaf.get("tags").and_then(|v| v.as_array()).and_then(|tags| {
         tags.iter().find_map(|t| {
@@ -1801,7 +1812,7 @@ impl<'a> PublicationEngine<'a> {
             // we inherited passes through unchanged. Tag-only, never sniffed.
             let own_format = crate::mimetype::from_event(&event);
             let (format, effective_format, format_source, format_from) =
-                format_fields(own_format, inherited.as_ref());
+                format_fields(own_format, None, inherited.as_ref());
             let child_inherit: Option<FormatInherit> = own_format
                 .map(|m| FormatInherit {
                     mimetype: m.to_string(),
@@ -5975,6 +5986,42 @@ mod tests {
     /// leaf inherits from the nearest enclosing 30040 that declares a `text/*`
     /// `m`; an index stamped `application/json` (NKBIP-06) declares nothing
     /// and passes the outer inheritance through; no tags anywhere = none.
+    #[test]
+    fn format_fields_precedence_is_own_kind_inherited() {
+        let inh = FormatInherit {
+            mimetype: "text/markdown".into(),
+            from: NAddr::new(KIND_PUBLICATION_INDEX, &test_pubkey(), "idx"),
+        };
+        // Own tag beats everything.
+        assert_eq!(
+            format_fields(Some("text/org"), Some("text/asciidoc"), Some(&inh)),
+            (
+                Some("text/org".into()),
+                Some("text/org".into()),
+                FORMAT_SOURCE_OWN,
+                None
+            )
+        );
+        // A kind's spec-defined format beats an ancestor's declaration.
+        assert_eq!(
+            format_fields(None, Some("text/asciidoc"), Some(&inh)),
+            (None, Some("text/asciidoc".into()), FORMAT_SOURCE_KIND, None)
+        );
+        assert_eq!(
+            format_fields(None, None, Some(&inh)),
+            (
+                None,
+                Some("text/markdown".into()),
+                FORMAT_SOURCE_INHERITED,
+                Some(inh.from.clone())
+            )
+        );
+        assert_eq!(
+            format_fields(None, None, None),
+            (None, None, FORMAT_SOURCE_NONE, None)
+        );
+    }
+
     #[tokio::test]
     async fn test_stream_tree_effective_format() {
         let pk_owned = test_pubkey();

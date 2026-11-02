@@ -81,6 +81,39 @@ pub fn from_tags<T: AsRef<str>>(tags: &[Vec<T>]) -> Option<&'static str> {
     find("m", canonical).or_else(|| find("format", from_legacy_format))
 }
 
+/// Content format a kind *defines by spec* — the only non-tag source the
+/// engine ever uses, and it is a spec, not a sniff: NIP-23 fixes kind-30023
+/// long-form content as Markdown; NIP-54 fixes kind-30818 wiki pages as
+/// AsciiDoc. NKBIP-01 sections (30041) fix nothing, so they need their `m`
+/// tag and return `None` here.
+pub fn for_kind(kind: u64) -> Option<&'static str> {
+    match kind {
+        30023 => Some(MARKDOWN),
+        30818 => Some(ASCIIDOC),
+        _ => None,
+    }
+}
+
+/// `format_source` vocabulary shared by the tree stream and the single-event
+/// endpoints: where an *effective* format came from.
+pub const SOURCE_OWN: &str = "own";
+pub const SOURCE_KIND: &str = "kind";
+pub const SOURCE_INHERITED: &str = "inherited";
+pub const SOURCE_NONE: &str = "none";
+
+/// The format an isolated event should be read with: its own tag, else the
+/// one its kind defines, else nothing. Returns `(format, source)` with
+/// `source` ∈ {`own`, `kind`, `none`}.
+pub fn declared_or_kind(event: &Value) -> (Option<&'static str>, &'static str) {
+    if let Some(m) = from_event(event) {
+        return (Some(m), SOURCE_OWN);
+    }
+    match event.get("kind").and_then(|k| k.as_u64()).and_then(for_kind) {
+        Some(m) => (Some(m), SOURCE_KIND),
+        None => (None, SOURCE_NONE),
+    }
+}
+
 /// [`from_tags`] over a raw event JSON value.
 pub fn from_event(event: &Value) -> Option<&'static str> {
     let tags: Vec<Vec<String>> = event
@@ -163,6 +196,29 @@ mod tests {
         );
         assert_eq!(from_tags(&tags(&[("format", "weird")])), None);
         assert_eq!(from_tags::<String>(&[]), None);
+    }
+
+    #[test]
+    fn for_kind_is_spec_only() {
+        assert_eq!(for_kind(30023), Some(MARKDOWN));
+        assert_eq!(for_kind(30818), Some(ASCIIDOC));
+        // NKBIP-01 sections and indexes define no format — they need the tag.
+        assert_eq!(for_kind(30041), None);
+        assert_eq!(for_kind(30040), None);
+        assert_eq!(for_kind(1), None);
+    }
+
+    #[test]
+    fn declared_or_kind_prefers_tag_then_kind() {
+        let tagged = json!({ "kind": 30818, "tags": [["m", "text/org"]] });
+        assert_eq!(declared_or_kind(&tagged), (Some(ORG), SOURCE_OWN));
+        let wiki = json!({ "kind": 30818, "tags": [["d", "x"]] });
+        assert_eq!(declared_or_kind(&wiki), (Some(ASCIIDOC), SOURCE_KIND));
+        let article = json!({ "kind": 30023, "tags": [] });
+        assert_eq!(declared_or_kind(&article), (Some(MARKDOWN), SOURCE_KIND));
+        let section = json!({ "kind": 30041, "tags": [] });
+        assert_eq!(declared_or_kind(&section), (None, SOURCE_NONE));
+        assert_eq!(declared_or_kind(&json!({})), (None, SOURCE_NONE));
     }
 
     #[test]

@@ -126,6 +126,21 @@ async fn begin_single_fetch_gate(
     }
 }
 
+/// `{ event, format, effective_format, format_source }` — the single-event
+/// response shape shared by the id and addressable endpoints. The content
+/// format rides along so no frontend re-implements the tag/kind rule: the
+/// event's own `m` tag (`own`), else what its kind defines by spec (`kind`:
+/// 30023 Markdown, 30818 AsciiDoc), else `none`.
+fn single_event_json(e: serde_json::Value) -> serde_json::Value {
+    let (effective_format, format_source) = crate::mimetype::declared_or_kind(&e);
+    json!({
+        "format": crate::mimetype::from_event(&e),
+        "effective_format": effective_format,
+        "format_source": format_source,
+        "event": e,
+    })
+}
+
 /// GET /api/v1/events/:id
 ///
 /// Get a single event by its ID
@@ -176,7 +191,7 @@ pub async fn get_event_handler(
     }
 
     match event {
-        Some(e) => Ok((StatusCode::OK, Json(json!({ "event": e })))),
+        Some(e) => Ok((StatusCode::OK, Json(single_event_json(e)))),
         None => Ok((
             StatusCode::NOT_FOUND,
             Json(json!({ "event": null, "message": "Event not found" })),
@@ -266,7 +281,7 @@ pub async fn get_addressable_handler(
     }
 
     match event {
-        Some(e) => Ok((StatusCode::OK, Json(json!({ "event": e })))),
+        Some(e) => Ok((StatusCode::OK, Json(single_event_json(e)))),
         None => Ok((
             StatusCode::NOT_FOUND,
             Json(json!({ "event": null, "message": "Addressable event not found" })),
