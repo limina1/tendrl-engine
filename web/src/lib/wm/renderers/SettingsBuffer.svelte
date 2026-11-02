@@ -33,8 +33,8 @@
 		textScalePx
 	} from '$lib/theme/text-scale.svelte';
 	import ReadingControls from '$lib/components/ReadingControls.svelte';
-	import { layers, setLayerEnabled, bindMimetype, bindPublication } from '$lib/layers/store.svelte';
-	import { LAYERS, SOURCE_ID, layerById } from '$lib/layers/registry';
+	import { layers, setLayerEnabled, setUntaggedFormat, bindMimetype, bindPublication } from '$lib/layers/store.svelte';
+	import { LAYERS, SOURCE_ID, CANONICAL_MIMETYPES, FORMAT_LABEL, basesFor, layerById } from '$lib/layers/registry';
 	import { shell, type ShellPref, type MenuEdge } from '../shell.svelte';
 	import type { Buffer } from '../types';
 	import { commands, SCOPE_META, SCOPE_ORDER, BASE_KEYS } from '../commands';
@@ -785,12 +785,13 @@
 		<summary class="settings-group-title">Layers</summary>
 		<div class="settings-group-body">
 		<p class="settings-hint">
-			Rendering layers are opt-in. Nothing is decorated until you enable a base
-			here; a section whose <code>m</code> tag (or its book's) names a format
-			you have a base for then renders with it, and the reader's
-			<code>T</code> → render row picks per buffer and can remember the choice.
-			A layer only styles the stored text in place — nothing is rewritten, so
-			highlights and references keep their offsets. Saved on this device.
+			Markup layers are on by default. A section renders with the layer its
+			<code>m</code> tag names (or its book's, or the one its kind fixes by
+			spec — NIP-23 articles are Markdown, NIP-54 wiki pages AsciiDoc); switch
+			any off here. The reader's <code>T</code> → markup row picks per buffer
+			and can remember the choice. A layer only styles the stored text in place
+			— nothing is rewritten, so highlights and references keep their offsets.
+			Saved on this device.
 		</p>
 		{#each LAYERS as l (l.id)}
 			<div class="settings-row">
@@ -805,6 +806,26 @@
 				</label>
 			</div>
 		{/each}
+		<div class="settings-row">
+			<span
+				class="settings-label"
+				title="Sections that declare no m tag (Alexandria publishes none) render as source unless you answer here — your choice, never a guess"
+				>Untagged sections</span
+			>
+			<select
+				class="settings-select"
+				value={layers.untagged ?? SOURCE_ID}
+				onchange={(e) =>
+					setUntaggedFormat(e.currentTarget.value === SOURCE_ID ? null : e.currentTarget.value)}
+			>
+				<option value={SOURCE_ID}>source (off)</option>
+				<!-- Only formats a base exists for: "assume plain text" would be
+				     the same as source. -->
+				{#each CANONICAL_MIMETYPES.filter((mt) => basesFor(mt).length > 0) as mt (mt)}
+					<option value={mt}>{FORMAT_LABEL[mt]}</option>
+				{/each}
+			</select>
+		</div>
 		{#if Object.keys(layers.byMimetype).length > 0}
 			<div class="settings-row settings-row--stack">
 				<span class="settings-label" title="Remembered from the reader's “always for …” button">By format</span>

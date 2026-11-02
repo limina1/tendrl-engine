@@ -249,6 +249,13 @@
 	.section-content :global(.ly-quote) { color: var(--fg-muted); font-style: italic; }
 	.section-content :global(.ly-hr) { color: var(--fg-muted); letter-spacing: 0.2em; }
 	.section-content :global(.ly-th) { font-weight: 650; }
+	.section-content :global(.ly-underline) { text-decoration: underline; text-underline-offset: 0.15em; }
+	.section-content :global(.ly-hl) { background: color-mix(in srgb, var(--accent) 22%, transparent); }
+	.section-content :global(.ly-kw) { color: var(--fg-muted); font-family: var(--font-mono); font-size: 0.9em; }
+	.section-content :global(.ly-comment) { color: var(--fg-muted); opacity: 0.7; }
+	.section-content :global(.ly-todo) { color: var(--id-forked); font-weight: 700; font-family: var(--font-mono); font-size: 0.85em; }
+	.section-content :global(.ly-tag) { color: var(--fg-muted); font-family: var(--font-mono); font-size: 0.8em; font-weight: 400; }
+	.section-content :global(.ly-admon) { color: var(--accent); font-weight: 700; font-family: var(--font-mono); font-size: 0.85em; }
 	.section-content :global(.ly-mark) { opacity: 0.45; font-weight: 400; font-style: normal; }
 
 	.hl-overlay {

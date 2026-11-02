@@ -197,7 +197,7 @@ export type PubLoadEvent =
 			 *  — the engine never sniffs. Optional for older engines. */
 			format?: string | null;
 			effective_format?: string | null;
-			format_source?: 'own' | 'inherited' | 'none';
+			format_source?: 'own' | 'kind' | 'inherited' | 'none';
 			format_from?: NAddr | null;
 	  }
 	| {
@@ -216,7 +216,7 @@ export type PubLoadEvent =
 			 *  — the engine never sniffs. Optional for older engines. */
 			format?: string | null;
 			effective_format?: string | null;
-			format_source?: 'own' | 'inherited' | 'none';
+			format_source?: 'own' | 'kind' | 'inherited' | 'none';
 			format_from?: NAddr | null;
 	  }
 	| { type: 'error'; addr: NAddr; depth: number; message: string }
@@ -262,7 +262,7 @@ export interface LazySection {
 	 *  else the one inherited from the nearest enclosing index that declares
 	 *  one, else null. Drives the rendering-layer decision (lib/layers). */
 	effective_format?: string | null;
-	format_source?: 'own' | 'inherited' | 'none';
+	format_source?: 'own' | 'kind' | 'inherited' | 'none';
 }
 
 export interface SectionMeta {

@@ -1088,9 +1088,19 @@ export function getSection(pubkey: string, d_tag: string, index: number, policy 
  *  throwing — the engine's 404 carries that body already, and every
  *  caller branches on a null event rather than a raised string. Other
  *  statuses still throw. */
-async function fetchEventOrNull(url: string): Promise<{ event: unknown | null }> {
+/** Single-event responses carry the engine-derived content format beside the
+ *  event (own `m` tag → `format`; own tag, else the kind's spec-defined
+ *  format → `effective_format` + where it came from). Absent on misses. */
+export type SingleEventResponse = {
+	event: unknown | null;
+	format?: string | null;
+	effective_format?: string | null;
+	format_source?: 'own' | 'kind' | 'none';
+};
+
+async function fetchEventOrNull(url: string): Promise<SingleEventResponse> {
 	try {
-		return await fetchJson<{ event: unknown }>(url);
+		return await fetchJson<SingleEventResponse>(url);
 	} catch (e) {
 		const raw = e instanceof Error ? e.message : String(e);
 		if (/^404:/.test(raw)) return { event: null };

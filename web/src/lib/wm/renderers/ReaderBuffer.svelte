@@ -208,7 +208,7 @@
 		/** Engine-resolved content format (own `m` tag, else inherited from the
 		 *  nearest enclosing index) — drives the rendering-layer decision. */
 		effectiveFormat?: string | null;
-		formatSource?: 'own' | 'inherited' | 'none';
+		formatSource?: 'own' | 'kind' | 'inherited' | 'none';
 	};
 	// Two reading modes — paged (one section per page) and scroll
 	// (continuous). The outline view is gone (2026-09-11): the § toc
@@ -913,11 +913,20 @@
 			case 'mimetype':
 				return `${base} — bound for ${fmt}`;
 			case 'format':
-				return layerProbe?.format_source === 'inherited'
-					? `${base} — from the book's m tag (${fmt})`
-					: `${base} — from this section's m tag (${fmt})`;
+				switch (layerProbe?.format_source) {
+					case 'inherited':
+						return `${base} — from the book's m tag (${fmt})`;
+					case 'kind':
+						return `${base} — the kind's spec format (${fmt})`;
+					default:
+						return `${base} — from this section's m tag (${fmt})`;
+				}
+			case 'untagged':
+				return `${base} — your fallback for untagged sections`;
 			default:
-				return fmt ? `source — ${formatLabel(fmt)}, no base enabled` : 'source — no format tag; pick a base';
+				return fmt
+					? `off — ${formatLabel(fmt)}, its layer is switched off`
+					: 'off — no m tag; pick a markup, or set a fallback in Settings → Layers';
 		}
 	});
 	// Two-step armed promotion ("always for …"): first click arms, second
@@ -1501,7 +1510,9 @@
 					content: ev.content ?? '',
 					position: 0,
 					status: 'loaded' as const,
-					relays: ev.relays ?? []
+					relays: ev.relays ?? [],
+					effective_format: resp.effective_format ?? null,
+					format_source: resp.format_source ?? 'none'
 				}
 			];
 		} catch (e) {
@@ -1560,7 +1571,11 @@
 					content: ev.content ?? '',
 					position: 0,
 					status: 'loaded' as const,
-					relays: ev.relays ?? []
+					relays: ev.relays ?? [],
+					// Engine-derived: own m tag, else the kind's spec (30818 →
+					// AsciiDoc, 30023 → Markdown), else none.
+					effective_format: resp.effective_format ?? null,
+					format_source: resp.format_source ?? 'none'
 				}
 			];
 		} catch (e) {
@@ -2126,17 +2141,16 @@
 				title="Scroll — every section in one continuous column">scroll</button
 			>
 		</span>
-		{#if layers.enabled.length > 0 || layerPick !== undefined}
-			<!-- Rendering layer in force: the base's short label, or `src`. -->
-			<button
-				class="tb-icon tb-layer"
-				class:active={!!layerDecision.layerId}
-				onclick={() => (toolsOpen = !toolsOpen)}
-				title="Render: {layerHint}"
-				aria-label="Rendering layer: {layerHint}"
-				data-tour="reader-render"
-			>{layerById(layerDecision.layerId)?.short ?? 'src'}</button>
-		{/if}
+		<!-- Markup in force: the base's short label (md / adoc / org), or `off`.
+		     Opens the tools sheet, whose "markup" row is the selector. -->
+		<button
+			class="tb-icon tb-layer"
+			class:active={!!layerDecision.layerId}
+			onclick={() => (toolsOpen = !toolsOpen)}
+			title="Markup: {layerHint}"
+			aria-label="Markup layer: {layerHint}"
+			data-tour="reader-render"
+		>{layerById(layerDecision.layerId)?.short ?? 'off'}</button>
 		{#if resolution.resolving}
 			<span
 				class="nd-resolving"
@@ -2342,7 +2356,7 @@
 			{/if}
 			<div class="tools-sheet__sec">
 				<div class="tools-sheet__head">
-					<span class="cap">render</span>
+					<span class="cap">markup</span>
 					<span class="hint">{layerHint}</span>
 				</div>
 				<div class="tools-sheet__row">
@@ -2353,8 +2367,8 @@
 							layerPick = null;
 							layerArm = null;
 						}}
-						title="Plain source — the text exactly as stored"
-					>source</button>
+						title="Off — the text exactly as stored, no markup styling"
+					>off</button>
 					{#each LAYERS.filter((l) => layers.enabled.includes(l.id)) as l (l.id)}
 						<button
 							class:active={layerDecision.layerId === l.id}
@@ -2364,10 +2378,10 @@
 								layerArm = null;
 							}}
 							title="{l.label} — styles the stored text in place; nothing is rewritten"
-						>{l.label}</button>
+						>{l.short}</button>
 					{/each}
 					{#if layers.enabled.length === 0}
-						<span class="layer-none">no layers enabled — Settings → Layers</span>
+						<span class="layer-none">all layers off — Settings → Layers</span>
 					{/if}
 				</div>
 				{#if layerPick !== undefined && !layerForce}

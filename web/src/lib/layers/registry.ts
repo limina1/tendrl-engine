@@ -1,17 +1,21 @@
-// Rendering layers — the opt-in registry.
+// Rendering layers — the registry.
 //
-// A *layer* is something the reader may put over a section's text once the
-// user has switched it on. Nothing in this registry is active by default:
-// `tendrl.layers` (store.svelte.ts) holds the enabled set and the user's
-// bindings, and `resolve.ts` turns a section's declared format + those
-// preferences into "which base, if any".
+// A *layer* is something the reader puts over a section's text. The three
+// markup bases (Markdown, Org, AsciiDoc) are ON by default since milestone 2
+// (decision-layers-default-on.org): a section whose `m` tag — or whose kind,
+// by spec — names a format renders with that base; `tendrl.layers`
+// (store.svelte.ts) holds the enabled set, the user's bindings and the
+// untagged fallback, and `resolve.ts` turns a section's declared format +
+// those preferences into "which base, if any". A section that declares
+// nothing and has no fallback still renders as source: tag or user, never a
+// guess.
 //
-// Milestone 1 ships one kind, `base`: a *decorated-source* renderer that
-// emits STYLE SPANS over UTF-16 offsets of the unchanged section text. The
-// text stays one `pre-wrap` run (see RichContent), so highlight capture and
-// nostrdown overlays keep their 1:1 DOM-offset ↔ content mapping. `grammar`
+// One kind so far, `base`: a *decorated-source* renderer that emits STYLE
+// SPANS over UTF-16 offsets of the unchanged section text. The text stays
+// one `pre-wrap` run (see RichContent), so highlight capture and nostrdown
+// overlays keep their 1:1 DOM-offset ↔ content mapping. `grammar`
 // (code-fence syntax colouring) and `block` (fence → figure replacement, e.g.
-// Graphviz) are reserved for the next milestone and slot in beside `BaseImpl`
+// Graphviz) are reserved for a later milestone and slot in beside `BaseImpl`
 // without touching the reader.
 //
 // Leaf module: imports nothing from wm/, state, or components.
@@ -100,12 +104,33 @@ export const LAYERS: readonly Layer[] = [
 	{
 		id: 'md-decorated',
 		kind: 'base',
-		label: 'Markdown (decorated source)',
+		label: 'Markdown',
 		short: 'md',
 		mimetypes: ['text/markdown'],
 		load: once('md-decorated', () => import('./bases/markdown').then((m) => m.base))
+	},
+	{
+		id: 'adoc-decorated',
+		kind: 'base',
+		label: 'AsciiDoc',
+		short: 'adoc',
+		mimetypes: ['text/asciidoc'],
+		load: once('adoc-decorated', () => import('./bases/asciidoc').then((m) => m.base))
+	},
+	{
+		id: 'org-decorated',
+		kind: 'base',
+		label: 'Org',
+		short: 'org',
+		mimetypes: ['text/org'],
+		load: once('org-decorated', () => import('./bases/org').then((m) => m.base))
 	}
 ];
+
+/** Every base id — the default-on set. */
+export const ALL_BASE_IDS: readonly string[] = LAYERS.filter((l) => l.kind === 'base').map(
+	(l) => l.id
+);
 
 export function layerById(id: string | null | undefined): Layer | undefined {
 	if (!id || id === SOURCE_ID) return undefined;

@@ -1,3 +1,4 @@
+/// <reference types="vitest/config" />
 import { sveltekit } from '@sveltejs/kit/vite';
 import { defineConfig } from 'vite';
 
@@ -15,5 +16,8 @@ const proxy = {
 export default defineConfig({
 	plugins: [sveltekit()],
 	server: { proxy },
-	preview: { proxy }
+	preview: { proxy },
+	// Pure-TS unit tests (rendering-layer tokenizers, segment invariants):
+	// `pnpm test`. No DOM — anything touching Svelte runtime stays out.
+	test: { include: ['src/**/*.test.ts'], environment: 'node' }
 });
