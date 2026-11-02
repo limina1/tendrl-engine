@@ -257,6 +257,12 @@
 	.section-content :global(.ly-tag) { color: var(--fg-muted); font-family: var(--font-mono); font-size: 0.8em; font-weight: 400; }
 	.section-content :global(.ly-admon) { color: var(--accent); font-weight: 700; font-family: var(--font-mono); font-size: 0.85em; }
 	.section-content :global(.ly-mark) { opacity: 0.45; font-weight: 400; font-style: normal; }
+	/* A soft line break: the newline character stays in the DOM (offsets,
+	   capture, selection all intact) but is rendered as collapsible
+	   whitespace, so a hard-wrapped paragraph flows the way AsciiDoc /
+	   Markdown / Org define it. Never applied to blank lines, fences,
+	   tables, headings or hard breaks — the base decides. */
+	.section-content :global(.ly-soft) { white-space: normal; }
 
 	.hl-overlay {
 		color: inherit;

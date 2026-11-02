@@ -56,13 +56,30 @@ const CLASS: Record<string, string> = {
 
 function spans(text: string): StyleSpan[] {
 	const out: StyleSpan[] = [];
+	const paragraphs: [number, number][] = [];
+	const hard: [number, number][] = [];
 	const tree = parser.parse(text);
 	tree.iterate({
 		enter(node) {
 			const cls = CLASS[node.name];
 			if (cls && node.to > node.from) out.push({ start: node.from, end: node.to, cls });
+			if (node.name === 'Paragraph') paragraphs.push([node.from, node.to]);
+			else if (node.name === 'HardBreak') hard.push([node.from, node.to]);
 		}
 	});
+	// Soft line breaks: a newline inside a paragraph is a space in
+	// CommonMark, not a line break. The character stays (offsets!) and is
+	// rendered collapsible via `.ly-soft`; a HardBreak (`  \n` / `\\\n`)
+	// keeps its newline.
+	for (const [from, to] of paragraphs) {
+		for (let i = text.indexOf('\n', from); i >= 0 && i < to; i = text.indexOf('\n', i + 1)) {
+			if (hard.some(([a, b]) => a <= i && i < b)) continue;
+			// Cover the continuation line's indentation too (wrapped list items).
+			let e = i + 1;
+			while (e < to && (text[e] === ' ' || text[e] === '\t')) e++;
+			out.push({ start: i, end: e, cls: 'soft' });
+		}
+	}
 	return out;
 }
 

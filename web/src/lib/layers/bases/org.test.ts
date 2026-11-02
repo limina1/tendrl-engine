@@ -105,6 +105,20 @@ describe('org base — Orgdown OD1', () => {
 		expect(classesAt(s, t.indexOf('|---'))).toContain('mark');
 	});
 
+	it('soft breaks: newlines inside a paragraph, not around blocks/headings/blank lines', () => {
+		const t = '* H\npara one\npara one more\n\npara two\n- item\n  wrapped\n#+BEGIN_SRC\na\nb\n#+END_SRC\n| x |\n| y |';
+		const s = spans(t);
+		const at = (needle: string) => t.indexOf(needle) - 1; // the \n before the line
+		const softs = s.filter((x) => x.cls === 'soft').map((x) => x.start);
+		expect(softs).toEqual([at('para one more'), at('  wrapped')]);
+		// Never after a heading, across a blank line, inside a fence, between table rows.
+		expect(softs).not.toContain(at('para one'));
+		expect(softs).not.toContain(at('para two'));
+		expect(softs).not.toContain(at('b\n'));
+		expect(softs).not.toContain(at('| y |'));
+		expect(s.filter((x) => x.cls === 'soft').every((x) => /^\n[ \t]*$/.test(t.slice(x.start, x.end)))).toBe(true);
+	});
+
 	it('offsets survive multi-byte text (UTF-16 basis)', () => {
 		const t = '* Été — *gras* 🙂 /ok/';
 		const s = spans(t);

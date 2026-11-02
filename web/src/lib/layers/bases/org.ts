@@ -189,9 +189,25 @@ function spans(text: string): StyleSpan[] {
 	let block: { name: string; kind: BlockKind; start: number } | null = null;
 	let tableStart = -1; // index of the first row of the current table
 
+	// Soft line breaks: a newline between two lines of the same paragraph
+	// (or a list item and its continuation) is a space in Org, not a line
+	// break. `joinPrev` = the previous line may be continued; the newline
+	// before a continuing line gets `soft` (rendered collapsible — the
+	// character itself stays, offsets intact).
+	let prevJoinable = false;
+	// The span covers the newline AND the continuation line's indentation,
+	// so a wrapped list item collapses to a single space too.
+	const soft = (line: Line) => {
+		if (line.start === 0) return;
+		const indent = /^[ \t]*/.exec(line.text)![0].length;
+		push(out, line.start - 1, line.start + indent, 'soft');
+	};
+
 	for (let n = 0; n < lines.length; n++) {
 		const line = lines[n];
 		const t = line.text;
+		const joinPrev = prevJoinable;
+		prevJoinable = false;
 
 		if (block) {
 			const end = END.exec(t);
@@ -200,10 +216,15 @@ function spans(text: string): StyleSpan[] {
 				if (block.kind !== 'plain') push(out, block.start, line.end, block.kind);
 				block = null;
 			} else if (block.kind === 'quote' || block.kind === 'plain') {
+				if (t.trim() !== '') {
+					if (joinPrev) soft(line);
+					prevJoinable = true;
+				}
 				scanInline(t, line.start, out);
 			}
 			continue;
 		}
+		if (t.trim() === '') continue;
 
 		const begin = BEGIN.exec(t);
 		if (begin) {
@@ -287,8 +308,11 @@ function spans(text: string): StyleSpan[] {
 				push(out, line.start + sepAt, line.start + sepAt + 2, 'mark');
 			}
 			scanInline(t, line.start, out, i);
+			prevJoinable = true; // a wrapped item continues on the next line
 			continue;
 		}
+		if (joinPrev) soft(line);
+		prevJoinable = true;
 		scanInline(t, line.start, out);
 	}
 	return out;

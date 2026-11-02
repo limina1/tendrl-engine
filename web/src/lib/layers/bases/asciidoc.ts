@@ -219,11 +219,26 @@ function spans(text: string): StyleSpan[] {
 	let pendingAttrRaw = ''; // its full text (for `[options="header"]` / `[%header]`)
 	let tableHeaderDone = false;
 	let tableHeaderByAttr = false;
+	// Soft line breaks: a newline inside a paragraph (or after a wrapped
+	// list item / admonition) is a space in AsciiDoc, not a line break —
+	// unless the line ends with the ` +` hard break. The newline before a
+	// continuing line gets `soft` (rendered collapsible; the character and
+	// every offset stay).
+	let prevJoinable = false;
+	// The span covers the newline AND the continuation line's indentation,
+	// so a wrapped list item collapses to a single space too.
+	const soft = (line: Line) => {
+		if (line.start === 0) return;
+		const indent = /^[ \t]*/.exec(line.text)![0].length;
+		push(out, line.start - 1, line.start + indent, 'soft');
+	};
 
 	for (let n = 0; n < lines.length; n++) {
 		const line = lines[n];
 		const t = line.text;
 		const top = stack[stack.length - 1];
+		const joinPrev = prevJoinable;
+		prevJoinable = false;
 
 		const d = DELIM.exec(t);
 		if (d) {
@@ -311,16 +326,20 @@ function spans(text: string): StyleSpan[] {
 			push(out, line.start, line.end, HR.test(t) ? 'hr' : 'mark');
 			continue;
 		}
+		if (t.trim() === '') continue;
+		const hardBreak = HARD_BREAK.test(t);
 		const ad = ADMON_PARA.exec(t);
 		if (ad) {
 			push(out, line.start, line.start + ad[1].length + 1, 'admon');
 			scanInline(t, line.start, out, ad[0].length);
+			prevJoinable = !hardBreak;
 			continue;
 		}
 		const co = CALLOUT_ITEM.exec(t);
 		if (co) {
 			push(out, line.start, line.start + co[0].trimEnd().length, 'mark');
 			scanInline(t, line.start, out, co[0].length);
+			prevJoinable = !hardBreak;
 			continue;
 		}
 		const li = LIST.exec(t);
@@ -333,6 +352,7 @@ function spans(text: string): StyleSpan[] {
 				i += cb[0].length;
 			}
 			scanInline(t, line.start, out, i);
+			prevJoinable = !hardBreak;
 			continue;
 		}
 		const de = DESC.exec(t);
@@ -340,12 +360,15 @@ function spans(text: string): StyleSpan[] {
 			push(out, line.start, line.start + de[1].length, 'strong');
 			push(out, line.start + de[1].length, line.start + de[1].length + de[2].length, 'mark');
 			scanInline(t, line.start, out, de[0].length);
+			prevJoinable = !hardBreak;
 			continue;
 		}
 		if (t.trim() === '+') {
 			push(out, line.start, line.end, 'mark'); // list continuation
 			continue;
 		}
+		if (joinPrev) soft(line);
+		prevJoinable = !hardBreak;
 		scanInline(t, line.start, out);
 	}
 	return out;

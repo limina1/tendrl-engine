@@ -109,6 +109,20 @@ describe('asciidoc base', () => {
 		expect(classesAt(s, t.length - 1)).toContain('mark');
 	});
 
+	it('soft breaks: paragraph newlines collapse; hard breaks, blank lines, blocks, titles do not', () => {
+		const t =
+			'== T\nline one\nline two +\nline three\nline four\n\nnext para\n* item\n  wrapped\n----\na\nb\n----\n____\nq one\nq two\n____';
+		const s = spans(t);
+		const at = (needle: string) => t.indexOf(needle) - 1;
+		const softs = s.filter((x) => x.cls === 'soft').map((x) => x.start);
+		expect(softs).toEqual([at('line two'), at('line four'), at('  wrapped'), at('q two')]);
+		expect(softs).not.toContain(at('line one')); // after a title
+		expect(softs).not.toContain(at('line three')); // after ` +`
+		expect(softs).not.toContain(at('next para')); // across a blank line
+		expect(softs).not.toContain(at('b\n')); // inside a listing
+		expect(s.filter((x) => x.cls === 'soft').every((x) => /^\n[ \t]*$/.test(t.slice(x.start, x.end)))).toBe(true);
+	});
+
 	it('an unterminated listing runs to the end', () => {
 		const t = 'p\n----\nraw *x*\nmore';
 		const s = spans(t);

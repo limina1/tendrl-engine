@@ -2219,6 +2219,11 @@ curl -s "$B/addressable/30041/$PK/bare-sec?policy=local_only" | python3 -c 'impo
    takes the same =effective_format= from the single-event endpoint.)
 6. Highlight capture across a styled Org heading → the NIP-84 quote equals
    the source slice (stars included); =…?highlight=<id>= → forced =off=.
+   Soft breaks: a hard-wrapped AsciiDoc paragraph (one sentence per line)
+   flows as one paragraph; a line ending in ` +` still breaks; a blank
+   line still separates paragraphs; =----= listings keep every line.
+   Selecting across a joined line still yields the source newline in the
+   quote.
 7. Composer: mode bar *format* select + per-section *inherit (Markdown)*;
    preview JSON shows =m= on every 30041, none on the 30040; save draft →
    reload → both selects restored.

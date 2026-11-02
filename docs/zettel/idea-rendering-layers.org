@@ -22,6 +22,14 @@ Three granularities, each preserving more of the source than the next:
    fences, links, dimmed sigils). This is org-mode's and CodeMirror's
    model, and the default reading mode when a base is active. Highlights
    and nostrdown keep their 1:1 DOM-offset ↔ content mapping for free.
+   *Soft line breaks* ride the same mechanism (2026-11-02): all three
+   formats define a single newline inside a paragraph as a space, so the
+   base marks that newline =soft= and CSS renders the character as
+   collapsible whitespace (=white-space: normal= on a one-character span).
+   The newline is still in the DOM at its offset; a hard-wrapped
+   paragraph simply flows. Blank lines, fences, tables, headings and hard
+   breaks (AsciiDoc ` +`, Markdown two-space / backslash) keep their
+   newlines — the base decides, not the stylesheet.
 2. *Block replacement* — a fenced block with an info string is replaced
    by a figure (Graphviz, Mermaid, PlantUML…), with a toggle back to
    source. Text outside the fence keeps its offsets; a highlight inside
