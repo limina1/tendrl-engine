@@ -63,6 +63,7 @@ exists (with code paths), gaps.
 - [[file:decision-nostrdown-parsing.org][Nostrdown parsing lives in Rust]]
 - [[file:decision-wikilinks-30818-only.org][Global wikilinks resolve to 30818 only]]
 - [[file:decision-mimetype-tag.org][Content format is the m tag — tag or user, never heuristics]] — stamped on every 30041, never on an index; 2026-10-01
+- [[file:decision-layers-default-on.org][Markup layers on by default; kind-defined formats; untagged fallback]] — Markdown/AsciiDoc/Org decorate out of the box, 30023/30818 by spec, untagged = the user's answer; 2026-11-02
 - [[file:decision-context-set-engine-owned.org][The context set is engine-owned]] — flags web, set engine; supersedes the web-pool call in half
 - [[file:decision-assistant-signs-own-key.org][The assistant signs with its own key]] — named =sign_as= source, never the user's
 - [[file:decision-chat-runs-on-agent-services.org][The chat runs on agent services; Claude is the external harness]] — Anthropic provider removed 2026-09-22
@@ -157,7 +158,7 @@ Brainstorm notes articulating data → representation → UI/UX. Promotion
 path: [[file:conventions.org][conventions]].
 
 ** Reader loop
-- [[file:idea-rendering-layers.org][Rendering layers]] — opt-in bases / grammars / block renderers over source text; milestone 1 shipped 2026-10-01, diagrams + publish-time rendering next
+- [[file:idea-rendering-layers.org][Rendering layers]] — bases / grammars / block renderers over source text; Markdown + Org + AsciiDoc decorated-source bases shipped (M1 2026-10-01, M2 2026-11-02), diagrams + publish-time rendering next
 - [[file:idea-composer-formatting.org][Composer formatting]] — format selector shipped; buttons over source next, no WYSIWYG
 - [[file:idea-backlinks.org][Backlinks panel]] — derived reverse index; cheapest high-value join
 - [[file:idea-see-also.org][Semantic "See Also"]] — ambient relatedness + promote-to-ref

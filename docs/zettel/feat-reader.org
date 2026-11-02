@@ -70,12 +70,17 @@ never happen in the browser.
   tracker (a torn-down element reads 0) and the offsets are re-applied
   once the tree settles, twice, unless the user scrolls first. Rationale in
   [[file:decision-buffer-state-homes.org][where buffer state lives]].
-- Rendering layers (2026-10-01): opt-in bases over the source text
-  (=web/src/lib/layers/=). A =src= / =md= toolbar chip shows the base in
-  force; T → *render* picks per buffer (source + enabled bases) and
-  promotes a pick with armed "always for <mimetype>" / "always for this
-  book" buttons. Decision: the section's =m= tag → the enclosing index's
-  → the user — never a guess; a =?highlight= link forces source. Style
+- Markup layers (2026-10-01, default-on + Org/AsciiDoc 2026-11-02):
+  decorated-source bases over the stored text (=web/src/lib/layers/=;
+  Markdown via lezer, Org and AsciiDoc via hand-written subset
+  tokenizers). The toolbar chip (=md= / =adoc= / =org= / =off=) shows the
+  base in force and opens the tools sheet; T → *markup* picks per buffer
+  (off + enabled bases) and promotes a pick with armed "always for
+  <mimetype>" / "always for this book" buttons. Decision: the section's
+  =m= tag → the kind's spec (30023, 30818) → the enclosing index's → the
+  user's untagged fallback → their pick — never a guess; a =?highlight=
+  link forces source. =DocBuffer= decides the same way from the
+  single-event endpoint's =effective_format=. Style
   spans ride =applyStyles= over =buildSegments= so the 1:1 offset mapping
   (highlights, nostrdown) is untouched. Design + checklist:
   [[file:idea-rendering-layers.org][Rendering layers]];

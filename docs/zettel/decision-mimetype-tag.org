@@ -80,5 +80,6 @@ render as source until the user picks (or the index declares).
 * Related
 - [[file:index.org][Index]]
 - [[file:idea-rendering-layers.org][Rendering layers]] — the consumer of this tag
+- [[file:decision-layers-default-on.org][Layers on by default; kind-defined formats; untagged fallback]] — the 2026-11-02 refinement (30023/30818 count as declarations; the user may answer for untagged sections)
 - [[file:feat-nostrdown.org][Nostrdown]] — shares the =m=/=M= vocabulary (NKBIP-06)
 - [[file:feat-reader.org][Reader]]

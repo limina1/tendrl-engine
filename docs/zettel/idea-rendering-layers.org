@@ -5,11 +5,13 @@
 
 The reader shows every section as one =pre-wrap= run of the stored text
 with two engine-resolved overlays merged onto it (NIP-84 highlights,
-nostrdown refs). A *rendering layer* is something the reader may put over
-that text once the user has switched it on. Nothing is on by default: a
-fresh install reads exactly as before.
+nostrdown refs). A *rendering layer* is something the reader puts over
+that text. The three markup bases are on by default since milestone 2
+([[file:decision-layers-default-on.org][decision]]); a section that
+declares no format still reads exactly as stored unless the user answers.
 
-Branch: =feat/rendering-layers= (milestone 1 shipped 2026-10-01).
+Branch: =feat/rendering-layers= (milestone 1 shipped 2026-10-01,
+milestone 2 — Org + AsciiDoc bases, default-on — 2026-11-02).
 
 * The model
 
@@ -44,14 +46,18 @@ Which base renders a section (=layers/resolve.ts=):
    remembered.
 3. "Always for this book" binding (30040 coordinate).
 4. "Always for <mimetype>" binding, keyed by the section's *effective
-   format* — its own =m= tag, else the one inherited from the nearest
-   enclosing index that declares one, resolved engine-side in the tree
-   stream ([[file:decision-mimetype-tag.org][decision]]).
+   format* — its own =m= tag, else the format its kind fixes by spec
+   (30023 Markdown, 30818 AsciiDoc), else the one inherited from the
+   nearest enclosing index that declares one, resolved engine-side
+   ([[file:decision-mimetype-tag.org][decision]],
+   [[file:decision-layers-default-on.org][kind formats]]).
 5. The first *enabled* base registered for that format.
-6. Source.
+6. The user's *untagged* fallback (Settings → Layers), when the section
+   declares nothing: steps 4–5 run with that format.
+7. Source.
 
 Disabled layers never resolve, so the Settings → Layers toggle is the
-single opt-in. A binding value of =source= means "never decorate this".
+single switch. A binding value of =source= means "never decorate this".
 Bindings and the enabled set live in =tendrl.layers= (localStorage,
 per-device, never an event); the un-promoted pick lives in the buffer's
 view state and dies with it. Syncing bindings via a kind-30078 settings
@@ -126,8 +132,12 @@ app); native tools detected, never installed.
   chunk, SVG sanitized; toggle back to source per block
 - [ ] Code grammars (=grammar= kind): Lezer grammars per fence info
   string, shared with the composer's CodeMirror
-- [ ] Org and AsciiDoc decorated-source bases (uniorg / asciidoctor.js —
-  the latter is ~2 MB, so a downloadable pack rather than a bundled chunk)
+- [X] Org and AsciiDoc decorated-source bases — hand-written subset
+  tokenizers (=bases/org.ts=: Orgdown OD1; =bases/asciidoc.ts=: the
+  constructs Alexandria renders), own lazy chunks, no library (2026-11-02)
+- [X] Bases on by default; kind-defined formats (30023/30818); untagged
+  fallback preference; =DocBuffer= decides + styles like the reader
+  ([[file:decision-layers-default-on.org][decision]], 2026-11-02)
 - [ ] Engine-side local-tool executor (=POST /api/v1/render=: dot /
   plantuml detection, content-hash cache, sandbox profile, timeout)
 - [ ] Remote render server (Kroki) behind Confirm mode
@@ -137,7 +147,6 @@ app); native tools detected, never installed.
   Confirm-gated)
 - [ ] Whole-section rendered mode (placeholder substitution for
   nostrdown + quote re-anchoring for highlights; capture disabled)
-- [ ] =DocBuffer= (single-section view) gets the same decision + spans
 - [ ] Optional: sync bindings via kind 30078 (explicit opt-in)
 
 * Related

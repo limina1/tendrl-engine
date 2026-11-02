@@ -1,0 +1,74 @@
+#+TITLE: Decision: markup layers are on by default; kind-defined formats; an untagged fallback
+#+TYPE: decision
+#+STATUS: decided
+#+DATE: 2026-11-02
+
+Milestone 1 of [[file:idea-rendering-layers.org][rendering layers]] made every
+layer opt-in: nothing decorated until a base was switched on in Settings.
+Milestone 2 reverses the default and adds two more *non-heuristic* sources
+of a section's format. The governing rule of
+[[file:decision-mimetype-tag.org][the m-tag decision]] — *tag or user, never
+a guess* — is unchanged; what changed is who counts as "the user" and
+which specs count as "the tag".
+
+* The three decisions
+
+1. *The three markup bases (Markdown, AsciiDoc, Org) are on by default.*
+   A fresh install renders a section tagged =m=text/org= with the Org
+   base straight away. Settings → Layers switches any base off, and a
+   stored preference is honoured as-is thereafter (=tendrl.layers= with
+   no key = defaults; with a key = exactly what it says). "Basic usage"
+   of a reader for NKBIP-01 publications is reading them as their
+   authors wrote them; making that a setting was the wrong default.
+
+2. *A kind's spec-defined format counts as a declaration.* NIP-23 fixes
+   kind-30023 content as Markdown; NIP-54 fixes kind-30818 as AsciiDoc.
+   =mimetype::for_kind= returns those two and nothing else — NKBIP-01
+   (30040/30041) fixes no format, so a bare 30041 still declares nothing.
+   Precedence: own =m= tag → the kind's spec → the enclosing index's
+   =m= → none (=format_source= =own= / =kind= / =inherited= / =none=).
+   The single-event endpoint (=GET /api/v1/addressable/…=) now ships
+   =format= / =effective_format= / =format_source= next to the event, so
+   the doc buffer renders a wiki page as AsciiDoc without a TS twin of
+   the rule.
+
+3. *An "untagged sections" preference, default source.* Alexandria
+   publishes every 30041 with no =m= tag (it renders by kind, not by
+   tag — see the survey below). Rather than guess, the user answers once
+   in Settings → Layers: "Untagged sections: source | Markdown | Org |
+   AsciiDoc". The resolver treats that answer as the effective format
+   for a section that declares nothing (reported as =untagged= in the
+   reader's hint), and the per-buffer pick / "always for this book"
+   binding still override it. Default is *source*: a fresh install still
+   never styles a text whose author did not say what it is.
+
+* What gc-alexandria taught (survey, 2026-11-02)
+
+=reference/gc-alexandria= renders 30041 and 30818 through asciidoctor.js
+3.0 with no options and 30023 through a regex Markdown parser; it never
+reads or writes =m=. Its HTML is post-processed with regexes and no
+sanitizer. asciidoctor swallows =[[Foo]]= as an inline anchor and the
+wikilink is reconstructed afterwards from =<a id>= — exactly the failure
+our atom-first decorated-source model avoids: nostrdown claims =[[ ]]=
+engine-side first, and the base only styles *around* the atom
+(=applyStyles= never re-slices one). The constructs it bothers to style
+— tables, image blocks with =.Title=, listing/literal blocks, lists,
+block titles, quote/verse with attribution, admonitions, sidebars,
+stem/latexmath, listing blocks tagged plantuml/bpmn/tikz/abc — are the
+scope of the AsciiDoc base.
+
+* The language button
+
+The reader's toolbar chip (=md= / =adoc= / =org= / =off=) is always
+visible and opens the tools sheet; its *markup* row is the selector
+(=off= + every enabled base) and keeps the armed "always for
+<mimetype>" / "always for this book" promotions. The hint names where
+the decision came from: this section's =m= tag, the book's, the kind's
+spec, the user's fallback, or their pick.
+
+* Related
+- [[file:index.org][Index]]
+- [[file:decision-mimetype-tag.org][Content format is the m tag]] — the rule this refines
+- [[file:idea-rendering-layers.org][Rendering layers]] — milestone 2 checklist
+- [[file:feat-reader.org][Reader]] — the chip and the markup row
+- =reference/gc-alexandria= — the interop case (no zettel yet)

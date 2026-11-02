@@ -38,6 +38,7 @@ cargo test -- --nocapture           # show println output
 cargo clippy
 cargo fmt --check
 pnpm -C web check                   # Svelte / TypeScript checks
+pnpm -C web test                    # vitest: rendering-layer tokenizers + segment invariants
 
 # Dependency updates (cargo + pnpm + git-pinned nostrdb)
 make                                # report outdated deps — changes nothing
@@ -229,9 +230,11 @@ sections and embeds new events on a 60-second interval when embeddings are enabl
   coordinate is admissible wherever an entity is (canonicalized to its naddr,
   never slug-normalized). The web (`RichContent.svelte`) merges resolved spans with NIP-84
   highlight spans onto one overlay — the same parse/resolve/render split as
-  highlights. Rendering-layer style spans (`web/src/lib/layers/`, opt-in
-  decorated-source bases keyed by the section's `m` tag) are applied as a
-  post-pass over that merge, never inside it, so refs keep their offsets. Publish emits `["w", topic]` tags (single-letter, relay-indexable)
+  highlights. Rendering-layer style spans (`web/src/lib/layers/`, default-on
+  decorated-source bases for Markdown / Org / AsciiDoc keyed by the section's
+  `m` tag) are applied as a post-pass over that merge, never inside it, so refs
+  keep their offsets — a `[[topic]]` is nostrdown's atom first, Org/AsciiDoc
+  link styling second. Publish emits `["w", topic]` tags (single-letter, relay-indexable)
   for `{{wiki:}}` / `[[ ]]` refs, plus `ref`/`a`/`q`/`p` tags per reference kind
   (`reference_tags()`).
 - **`user_data.rs`**: NIP-01/02/51/65 profile data — parses kind 0/3/10000/10002/
@@ -400,11 +403,14 @@ stored `whats-up` — no need to hand-normalize; quote values containing spaces.
 - **Content modes**: Sections support Markdown, Org Mode, AsciiDoc, and PlainText,
   declared by the `["m", <mimetype>]` tag (canonical `text/markdown` / `text/org` /
   `text/asciidoc` / `text/plain`; legacy `["format", …]` read as an alias) — see
-  `mimetype.rs`. **Tag or nothing, no heuristics**: the engine refuses to publish a
-  section without a declared format and stamps `m` on every 30041 (never on a 30040);
-  the reader inherits an untagged section's format from the nearest enclosing index
-  that declares a `text/*` `m`, else the user picks. Decision:
-  `docs/zettel/decision-mimetype-tag.org`.
+  `mimetype.rs`. **Tag or spec or user, no heuristics**: the engine refuses to publish
+  a section without a declared format and stamps `m` on every 30041 (never on a
+  30040). Reading precedence (`format_source`): the event's own `m` → the format its
+  kind fixes by spec (`mimetype::for_kind`: 30023 Markdown, 30818 AsciiDoc; 30041
+  never) → the nearest enclosing index's `text/*` `m` → the user's "untagged
+  sections" preference → their per-buffer pick. The three bases are on by default
+  (`web/src/lib/layers/`). Decisions: `docs/zettel/decision-mimetype-tag.org`,
+  `docs/zettel/decision-layers-default-on.org`.
 - **nostrdb read lock**: Never run nostrdb queries concurrently — `query.rs` holds a
   global mutex for a reason (see module docs).
 - **Nostr event kinds used**: 0 (metadata), 3 (contacts), 777 (spells — saved
