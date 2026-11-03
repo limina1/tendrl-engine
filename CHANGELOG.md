@@ -1,3 +1,21 @@
+## v0.16.0 — 2026-11-03
+
+- feat(web): Edit in the event menu reopens a replaceable event in the composer
+- feat(web): event composer chrome twinned with the event menu, body scrolls
+- feat(event-templates): identifier is minted or pasted, never derived from the title
+- feat(web): mobile drawer '+ event' row opens the generic event composer
+- feat(event-templates): compose any event kind from a declarative template
+- feat(web/layers): soft line breaks — a paragraph-internal newline flows, as the three formats define
+- docs(zettel): layers-default-on decision, M2 checklist, reader + m-tag notes; verify recipe
+- feat(web/layers): Org + AsciiDoc decorated-source bases, on by default; untagged fallback; vitest
+- feat(mimetype): kind-defined content formats + format fields on the single-event endpoints
+- docs(zettel): rendering layers idea, m-tag decision, composer formatting; verify recipe
+- chore(scripts): declare the content format on every publish path
+- feat(web/compose): format selector — document default + per-section override, sent on every publish
+- feat(web/layers): opt-in rendering layers — registry, store, Markdown decorated-source base, reader picker
+- feat(mimetype): tag-or-nothing content formats — m on every 30041, inherited down the tree
+- chore(release): publish-release.sh pushes the tag to github AND origin (Nostr/ngit) before the GitHub release
+
 ## v0.15.1 — 2026-09-22
 
 - feat(wm): tendrl-open-chat — SPC c / SPC b o a / M-x opens the assistant chat on both shells
