@@ -2281,6 +2281,19 @@ select (Music track · 36787 / Web bookmark · 39701 / custom kind…), required
 fields starred, =music= chip on tags, "derived" badge on blank =alt=;
 identifier = input + *generate* (fills a 21-char nanoid; a pasted one is
 kept verbatim); custom kind 30078 shows the same identifier field, kind 1 none.
+
+** Edit from the event menu (own replaceable / addressable events)
+
+Search =id:<id of a track you published>= → =m= opens the event menu →
+the actions row carries =e Edit= (only for your own kind 0/3, 10000–19999,
+30000–39999 — never 30040/30041, the publication composer owns those).
+Edit fetches the full event (a search result's content is the 200-char
+preview), closes the menu and opens the composer as *edit event* with
+the kind's template selected, =d= / fields / content prefilled, the fixed
+=music= stripped out of the tags field, undeclared tags as extra rows
+(trailing elements kept), and the footer button reading *Replace*.
+Change the title → Replace → =GET $B/addressable/36787/$PK/<d>= shows a
+new id with the same =d= and the edited title.
 Type a bad url + date → red borders with the engine's messages, footer
 "N to fix"; fix them → "ready · Ctrl-Enter", "event json" shows the
 template, Publish → toast, modal closes, draft cleared.

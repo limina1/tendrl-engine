@@ -72,9 +72,15 @@ export type EventComposerDraft = {
 	content: string;
 	/** Declared field → the typed value (multi fields: one per line). */
 	values: Record<string, string>;
-	/** Undeclared `[name, value]` rows the user added. */
-	extra: { name: string; value: string }[];
+	/** Undeclared `[name, value, …rest]` rows the user added (or an edited
+	 *  event carried); `rest` keeps a tag's trailing elements intact. */
+	extra: { name: string; value: string; rest?: string[] }[];
 };
+
+/** An existing replaceable/addressable event handed to the composer by
+ *  the event menu's Edit: same kind, same tags (so the same `d`), same
+ *  content — publishing it is the replacement. */
+export type EventComposerPrefill = { kind: number; content: string; tags: string[][] };
 
 export type AgentServicesModalState = {
 	view: 'signup' | 'manage' | 'fund';
@@ -557,7 +563,7 @@ function _createAppState() {
 	// a template; rendered by EventComposerModal in +layout. The draft is
 	// the whole form (template, custom kind, content, per-field values,
 	// extra tag rows), remembered across close like the highlighter's.
-	let eventComposer: { template?: string } | null = $state(null);
+	let eventComposer: { template?: string; prefill?: EventComposerPrefill } | null = $state(null);
 	let eventDraft: EventComposerDraft | null = $state(null);
 
 	// Republish diff prompt: set when Publish detects a same-title
@@ -5306,7 +5312,7 @@ function _createAppState() {
 
 		// Generic event composer modal
 		get eventComposer() { return eventComposer; },
-		set eventComposer(v: { template?: string } | null) { eventComposer = v; },
+		set eventComposer(v: { template?: string; prefill?: EventComposerPrefill } | null) { eventComposer = v; },
 		get eventDraft() { return eventDraft; },
 		set eventDraft(v: EventComposerDraft | null) { eventDraft = v; },
 

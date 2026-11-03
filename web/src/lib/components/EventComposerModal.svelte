@@ -17,22 +17,56 @@
 
 	const CUSTOM = '__custom__';
 
-	// Prefill: the open payload's template wins; otherwise the draft
-	// remembered from the last close. Publish clears the memory.
-	const draft: EventComposerDraft | null = app.eventDraft;
+	// Prefill precedence: an existing event handed over by the menu's Edit
+	// wins (its kind picks the template; its tags fill the fields); else
+	// the open payload's template; else the draft remembered from the last
+	// close. Publish clears the memory.
 	const opener = app.eventComposer;
+	const prefill = opener?.prefill ?? null;
+	const draft: EventComposerDraft | null = prefill ? null : app.eventDraft;
 	let templates = $state<api.KindTemplate[]>([]);
 	let templatesErr = $state<string | null>(null);
 	let selected = $state<string>(
-		opener?.template ?? (draft ? (draft.template ?? CUSTOM) : '')
+		prefill ? '' : (opener?.template ?? (draft ? (draft.template ?? CUSTOM) : ''))
 	);
-	let customKind = $state(draft?.kind ?? '');
-	let content = $state(draft?.content ?? '');
+	let customKind = $state(prefill ? String(prefill.kind) : (draft?.kind ?? ''));
+	let content = $state(prefill?.content ?? draft?.content ?? '');
 	let values = $state<Record<string, string>>({ ...(draft?.values ?? {}) });
-	let extra = $state<{ name: string; value: string }[]>(
+	let extra = $state<{ name: string; value: string; rest?: string[] }[]>(
 		(draft?.extra ?? []).map((r) => ({ ...r }))
 	);
 	let posting = $state(false);
+	const editing = !!prefill;
+
+	// Lay an existing event's tags over a template: declared fields take
+	// their values (multi → one per line), everything else becomes an extra
+	// row with its trailing elements kept. The `client` tag is dropped —
+	// signing re-stamps it.
+	function applyPrefill(t: api.KindTemplate | null) {
+		if (!prefill) return;
+		const v: Record<string, string> = {};
+		const rows: { name: string; value: string; rest?: string[] }[] = [];
+		const declared = new Map((t?.tags ?? []).map((f) => [f.name, f]));
+		for (const tag of prefill.tags) {
+			const [name, value = '', ...rest] = tag;
+			if (!name || name === 'client') continue;
+			const f = declared.get(name);
+			if (f && rest.length === 0) {
+				if (f.multi) {
+					if (f.fixed.includes(value)) continue;
+					v[name] = v[name] ? `${v[name]}\n${value}` : value;
+				} else if (!(name in v)) {
+					v[name] = value;
+				} else {
+					rows.push({ name, value });
+				}
+			} else {
+				rows.push({ name, value, rest: rest.length ? rest : undefined });
+			}
+		}
+		values = v;
+		extra = rows;
+	}
 
 	const template = $derived(
 		selected && selected !== CUSTOM ? (templates.find((t) => t.name === selected) ?? null) : null
@@ -74,13 +108,21 @@
 	api.listEventTemplates().then(
 		(r) => {
 			templates = r.templates;
-			// A fresh open with nothing remembered lands on the first template.
-			if (!selected && templates.length) selected = templates[0].name;
+			if (prefill) {
+				// An edited event picks the template declared for its kind,
+				// else the custom path with the kind filled in.
+				const t = templates.find((x) => x.kind === prefill.kind) ?? null;
+				selected = t ? t.name : CUSTOM;
+				applyPrefill(t);
+			} else if (!selected && templates.length) selected = templates[0].name;
 			else if (!selected) selected = CUSTOM;
 		},
 		(e) => {
 			templatesErr = api.errorMessage(e, 'templates unavailable');
-			if (!selected) selected = CUSTOM;
+			if (prefill) {
+				selected = CUSTOM;
+				applyPrefill(null);
+			} else if (!selected) selected = CUSTOM;
 		}
 	);
 
@@ -105,7 +147,7 @@
 		}
 		if (customNeedsD && (values.d ?? '').trim()) tags.push(['d', values.d.trim()]);
 		for (const r of extra) {
-			if (r.name.trim()) tags.push([r.name.trim(), r.value.trim()]);
+			if (r.name.trim()) tags.push([r.name.trim(), r.value.trim(), ...(r.rest ?? [])]);
 		}
 		return {
 			template: template ? template.name : null,
@@ -339,7 +381,7 @@
 		tabindex="-1"
 	>
 		<header class="evc__header">
-			<h3 class="evc-title">compose event</h3>
+			<h3 class="evc-title">{editing ? 'edit event' : 'compose event'}</h3>
 			{#if kindNumber !== null}
 				<span class="evc-badge">kind {kindNumber}</span>
 			{/if}
@@ -501,6 +543,9 @@
 								disabled={posting}>×</button
 							>
 						</div>
+						{#if row.rest?.length}
+							<div class="evc-detail">+ {row.rest.join(' · ')}</div>
+						{/if}
 						{#each errs as m (m)}
 							<div class="evc-detail evc-detail--bad">{m}</div>
 						{/each}
@@ -543,7 +588,7 @@
 			<span class="evc-spacer"></span>
 			<button class="evc-btn" onclick={() => close()} disabled={posting}>Cancel</button>
 			<button class="evc-btn evc-btn--post" onclick={post} disabled={!canPost}>
-				{posting ? 'Publishing…' : 'Publish'}
+				{posting ? 'Publishing…' : editing ? 'Replace' : 'Publish'}
 			</button>
 		</footer>
 	</div>
