@@ -156,9 +156,15 @@
 		return () => clearTimeout(timer);
 	});
 
+	// Inline problems, minus the bare "required" on a field the user hasn't
+	// touched: the star and the footer's "N to fix" already say it, and a
+	// pristine form shouldn't open red. A typed-but-invalid value is shown.
 	const problemsByField = $derived.by(() => {
 		const m: Record<string, string[]> = {};
-		for (const p of problems) (m[p.field] ??= []).push(p.message);
+		for (const p of problems) {
+			if (p.message === 'required' && !(values[p.field] ?? '').trim()) continue;
+			(m[p.field] ??= []).push(p.message);
+		}
 		return m;
 	});
 
@@ -248,6 +254,74 @@
 
 <svelte:window onkeydown={handleKeydown} />
 
+<!-- One field: label row (name, required star, fixed chips, derived badge),
+     the widget for its type, then the engine's problems or the hint. -->
+{#snippet field(f: api.EventTagField)}
+	{@const errs = problemsByField[f.name] ?? []}
+	<div class="evc-field {f.multi ? 'evc-field--wide' : ''}">
+		<label class="evc-label" for="evc-f-{f.name}">
+			{fieldLabel(f)}{#if f.required}<span class="evc-req" title="required">*</span>{/if}
+			{#if f.fixed.length}
+				{#each f.fixed as v (v)}<span class="evc-chip">{v}</span>{/each}
+			{/if}
+			{#if f.auto && !(values[f.name] ?? '').trim()}
+				<span class="evc-badge evc-badge--dim">derived</span>
+			{/if}
+		</label>
+		{#if f.multi}
+			<textarea
+				id="evc-f-{f.name}"
+				class="evc-input evc-multi {errs.length ? 'evc-input--bad' : ''}"
+				data-entry
+				placeholder={placeholder(f)}
+				bind:value={values[f.name]}
+				disabled={posting}
+			></textarea>
+		{:else if f.type === 'boolean'}
+			<select
+				id="evc-f-{f.name}"
+				class="evc-input evc-select {errs.length ? 'evc-input--bad' : ''}"
+				bind:value={values[f.name]}
+				disabled={posting}
+			>
+				<option value="">—</option>
+				<option value="true">true</option>
+				<option value="false">false</option>
+			</select>
+		{:else if mintable(f)}
+			<div class="evc-row">
+				<input
+					id="evc-f-{f.name}"
+					class="evc-input evc-mono {errs.length ? 'evc-input--bad' : ''}"
+					data-entry
+					placeholder="paste an existing identifier, or generate"
+					bind:value={values[f.name]}
+					disabled={posting}
+				/>
+				<button class="evc-btn" onclick={mintD} disabled={posting || minting}>
+					{minting ? '…' : 'generate'}
+				</button>
+			</div>
+		{:else}
+			<input
+				id="evc-f-{f.name}"
+				class="evc-input {errs.length ? 'evc-input--bad' : ''}"
+				data-entry
+				inputmode={f.type === 'integer' ? 'numeric' : undefined}
+				placeholder={placeholder(f)}
+				bind:value={values[f.name]}
+				disabled={posting}
+			/>
+		{/if}
+		{#each errs as m (m)}
+			<div class="evc-detail evc-detail--bad">{m}</div>
+		{/each}
+		{#if !errs.length && f.hint}
+			<div class="evc-detail">{f.hint}</div>
+		{/if}
+	</div>
+{/snippet}
+
 <!-- svelte-ignore a11y_click_events_have_key_events -->
 <div
 	class="evc-backdrop {yielding ? 'evc-backdrop--yield' : ''}"
@@ -257,215 +331,202 @@
 	role="presentation"
 >
 	<div
-		class="evc-modal"
+		class="evc"
 		onclick={(e) => e.stopPropagation()}
 		role="dialog"
 		aria-modal="true"
 		aria-label="Compose event"
 		tabindex="-1"
 	>
-		<header class="evc-header">
+		<header class="evc__header">
 			<h3 class="evc-title">compose event</h3>
-			<button class="evc-close" onclick={() => close()} aria-label="Close">×</button>
-		</header>
-
-		<label class="evc-label" for="evc-template">
-			template
 			{#if kindNumber !== null}
 				<span class="evc-badge">kind {kindNumber}</span>
 			{/if}
-		</label>
-		<div class="evc-row">
-			<select id="evc-template" class="evc-input evc-select" bind:value={selected} disabled={posting}>
-				{#each templates as t (t.name)}
-					<option value={t.name}>{t.title} · {t.kind}{t.user_defined ? ' · yours' : ''}</option>
-				{/each}
-				<option value={CUSTOM}>custom kind…</option>
-			</select>
-			{#if isCustom}
-				<input
-					class="evc-input evc-kind"
-					data-entry
-					inputmode="numeric"
-					placeholder="kind"
-					bind:value={customKind}
-					disabled={posting}
-				/>
-			{/if}
-		</div>
-		{#if templatesErr}
-			<div class="evc-detail evc-detail--bad">{templatesErr}</div>
-		{:else if template}
-			<div class="evc-detail evc-detail--wrap">
-				{template.description ?? ''}{#if template.spec}
-					<span class="evc-spec"> — {template.spec}</span>{/if}
-			</div>
-		{:else if isCustom}
-			<div class="evc-detail evc-detail--wrap">
-				Any kind, any tags. An addressable kind (30000–39999) needs an identifier —
-				generate one or paste an existing one.
-			</div>
-		{/if}
+			<span class="evc-spacer"></span>
+			<button class="evc-close" onclick={() => close()} aria-label="Close">×</button>
+		</header>
 
-		{#if template}
-			{#each template.tags as f (f.name)}
-				{@const errs = problemsByField[f.name] ?? []}
-				<label class="evc-label" for="evc-f-{f.name}">
-					{fieldLabel(f)}{#if f.required}<span class="evc-req" title="required">*</span>{/if}
-					{#if f.fixed.length}
-						{#each f.fixed as v (v)}<span class="evc-chip">{v}</span>{/each}
+		<div class="evc__body">
+			<section class="evc__section">
+				<div class="evc-field">
+					<label class="evc-label" for="evc-template">template</label>
+					<div class="evc-row">
+						<select
+							id="evc-template"
+							class="evc-input evc-select"
+							bind:value={selected}
+							disabled={posting}
+						>
+							{#each templates as t (t.name)}
+								<option value={t.name}
+									>{t.title} · {t.kind}{t.user_defined ? ' · yours' : ''}</option
+								>
+							{/each}
+							<option value={CUSTOM}>custom kind…</option>
+						</select>
+						{#if isCustom}
+							<input
+								class="evc-input evc-kind"
+								data-entry
+								inputmode="numeric"
+								placeholder="kind"
+								bind:value={customKind}
+								disabled={posting}
+							/>
+						{/if}
+					</div>
+					{#if templatesErr}
+						<div class="evc-detail evc-detail--bad">{templatesErr}</div>
+					{:else if template}
+						<div class="evc-detail evc-detail--wrap">
+							{template.description ?? ''}{#if template.spec}
+								<span class="evc-spec">{' — '}{template.spec}</span>{/if}
+						</div>
+					{:else if isCustom}
+						<div class="evc-detail evc-detail--wrap">
+							Any kind, any tags. An addressable kind (30000–39999) needs an identifier —
+							generate one or paste an existing one.
+						</div>
 					{/if}
-					{#if f.auto && !(values[f.name] ?? '').trim()}
-						<span class="evc-badge evc-badge--dim">derived</span>
-					{/if}
-				</label>
-				{#if f.multi}
+				</div>
+			</section>
+
+			{#if template}
+				{@const required = template.tags.filter((f) => f.required)}
+				{@const optional = template.tags.filter((f) => !f.required)}
+				{#if required.length}
+					<section class="evc__section">
+						<div class="evc-section-title">required</div>
+						{#each required as f (f.name)}
+							{@render field(f)}
+						{/each}
+					</section>
+				{/if}
+				{#if optional.length}
+					<section class="evc__section">
+						<div class="evc-section-title">optional</div>
+						<div class="evc-grid">
+							{#each optional as f (f.name)}
+								{@render field(f)}
+							{/each}
+						</div>
+					</section>
+				{/if}
+			{/if}
+
+			{#if customNeedsD}
+				{@const errs = problemsByField.d ?? []}
+				<section class="evc__section">
+					<div class="evc-field">
+						<label class="evc-label" for="evc-f-d">
+							identifier<span class="evc-req" title="required">*</span>
+						</label>
+						<div class="evc-row">
+							<input
+								id="evc-f-d"
+								class="evc-input evc-mono {errs.length ? 'evc-input--bad' : ''}"
+								data-entry
+								placeholder="paste an existing identifier, or generate"
+								bind:value={values.d}
+								disabled={posting}
+							/>
+							<button class="evc-btn" onclick={mintD} disabled={posting || minting}>
+								{minting ? '…' : 'generate'}
+							</button>
+						</div>
+						{#each errs as m (m)}
+							<div class="evc-detail evc-detail--bad">{m}</div>
+						{/each}
+						{#if !errs.length}
+							<div class="evc-detail">
+								kind {kindNumber} is addressable — a pasted identifier replaces that event
+							</div>
+						{/if}
+					</div>
+				</section>
+			{/if}
+
+			<section class="evc__section">
+				<div class="evc-field">
+					<label class="evc-label" for="evc-content">
+						{template?.content.label || 'content'}{#if template?.content.required}<span
+								class="evc-req">*</span>{/if}
+					</label>
 					<textarea
-						id="evc-f-{f.name}"
-						class="evc-input evc-multi {errs.length ? 'evc-input--bad' : ''}"
+						id="evc-content"
+						class="evc-input evc-content {problemsByField.content ? 'evc-input--bad' : ''}"
 						data-entry
-						placeholder={placeholder(f)}
-						bind:value={values[f.name]}
+						placeholder={template?.content.hint ?? 'Event content'}
+						bind:value={content}
 						disabled={posting}
 					></textarea>
-				{:else if f.type === 'boolean'}
-					<select
-						id="evc-f-{f.name}"
-						class="evc-input evc-select {errs.length ? 'evc-input--bad' : ''}"
-						bind:value={values[f.name]}
-						disabled={posting}
+					{#each problemsByField.content ?? [] as m (m)}
+						<div class="evc-detail evc-detail--bad">{m}</div>
+					{/each}
+				</div>
+			</section>
+
+			<section class="evc__section">
+				<div class="evc-section-title">
+					{template ? 'more tags' : 'tags'}
+					<button
+						class="evc-link"
+						onclick={() => (extra = [...extra, { name: '', value: '' }])}
+						disabled={posting}>+ add</button
 					>
-						<option value="">—</option>
-						<option value="true">true</option>
-						<option value="false">false</option>
-					</select>
-				{:else if mintable(f)}
-					<div class="evc-row">
-						<input
-							id="evc-f-{f.name}"
-							class="evc-input evc-mono {errs.length ? 'evc-input--bad' : ''}"
-							data-entry
-							placeholder="paste an existing identifier, or generate"
-							bind:value={values[f.name]}
-							disabled={posting}
-						/>
-						<button class="evc-btn" onclick={mintD} disabled={posting || minting}>
-							{minting ? '…' : 'generate'}
-						</button>
+				</div>
+				{#each extra as row, i (i)}
+					{@const errs = template ? [] : (problemsByField[row.name.trim()] ?? [])}
+					<div class="evc-field">
+						<div class="evc-row">
+							<input
+								class="evc-input evc-tagname"
+								data-entry
+								placeholder="name"
+								bind:value={row.name}
+								disabled={posting}
+							/>
+							<input
+								class="evc-input evc-tagvalue {errs.length ? 'evc-input--bad' : ''}"
+								data-entry
+								placeholder="value"
+								bind:value={row.value}
+								disabled={posting}
+							/>
+							<button
+								class="evc-close"
+								aria-label="Remove tag"
+								onclick={() => (extra = extra.filter((_, j) => j !== i))}
+								disabled={posting}>×</button
+							>
+						</div>
+						{#each errs as m (m)}
+							<div class="evc-detail evc-detail--bad">{m}</div>
+						{/each}
 					</div>
 				{:else}
-					<input
-						id="evc-f-{f.name}"
-						class="evc-input {errs.length ? 'evc-input--bad' : ''}"
-						data-entry
-						inputmode={f.type === 'integer' ? 'numeric' : undefined}
-						placeholder={placeholder(f)}
-						bind:value={values[f.name]}
-						disabled={posting}
-					/>
-				{/if}
-				{#each errs as m (m)}
-					<div class="evc-detail evc-detail--bad">{m}</div>
+					<div class="evc-detail">none — tags the template doesn't declare go here</div>
 				{/each}
-				{#if !errs.length && f.hint}
-					<div class="evc-detail">{f.hint}</div>
-				{/if}
-			{/each}
-		{/if}
+			</section>
 
-		{#if customNeedsD}
-			{@const errs = problemsByField.d ?? []}
-			<label class="evc-label" for="evc-f-d">
-				identifier<span class="evc-req" title="required">*</span>
-			</label>
-			<div class="evc-row">
-				<input
-					id="evc-f-d"
-					class="evc-input evc-mono {errs.length ? 'evc-input--bad' : ''}"
-					data-entry
-					placeholder="paste an existing identifier, or generate"
-					bind:value={values.d}
-					disabled={posting}
-				/>
-				<button class="evc-btn" onclick={mintD} disabled={posting || minting}>
-					{minting ? '…' : 'generate'}
+			<section class="evc__section">
+				<button class="evc-json-toggle" onclick={() => (jsonOpen = !jsonOpen)}>
+					{jsonOpen ? '▾' : '▸'} event json
 				</button>
-			</div>
-			{#each errs as m (m)}
-				<div class="evc-detail evc-detail--bad">{m}</div>
-			{/each}
-			{#if !errs.length}
-				<div class="evc-detail">kind {kindNumber} is addressable — a pasted identifier replaces that event</div>
-			{/if}
-		{/if}
-
-		<label class="evc-label" for="evc-content">
-			{template?.content.label || 'content'}{#if template?.content.required}<span
-					class="evc-req">*</span>{/if}
-		</label>
-		<textarea
-			id="evc-content"
-			class="evc-input evc-content {problemsByField.content ? 'evc-input--bad' : ''}"
-			data-entry
-			placeholder={template?.content.hint ?? 'Event content'}
-			bind:value={content}
-			disabled={posting}
-		></textarea>
-		{#each problemsByField.content ?? [] as m (m)}
-			<div class="evc-detail evc-detail--bad">{m}</div>
-		{/each}
-
-		<div class="evc-label">
-			{template ? 'more tags' : 'tags'}
-			<button
-				class="evc-link"
-				onclick={() => (extra = [...extra, { name: '', value: '' }])}
-				disabled={posting}>+ add</button
-			>
+				{#if jsonOpen}
+					{#if previewErr}
+						<div class="evc-detail evc-detail--bad">{previewErr}</div>
+					{:else if jsonText}
+						<pre class="evc-json">{jsonText}</pre>
+					{:else}
+						<div class="evc-detail">pick a template or a kind to preview the event</div>
+					{/if}
+				{/if}
+			</section>
 		</div>
-		{#each extra as row, i (i)}
-			{@const errs = template ? [] : (problemsByField[row.name.trim()] ?? [])}
-			<div class="evc-row">
-				<input
-					class="evc-input evc-tagname"
-					data-entry
-					placeholder="name"
-					bind:value={row.name}
-					disabled={posting}
-				/>
-				<input
-					class="evc-input evc-tagvalue {errs.length ? 'evc-input--bad' : ''}"
-					data-entry
-					placeholder="value"
-					bind:value={row.value}
-					disabled={posting}
-				/>
-				<button
-					class="evc-close"
-					aria-label="Remove tag"
-					onclick={() => (extra = extra.filter((_, j) => j !== i))}
-					disabled={posting}>×</button
-				>
-			</div>
-			{#each errs as m (m)}
-				<div class="evc-detail evc-detail--bad">{m}</div>
-			{/each}
-		{/each}
 
-		<button class="evc-json-toggle" onclick={() => (jsonOpen = !jsonOpen)}>
-			{jsonOpen ? '▾' : '▸'} event json
-		</button>
-		{#if jsonOpen}
-			{#if previewErr}
-				<div class="evc-detail evc-detail--bad">{previewErr}</div>
-			{:else if jsonText}
-				<pre class="evc-json">{jsonText}</pre>
-			{:else}
-				<div class="evc-detail">pick a template or a kind to preview the event</div>
-			{/if}
-		{/if}
-
-		<footer class="evc-foot">
+		<footer class="evc__footer">
 			<span class="evc-hint">
 				{#if !canSign}
 					sign in to publish
@@ -489,36 +550,73 @@
 </div>
 
 <style>
+	/* Chrome twinned with EventViewModal (the event "menu"): same scrim,
+	   width, height cap and section rhythm, so the two read as one family.
+	   Unlike the menu, the BODY is the scroll container — header and footer
+	   stay put so Publish is always one click away on a long form. */
 	.evc-backdrop {
 		position: fixed;
 		inset: 0;
 		z-index: 300;
-		background: rgba(0, 0, 0, 0.45);
+		background: var(--scrim);
 		display: flex;
-		align-items: flex-start;
+		align-items: center;
 		justify-content: center;
-		padding-top: 8dvh;
 	}
+	/* Stand down while PublishConfirmModal (z 250) is deciding the post —
+	   visibility (not display) keeps bound elements alive. */
 	.evc-backdrop--yield {
 		visibility: hidden;
 	}
-	.evc-modal {
-		width: min(560px, 92vw);
-		max-height: 86dvh;
-		overflow-y: auto;
+	.evc {
+		width: min(720px, 90vw);
+		max-height: 80dvh;
 		background: var(--bg);
-		border: 1px solid var(--panel-border-strong, var(--panel-border));
-		border-radius: var(--r-sm, 3px);
+		border: 1px solid var(--border);
+		border-radius: var(--radius);
 		box-shadow: var(--shadow-lg, 0 8px 30px rgba(0, 0, 0, 0.4));
-		padding: 12px;
 		display: flex;
 		flex-direction: column;
-		gap: 4px;
+		overflow: hidden;
 	}
-	.evc-header {
+	.evc__header,
+	.evc__footer {
+		flex: 0 0 auto;
 		display: flex;
 		align-items: center;
-		justify-content: space-between;
+		gap: 10px;
+		padding: 10px 14px;
+	}
+	.evc__header {
+		border-bottom: 1px solid var(--border);
+	}
+	.evc__footer {
+		border-top: 1px solid var(--border);
+	}
+	.evc__body {
+		flex: 1 1 auto;
+		min-height: 0;
+		overflow-y: auto;
+	}
+	.evc__section {
+		padding: 12px 14px;
+		border-bottom: 1px solid var(--border);
+		display: flex;
+		flex-direction: column;
+		gap: 12px;
+	}
+	.evc__section:last-child {
+		border-bottom: none;
+	}
+	.evc-section-title {
+		display: flex;
+		align-items: center;
+		gap: 10px;
+		font-family: var(--font-mono);
+		font-size: calc(var(--t-xs) - 1px);
+		letter-spacing: 0.06em;
+		text-transform: uppercase;
+		color: var(--base5);
 	}
 	.evc-title {
 		margin: 0;
@@ -537,6 +635,22 @@
 	.evc-close:hover:not(:disabled) {
 		color: var(--fg);
 	}
+	/* Optional fields flow into columns on a wide modal, one per row on a
+	   phone; a multi-line field always spans the full width. */
+	.evc-grid {
+		display: grid;
+		grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+		gap: 12px 16px;
+	}
+	.evc-field {
+		display: flex;
+		flex-direction: column;
+		gap: 4px;
+		min-width: 0;
+	}
+	.evc-field--wide {
+		grid-column: 1 / -1;
+	}
 	.evc-label {
 		display: flex;
 		align-items: center;
@@ -544,7 +658,6 @@
 		font-family: var(--font-mono);
 		font-size: calc(var(--t-xs) - 1px);
 		color: var(--base5);
-		margin-top: 6px;
 	}
 	.evc-req {
 		color: var(--id-yours);
@@ -569,6 +682,8 @@
 		border: none;
 		padding: 0;
 		font: inherit;
+		letter-spacing: 0;
+		text-transform: none;
 		color: var(--id-yours);
 		cursor: pointer;
 	}
@@ -577,7 +692,7 @@
 	}
 	.evc-row {
 		display: flex;
-		gap: 6px;
+		gap: 8px;
 		align-items: center;
 	}
 	.evc-row .evc-input {
@@ -591,7 +706,7 @@
 		background: var(--bg-surface);
 		border: 1px solid var(--panel-border);
 		border-radius: var(--r-sm);
-		padding: 5px 8px;
+		padding: 6px 9px;
 	}
 	.evc-input:focus {
 		outline: none;
@@ -600,26 +715,24 @@
 	.evc-input--bad {
 		border-color: var(--error, #e06c75);
 	}
-	.evc-select {
-		font-family: var(--font-mono);
-	}
-	.evc-mono {
+	.evc-select,
+	.evc-mono,
+	.evc-kind,
+	.evc-tagname {
 		font-family: var(--font-mono);
 	}
 	.evc-kind {
 		flex: 0 0 6em;
-		font-family: var(--font-mono);
 	}
 	.evc-tagname {
-		flex: 0 0 9em;
-		font-family: var(--font-mono);
+		flex: 0 0 10em;
 	}
 	.evc-multi {
-		min-height: 44px;
+		min-height: 52px;
 		resize: vertical;
 	}
 	.evc-content {
-		min-height: 88px;
+		min-height: 120px;
 		resize: vertical;
 	}
 	.evc-detail {
@@ -645,7 +758,6 @@
 		background: none;
 		border: none;
 		padding: 0;
-		margin-top: 6px;
 		font-family: var(--font-mono);
 		font-size: calc(var(--t-xs) - 1px);
 		color: var(--base5);
@@ -656,22 +768,15 @@
 	}
 	.evc-json {
 		margin: 0;
-		padding: 6px 8px;
+		padding: 8px 10px;
 		background: var(--bg-surface);
 		border: 1px solid var(--panel-border);
 		border-radius: var(--r-sm);
 		font-family: var(--font-mono);
 		font-size: calc(var(--t-xs) - 2px);
 		color: var(--fg-muted);
-		max-height: 220px;
 		overflow: auto;
 		white-space: pre;
-	}
-	.evc-foot {
-		display: flex;
-		align-items: center;
-		gap: 8px;
-		margin-top: 8px;
 	}
 	.evc-hint {
 		font-family: var(--font-mono);
@@ -691,8 +796,9 @@
 		background: var(--bg-surface);
 		border: 1px solid var(--panel-border);
 		border-radius: var(--r-sm);
-		padding: 3px 10px;
+		padding: 4px 11px;
 		cursor: pointer;
+		white-space: nowrap;
 	}
 	.evc-btn:hover:not(:disabled) {
 		color: var(--fg);
