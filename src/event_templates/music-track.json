@@ -9,7 +9,7 @@
     "hint": "Optional — plain text or Markdown"
   },
   "tags": [
-    { "name": "d", "label": "identifier", "required": true, "auto": "slug:title", "hint": "Blank = slug of the title" },
+    { "name": "d", "label": "identifier", "required": true, "hint": "Generate a new one, or paste an existing track's to update it" },
     { "name": "title", "required": true },
     { "name": "artist", "required": true },
     { "name": "url", "label": "audio url", "required": true, "type": "url", "hint": "Direct link to the audio file (Blossom preferred)" },

@@ -876,6 +876,7 @@ pub async fn start(opts: ServeOptions) -> anyhow::Result<RunningServer> {
             post(api::discussion_delete_handler),
         )
         .route("/api/v1/event/templates", get(api::event_templates_handler))
+        .route("/api/v1/event/mint-d", get(api::event_mint_d_handler))
         .route("/api/v1/event/preview", post(api::event_preview_handler))
         .route("/api/v1/event/publish", post(api::event_publish_handler))
         .route("/api/v1/spell/inspect", post(spell::inspect_handler))

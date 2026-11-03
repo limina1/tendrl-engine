@@ -2661,6 +2661,9 @@ export interface EventTagField {
 	type: EventTagValueType;
 	fixed: string[];
 	auto?: string | null;
+	/** Engine-side rewrite of the value (e.g. a bookmark's `d` = URL sans
+	 *  scheme) — such a `d` is pasted, never generated. */
+	transform?: string | null;
 }
 
 export interface KindTemplate {
@@ -2691,6 +2694,12 @@ export interface EventProblem {
 
 export function listEventTemplates() {
 	return fetchJson<{ templates: KindTemplate[] }>('/api/v1/event/templates');
+}
+
+/** A fresh opaque `d` (engine nanoid, the shape compose uses) for an
+ *  addressable event — the identifier field's "generate" button. */
+export function mintEventD() {
+	return fetchJson<{ d: string }>('/api/v1/event/mint-d');
 }
 
 /** The unsigned template the form resolves to plus its validation

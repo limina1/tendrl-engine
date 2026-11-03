@@ -42,6 +42,31 @@
 		template ? template.kind : /^\d{1,9}$/.test(customKind.trim()) ? Number(customKind.trim()) : null
 	);
 
+	// NIP-01 addressable range: the kind needs a `d`. The identifier is the
+	// event's identity, so it is never derived from a title: the user mints
+	// a fresh one (engine nanoid, compose's shape) or pastes an existing
+	// one to replace that event. Custom addressable kinds get the same
+	// field the templates declare.
+	const addressable = $derived(kindNumber !== null && kindNumber >= 30000 && kindNumber < 40000);
+	const customNeedsD = $derived(isCustom && addressable);
+	let minting = $state(false);
+	async function mintD() {
+		if (minting || posting) return;
+		minting = true;
+		try {
+			values.d = (await api.mintEventD()).d;
+		} catch (e) {
+			app.pushToast(api.errorMessage(e, 'Could not mint an identifier'), 'error');
+		} finally {
+			minting = false;
+		}
+	}
+	/** A `d` field the user fills by generating or pasting (a transformed
+	 *  `d`, e.g. a bookmark URL, is pasted only). */
+	function mintable(f: api.EventTagField): boolean {
+		return f.name === 'd' && !f.transform;
+	}
+
 	// Confirm mode: see the modal-yield rule in feat-ui-patterns — hide
 	// while PublishConfirmModal (z 250) decides the broadcast.
 	const yielding = $derived(posting && confirmState.intent?.type === 'publish_intent');
@@ -78,6 +103,7 @@
 				else if (raw.trim()) tags.push([f.name, raw.trim()]);
 			}
 		}
+		if (customNeedsD && (values.d ?? '').trim()) tags.push(['d', values.d.trim()]);
 		for (const r of extra) {
 			if (r.name.trim()) tags.push([r.name.trim(), r.value.trim()]);
 		}
@@ -276,8 +302,8 @@
 			</div>
 		{:else if isCustom}
 			<div class="evc-detail evc-detail--wrap">
-				Any kind, any tags. An addressable kind (30000–39999) gets a <code>d</code> slugged
-				from a <code>title</code> tag unless you add one.
+				Any kind, any tags. An addressable kind (30000–39999) needs an identifier —
+				generate one or paste an existing one.
 			</div>
 		{/if}
 
@@ -313,6 +339,20 @@
 						<option value="true">true</option>
 						<option value="false">false</option>
 					</select>
+				{:else if mintable(f)}
+					<div class="evc-row">
+						<input
+							id="evc-f-{f.name}"
+							class="evc-input evc-mono {errs.length ? 'evc-input--bad' : ''}"
+							data-entry
+							placeholder="paste an existing identifier, or generate"
+							bind:value={values[f.name]}
+							disabled={posting}
+						/>
+						<button class="evc-btn" onclick={mintD} disabled={posting || minting}>
+							{minting ? '…' : 'generate'}
+						</button>
+					</div>
 				{:else}
 					<input
 						id="evc-f-{f.name}"
@@ -331,6 +371,32 @@
 					<div class="evc-detail">{f.hint}</div>
 				{/if}
 			{/each}
+		{/if}
+
+		{#if customNeedsD}
+			{@const errs = problemsByField.d ?? []}
+			<label class="evc-label" for="evc-f-d">
+				identifier<span class="evc-req" title="required">*</span>
+			</label>
+			<div class="evc-row">
+				<input
+					id="evc-f-d"
+					class="evc-input evc-mono {errs.length ? 'evc-input--bad' : ''}"
+					data-entry
+					placeholder="paste an existing identifier, or generate"
+					bind:value={values.d}
+					disabled={posting}
+				/>
+				<button class="evc-btn" onclick={mintD} disabled={posting || minting}>
+					{minting ? '…' : 'generate'}
+				</button>
+			</div>
+			{#each errs as m (m)}
+				<div class="evc-detail evc-detail--bad">{m}</div>
+			{/each}
+			{#if !errs.length}
+				<div class="evc-detail">kind {kindNumber} is addressable — a pasted identifier replaces that event</div>
+			{/if}
 		{/if}
 
 		<label class="evc-label" for="evc-content">
@@ -385,13 +451,6 @@
 				<div class="evc-detail evc-detail--bad">{m}</div>
 			{/each}
 		{/each}
-		{#if isCustom}
-			{#each problemsByField.d ?? [] as m (m)}
-				{#if !extra.some((r) => r.name.trim() === 'd')}
-					<div class="evc-detail evc-detail--bad">d: {m}</div>
-				{/if}
-			{/each}
-		{/if}
 
 		<button class="evc-json-toggle" onclick={() => (jsonOpen = !jsonOpen)}>
 			{jsonOpen ? '▾' : '▸'} event json
@@ -542,6 +601,9 @@
 		border-color: var(--error, #e06c75);
 	}
 	.evc-select {
+		font-family: var(--font-mono);
+	}
+	.evc-mono {
 		font-family: var(--font-mono);
 	}
 	.evc-kind {

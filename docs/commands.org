@@ -2233,12 +2233,15 @@ curl -s "$B/addressable/30041/$PK/bare-sec?policy=local_only" | python3 -c 'impo
 The highlighter generalized: =src/event_template.rs= loads kind templates
 (=src/event_templates/*.json= built in, =<data_dir>/event-templates/*.json=
 user-added/overriding by =name=) and turns a filled form into the unsigned
-template — fixed values the spec mandates (=t: music=), derived =d= (slug of
-the title) / =alt= (=Music track: {title} by {artist}=), typed checks (url /
+template — fixed values the spec mandates (=t: music=), derived
+=alt= (=Music track: {title} by {artist}=), typed checks (url /
 date / integer / boolean / language / pubkey), the addressable rule. The
 web (=EventComposerModal=, M-x =tendrl-compose-event=, =SPC e e=) renders the
 form from the template and shows the engine's preview + problems live; no
 TS twin. "custom kind…" is the template-less path (any kind, any tags).
+The =d= of an addressable kind is never derived: *generate* mints an
+engine nanoid (=GET /event/mint-d=, =publication::mint_d_tag=, compose's
+shape) and a pasted identifier replaces that existing event.
 
 ** Unit tests
 
@@ -2257,13 +2260,14 @@ cargo build && ./target/debug/tendrl-engine -c $S/config.toml --port 3131 &
 B=http://127.0.0.1:3131/api/v1
 curl -s $B/event/templates | jq '[.templates[] | {name, kind, fields: (.tags | length)}]'    # music-track 36787 (18), web-bookmark 39701 (4)
 # preview: half-filled form → template + problems, never 4xx
-curl -s -X POST $B/event/preview -H 'content-type: application/json' -d '{"template":"music-track","content":"","tags":[["title","Summer Nights"],["artist","X"],["url","ftp://x"]]}' | jq '{d: .event.tags[0], alt: [.event.tags[] | select(.[0]=="alt")], problems}'
+curl -s $B/event/mint-d                                   # {"d":"<21-char nanoid>"}
+curl -s -X POST $B/event/preview -H 'content-type: application/json' -d '{"template":"music-track","content":"","tags":[["title","Summer Nights"],["artist","X"],["url","ftp://x"]]}' | jq '{alt: [.event.tags[] | select(.[0]=="alt")], problems}'   # d: required (never slugged from the title)
 # publish needs an identity: scratch key, engine source
 SK=$(nak key generate </dev/null); NC=$(nak key encrypt "$SK" pw </dev/null)
 curl -s -X POST $B/identity/login  -H 'content-type: application/json' -d "{\"ncryptsec\":\"$NC\"}" >/dev/null
 curl -s -X POST $B/identity/unlock -H 'content-type: application/json' -d '{"password":"pw"}' | jq .state
-curl -s -X POST $B/event/publish -H 'content-type: application/json' -d '{"template":"music-track","content":"","tags":[["title","T"]],"relays":["wss://theforest.nostr1.com"]}'   # 400 "artist: required; url: required"
-curl -s -X POST $B/event/publish -H 'content-type: application/json' -d '{"template":"music-track","content":"Lyrics…","tags":[["title","Verify Run Track"],["artist","tendrl verify"],["url","https://cdn.blossom.example/audio/v.mp3"],["t","test"],["released","2026-11-03"]],"relays":["wss://theforest.nostr1.com"]}' | jq '{tags: .event.tags, broadcast: .broadcast}'
+curl -s -X POST $B/event/publish -H 'content-type: application/json' -d '{"template":"music-track","content":"","tags":[["title","T"]],"relays":["wss://theforest.nostr1.com"]}'   # 400 "d: required; artist: required; url: required"
+curl -s -X POST $B/event/publish -H 'content-type: application/json' -d '{"template":"music-track","content":"Lyrics…","tags":[["d","verify-run-track"],["title","Verify Run Track"],["artist","tendrl verify"],["url","https://cdn.blossom.example/audio/v.mp3"],["t","test"],["released","2026-11-03"]],"relays":["wss://theforest.nostr1.com"]}' | jq '{tags: .event.tags, broadcast: .broadcast}'
 #+end_src
 Expected: =d= = =verify-run-track=, =t= = music then test, =alt= derived,
 =client= stamped; event local immediately (=POST /query {"kinds":[36787]}=).
@@ -2274,7 +2278,9 @@ event= gets the same) — =0/1= there is the relay, not the path.
 
 Open the built SPA at =:3131=, =SPC e e= → "compose event" modal: template
 select (Music track · 36787 / Web bookmark · 39701 / custom kind…), required
-fields starred, =music= chip on tags, "derived" badge on blank =d= / =alt=.
+fields starred, =music= chip on tags, "derived" badge on blank =alt=;
+identifier = input + *generate* (fills a 21-char nanoid; a pasted one is
+kept verbatim); custom kind 30078 shows the same identifier field, kind 1 none.
 Type a bad url + date → red borders with the engine's messages, footer
 "N to fix"; fix them → "ready · Ctrl-Enter", "event json" shows the
 template, Publish → toast, modal closes, draft cleared.

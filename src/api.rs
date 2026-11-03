@@ -5426,6 +5426,13 @@ pub async fn event_templates_handler(
     Ok(Json(json!({ "templates": reg.list() })))
 }
 
+/// GET /api/v1/event/mint-d — a fresh opaque identifier for an addressable
+/// event, the same nanoid shape compose stamps on publications. The
+/// composer's "generate" button; a pasted one replaces an existing event.
+pub async fn event_mint_d_handler() -> Json<serde_json::Value> {
+    Json(json!({ "d": crate::publication::mint_d_tag() }))
+}
+
 /// Shared front half of preview and publish: the unsigned template the
 /// form resolves to, plus every validation problem. Same builder on both
 /// paths so the preview can never drift from what gets signed.

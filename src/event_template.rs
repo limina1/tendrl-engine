@@ -370,19 +370,15 @@ pub fn build(
     }
 
     // Structural rule, template or not: an addressable kind carries a `d`.
+    // Never invented here — the identifier is the event's identity, so the
+    // user either mints a fresh one (`mint_d_tag`, the composer's generate
+    // button) or pastes an existing one to replace that event.
     if is_addressable(kind) && !tags.iter().any(|t| t[0] == "d") {
-        let title = tags
-            .iter()
-            .find(|t| t[0] == "title")
-            .and_then(|t| t.get(1))
-            .map(|s| slug(s))
-            .filter(|s| !s.is_empty());
-        match title {
-            Some(s) => tags.insert(0, vec!["d".to_string(), s]),
-            None => problems.push(problem(
+        if !problems.iter().any(|p| p.field == "d") {
+            problems.push(problem(
                 "d",
-                format!("kind {kind} is addressable and needs a `d` identifier"),
-            )),
+                format!("kind {kind} is addressable: generate an identifier or paste an existing one"),
+            ));
         }
     }
     if let Some(d) = tags.iter().find(|t| t[0] == "d") {
@@ -533,6 +529,7 @@ mod tests {
             Some("music-track"),
             None,
             &[
+                &["d", "summer-nights-2024"],
                 &["title", "Summer Nights"],
                 &["artist", "The Midnight Collective"],
                 &["url", "https://cdn.blossom.example/audio/abc123.mp3"],
@@ -550,8 +547,8 @@ mod tests {
         let ev = b.event;
         assert_eq!(ev.kind, 36787);
         assert_eq!(ev.content, "Lyrics:\n[Verse 1]");
-        // Derived: d from the title, alt from the pattern; fixed `music` first.
-        assert_eq!(tag(&ev, "d"), vec![&vec!["d".to_string(), "summer-nights".to_string()]]);
+        // Pasted d kept verbatim, alt derived from the pattern; fixed `music` first.
+        assert_eq!(tag(&ev, "d"), vec![&vec!["d".to_string(), "summer-nights-2024".to_string()]]);
         assert_eq!(
             tag(&ev, "alt")[0][1],
             "Music track: Summer Nights by The Midnight Collective"
@@ -585,11 +582,11 @@ mod tests {
         let fields: Vec<&str> = b.problems.iter().map(|p| p.field.as_str()).collect();
         assert_eq!(
             fields,
-            vec!["artist", "url", "released", "language", "explicit", "duration"]
+            vec!["d", "artist", "url", "released", "language", "explicit", "duration"]
         );
-        // The template is still produced for the preview.
+        // The template is still produced for the preview; no d was invented.
         assert_eq!(b.event.kind, 36787);
-        assert_eq!(tag(&b.event, "d")[0][1], "x");
+        assert!(tag(&b.event, "d").is_empty());
     }
 
     #[test]
@@ -625,7 +622,7 @@ mod tests {
         let r = req(
             Some("music-track"),
             None,
-            &[&["title", "A"], &["title", "B"], &["artist", "x"], &["url", "https://a.b/c"]],
+            &[&["d", "x"], &["title", "A"], &["title", "B"], &["artist", "x"], &["url", "https://a.b/c"]],
             "",
         );
         let b = build(&reg, &r, 1).unwrap();
@@ -642,7 +639,7 @@ mod tests {
     }
 
     #[test]
-    fn custom_kind_passes_tags_through_and_slugs_d_when_addressable() {
+    fn custom_kind_passes_tags_through_and_requires_d_when_addressable() {
         let reg = Registry::builtin();
         let r = req(None, Some(1), &[&["t", "a"], &["", "dropped"], &["e", ""]], "hi");
         let b = build(&reg, &r, 7).unwrap();
@@ -650,14 +647,17 @@ mod tests {
         assert_eq!(b.event.tags, vec![vec!["t".to_string(), "a".to_string()]]);
         assert_eq!(b.event.created_at, 7);
 
-        let r = req(None, Some(30078), &[&["title", "App Data!"]], "");
+        let r = req(None, Some(30078), &[&["d", "V1StGXR8_Z5jdHi6B-myT"], &["title", "App Data!"]], "");
         let b = build(&reg, &r, 1).unwrap();
         assert!(b.is_ok());
-        assert_eq!(b.event.tags[0], vec!["d".to_string(), "app-data".to_string()]);
+        assert_eq!(b.event.tags[0], vec!["d".to_string(), "V1StGXR8_Z5jdHi6B-myT".to_string()]);
 
-        let r = req(None, Some(30078), &[], "");
+        // A title is never turned into a d: the identifier is identity.
+        let r = req(None, Some(30078), &[&["title", "App Data!"]], "");
         let b = build(&reg, &r, 1).unwrap();
+        assert_eq!(b.problems.len(), 1);
         assert_eq!(b.problems[0].field, "d");
+        assert!(tag(&b.event, "d").is_empty());
     }
 
     #[test]
