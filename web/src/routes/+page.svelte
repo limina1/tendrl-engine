@@ -1423,6 +1423,7 @@
 			onOpenSettings={openSettings}
 			onOpenCompose={openCompose}
 			onOpenHighlight={() => (app.highlightComposer = {})}
+			onOpenEvent={() => (app.eventComposer = {})}
 			onIdentityTap={() => {
 				if (identityPill.kind === 'connect') connectIdentity();
 				else if (identityPill.kind === 'me') openMyProfile();
