@@ -5403,6 +5403,84 @@ pub async fn discussion_highlight_preview_handler(
     Ok(Json(json!({ "event": template })))
 }
 
+// ---------------------------------------------------------------------------
+// Generic event composition from kind templates (`event_template.rs`)
+// ---------------------------------------------------------------------------
+
+/// A filled kind-template form plus the broadcast override — the generic
+/// twin of `DiscussionHighlightRequest`.
+#[derive(Debug, Deserialize)]
+pub struct EventComposeRequest {
+    #[serde(flatten)]
+    pub form: crate::event_template::EventRequest,
+    #[serde(default)]
+    pub relays: Option<Vec<String>>,
+}
+
+/// GET /api/v1/event/templates — the kind templates the composer can
+/// offer: builtins plus `<data_dir>/event-templates/*.json`.
+pub async fn event_templates_handler(
+    State(engine): State<AppState>,
+) -> Result<Json<serde_json::Value>, EngineError> {
+    let reg = crate::event_template::Registry::load(engine.data_dir());
+    Ok(Json(json!({ "templates": reg.list() })))
+}
+
+/// Shared front half of preview and publish: the unsigned template the
+/// form resolves to, plus every validation problem. Same builder on both
+/// paths so the preview can never drift from what gets signed.
+fn event_from_form(
+    engine: &AppState,
+    form: &crate::event_template::EventRequest,
+) -> Result<crate::event_template::Built, EngineError> {
+    if form.content.len() > MAX_DISCUSSION_CONTENT_BYTES {
+        return Err(EngineError::BadRequest(format!(
+            "content exceeds {MAX_DISCUSSION_CONTENT_BYTES} bytes"
+        )));
+    }
+    let reg = crate::event_template::Registry::load(engine.data_dir());
+    crate::event_template::build(&reg, form, unix_now_i64()).map_err(EngineError::BadRequest)
+}
+
+/// POST /api/v1/event/preview — `{event, problems}`: the exact unsigned
+/// template `publish` would sign (client tag stamped, pubkey filled when
+/// a signer is active) and the validation findings, so the form can show
+/// both live. Never 4xx for a half-filled form — only for a malformed
+/// request (unknown template, kind mismatch).
+pub async fn event_preview_handler(
+    State(engine): State<AppState>,
+    Extension(signing): Extension<crate::signing::SigningController>,
+    Json(req): Json<EventComposeRequest>,
+) -> Result<Json<serde_json::Value>, EngineError> {
+    let mut built = event_from_form(&engine, &req.form)?;
+    crate::signing::ensure_client_tag(&mut built.event.tags);
+    if let Ok(pk) = require_active_pubkey(&signing).await {
+        built.event.pubkey = Some(pk);
+    }
+    Ok(Json(json!({ "event": built.event, "problems": built.problems })))
+}
+
+/// POST /api/v1/event/publish — sign, ingest, broadcast a template-built
+/// event. Refuses (400) while the form has validation problems.
+pub async fn event_publish_handler(
+    State(engine): State<AppState>,
+    Extension(signing): Extension<crate::signing::SigningController>,
+    Json(req): Json<EventComposeRequest>,
+) -> Result<Json<DiscussionPublishResponse>, EngineError> {
+    let built = event_from_form(&engine, &req.form)?;
+    if !built.is_ok() {
+        let msg = built
+            .problems
+            .iter()
+            .map(|p| format!("{}: {}", p.field, p.message))
+            .collect::<Vec<_>>()
+            .join("; ");
+        return Err(EngineError::BadRequest(msg));
+    }
+    let resp = sign_ingest_broadcast(&engine, &signing, built.event, req.relays.clone()).await?;
+    Ok(Json(resp))
+}
+
 /// POST /api/v1/discussions/delete — publish a NIP-09 deletion request for
 /// one of the caller's own events. The list handler's tombstone filter hides
 /// the target locally regardless of relay acceptance.

@@ -2637,6 +2637,79 @@ export function publishHighlight(req: {
 	});
 }
 
+// ---------------------------------------------------------------------------
+// Generic event composition from kind templates (engine `event_template.rs`)
+// ---------------------------------------------------------------------------
+
+export type EventTagValueType =
+	| 'text'
+	| 'url'
+	| 'date'
+	| 'integer'
+	| 'boolean'
+	| 'language'
+	| 'pubkey';
+
+/** One declared tag of a kind template — the form renders one input per
+ *  field; the engine adds `fixed` values and derives `auto` ones. */
+export interface EventTagField {
+	name: string;
+	label?: string | null;
+	hint?: string | null;
+	required: boolean;
+	multi: boolean;
+	type: EventTagValueType;
+	fixed: string[];
+	auto?: string | null;
+}
+
+export interface KindTemplate {
+	name: string;
+	kind: number;
+	title: string;
+	description?: string | null;
+	spec?: string | null;
+	content: { label?: string | null; hint?: string | null; required: boolean };
+	tags: EventTagField[];
+	user_defined: boolean;
+}
+
+/** A filled form: `tags` rows exactly as typed (`[name, value, …]`);
+ *  `template` null = custom kind (then `kind` is required). */
+export interface EventComposeRequest {
+	template: string | null;
+	kind?: number | null;
+	content: string;
+	tags: string[][];
+	relays?: string[];
+}
+
+export interface EventProblem {
+	field: string;
+	message: string;
+}
+
+export function listEventTemplates() {
+	return fetchJson<{ templates: KindTemplate[] }>('/api/v1/event/templates');
+}
+
+/** The unsigned template the form resolves to plus its validation
+ *  problems — same engine builder as `publishEvent`, so no TS twin. */
+export function previewEvent(req: EventComposeRequest) {
+	return fetchJson<{ event: Record<string, unknown>; problems: EventProblem[] }>(
+		'/api/v1/event/preview',
+		{ method: 'POST', body: JSON.stringify(req) }
+	);
+}
+
+/** Sign, ingest, broadcast — 400 while the form still has problems. */
+export function publishEvent(req: EventComposeRequest) {
+	return fetchJson<DiscussionPublishResponse>('/api/v1/event/publish', {
+		method: 'POST',
+		body: JSON.stringify(req)
+	});
+}
+
 /** The exact unsigned kind-9802 template `publishHighlight` would sign for
  *  this request — same engine builder + validation, client tag stamped,
  *  pubkey filled when a signer is active. `id`/`sig` appear at signing. */

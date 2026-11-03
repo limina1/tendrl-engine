@@ -1,0 +1,17 @@
+{
+  "name": "web-bookmark",
+  "kind": 39701,
+  "title": "Web bookmark",
+  "description": "NIP-B0 bookmark of a web page (addressable by its scheme-less URL).",
+  "spec": "NIP-B0",
+  "content": {
+    "label": "note",
+    "hint": "Optional — a description of the page"
+  },
+  "tags": [
+    { "name": "d", "label": "url", "required": true, "transform": "strip-url-scheme", "hint": "The page URL; the scheme, query and fragment are stripped engine-side" },
+    { "name": "title" },
+    { "name": "published_at", "label": "published at", "type": "integer", "hint": "Unix seconds the page was first published" },
+    { "name": "t", "label": "tags", "multi": true }
+  ]
+}

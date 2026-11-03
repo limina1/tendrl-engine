@@ -63,6 +63,7 @@ pub mod drafts;
 pub mod embedding;
 pub mod engine;
 pub mod error;
+pub mod event_template;
 pub mod git;
 pub mod identity;
 pub mod llm;

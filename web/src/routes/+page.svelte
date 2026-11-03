@@ -603,6 +603,10 @@
 			isOpen: () => app.highlightComposer !== null,
 			close: () => (app.highlightComposer = null)
 		});
+		mobileNav.registerCloser('event-composer', 49, {
+			isOpen: () => app.eventComposer !== null,
+			close: () => (app.eventComposer = null)
+		});
 		mobileNav.registerCloser('republish', 48, {
 			isOpen: () => app.republishPrompt !== null,
 			close: () => app.cancelRepublish()
@@ -745,6 +749,11 @@
 			// elsewhere" path; otherwise open blank for a pure paste.
 			const sel = window.getSelection()?.toString().trim() ?? '';
 			app.highlightComposer = sel ? { text: sel } : {};
+			closeMinibuffer();
+			return;
+		}
+		if (cmd.id === 'tendrl-compose-event') {
+			app.eventComposer = {};
 			closeMinibuffer();
 			return;
 		}

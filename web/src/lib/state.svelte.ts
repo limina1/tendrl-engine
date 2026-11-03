@@ -64,6 +64,18 @@ import type {
 import type { Buffer } from '$lib/wm/types';
 import * as api from '$lib/api';
 
+/** The generic event composer's whole form, remembered across close. */
+export type EventComposerDraft = {
+	/** Registry name, or null for a custom kind. */
+	template: string | null;
+	kind: string;
+	content: string;
+	/** Declared field → the typed value (multi fields: one per line). */
+	values: Record<string, string>;
+	/** Undeclared `[name, value]` rows the user added. */
+	extra: { name: string; value: string }[];
+};
+
 export type AgentServicesModalState = {
 	view: 'signup' | 'manage' | 'fund';
 	focus?: api.ProviderKind;
@@ -539,6 +551,14 @@ function _createAppState() {
 	// memory only (buffer renderers unmount on switch; modals unmount on
 	// close — durable text lives in the store, not the component).
 	let highlightDraft: { source: string; text: string; annotation: string; context: string } | null = $state(null);
+
+	// --- Generic event composer modal (kind templates) ---
+	// Set by the M-x `tendrl-compose-event` command, optionally preselecting
+	// a template; rendered by EventComposerModal in +layout. The draft is
+	// the whole form (template, custom kind, content, per-field values,
+	// extra tag rows), remembered across close like the highlighter's.
+	let eventComposer: { template?: string } | null = $state(null);
+	let eventDraft: EventComposerDraft | null = $state(null);
 
 	// Republish diff prompt: set when Publish detects a same-title
 	// publication. ComparePublishModal renders the diff and calls
@@ -5283,6 +5303,12 @@ function _createAppState() {
 		set highlightComposer(v: { text?: string; source?: string } | null) { highlightComposer = v; },
 		get highlightDraft() { return highlightDraft; },
 		set highlightDraft(v: { source: string; text: string; annotation: string; context: string } | null) { highlightDraft = v; },
+
+		// Generic event composer modal
+		get eventComposer() { return eventComposer; },
+		set eventComposer(v: { template?: string } | null) { eventComposer = v; },
+		get eventDraft() { return eventDraft; },
+		set eventDraft(v: EventComposerDraft | null) { eventDraft = v; },
 
 		// Profile
 		get profilePubkey() { return profilePubkey; },
