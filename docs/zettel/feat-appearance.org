@@ -35,7 +35,10 @@ the =feat(web/theme)= commit series.
 - The walkthrough registry is seeded but the full tip map is a TODO.
 - The first-run walk and its popups have a reviewed issue map with fix
   sets: [[file:fix-walkthrough-index.org][walkthrough & onboarding]]
-  (2026-11-06).
+  (2026-11-06). F1–F3 shipped: the walk is mode-agnostic (approve the
+  first pull → feed → sign in → back → Sync → done), cards never dismiss
+  on click-outside, Skip sticks, anchors must be clickable to show.
+  Copy / terminology / reference work (F4–F7) still open.
 
 * Related
 - [[file:index.org][Index]]

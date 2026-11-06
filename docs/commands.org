@@ -2297,3 +2297,27 @@ new id with the same =d= and the edited title.
 Type a bad url + date → red borders with the engine's messages, footer
 "N to fix"; fix them → "ready · Ctrl-Enter", "event json" shows the
 template, Publish → toast, modal closes, draft cleared.
+
+* Walkthrough verify — isolated engine + headless CDP (2026-11-06)
+
+Recipe used for the first-run walk (fix/walkthrough-ux). Never touches
+:3030. Fresh data dir, fresh browser profile, scratch config (the engine
+writes =mode_chosen= back into it, so rewrite it every reset).
+
+#+begin_src bash
+S=/tmp/tendrl-verify; mkdir -p $S
+pnpm -C web build && touch src/static_assets.rs && cargo build   # touch: cargo does not always re-embed web/build
+pkill -f "^\./target/debug/tendrl-engine"; pkill -f "user-data-dir=$S/profile"   # kill chromium BY PROFILE DIR, never a bare pattern
+rm -rf $S/data $S/profile
+printf 'timeout_ms = 8000\ninitial_relays = ["wss://theforest.nostr1.com"]\n[embedding]\nenabled = false\n[database]\ndata_dir = "%s/data"\n' $S > $S/config.toml
+./target/debug/tendrl-engine -c $S/config.toml --port 3131 &
+chromium --headless=new --remote-debugging-port=9333 --user-data-dir=$S/profile --window-size=1280,800 --no-first-run --disable-gpu http://localhost:3131/ &
+pgrep -c -f "user-data-dir=$S/profile"      # must be > 0; if 0 the old browser still holds :9333 and you are driving a STALE bundle
+#+end_src
+
+Drive with a ~80-line CDP script (node ≥22 has WebSocket): =Runtime.evaluate= for
+state (=.dt-title= is the active card, =localStorage['tendrl.walkthrough.seen']=
+the persisted progress), =Input.dispatchMouseEvent= for clicks on Svelte
+handlers, =Page.captureScreenshot= to look. The feed pull from the default
+relays takes ~45 s to settle; nothing renders until then. Mobile shell:
+=--window-size=390,844= and =?shell=mobile=.

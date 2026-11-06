@@ -5,13 +5,21 @@
 	// usable underneath) plus a small card with the description, an always-present
 	// X, an optional "try it" action, and Next / Skip when more tips are queued.
 	// Resolving + positioning is the overlay's job; the store stays DOM-free.
+	//
+	// The card is non-blocking and *stays* until the user dismisses it — no
+	// click-outside dismissal, because the click a card asks for ("open
+	// Settings here") must not be the click that kills it. It only shows when
+	// its anchor is actionable (mounted, on screen, not under a modal scrim);
+	// otherwise it waits, hidden. An anchor that never mounts drops the beat
+	// unseen after a short grace so the queue can't wedge.
 
-	import { tick } from 'svelte';
+	import { tick, untrack } from 'svelte';
 	import {
 		discovery,
 		activeTip,
 		renderBodyHtml,
 		dismissActive,
+		skipActive,
 		endWalkthrough
 	} from '$lib/wm/discovery.svelte';
 	import { shell } from '$lib/wm/shell.svelte';
@@ -49,42 +57,84 @@
 	// "more is coming" is either a stacked queue or a declared next link.
 	const hasMore = $derived(remaining > 1 || !!tip?.next);
 
-	function locate() {
-		if (typeof window === 'undefined') return;
+	// A modal (`aria-modal`) is open somewhere: the ring drops its page mask so
+	// it never stacks a second dim layer on the modal's own scrim.
+	let modalOpen = $state(false);
+
+	const MODAL_SEL = '[aria-modal="true"]';
+
+	/** The anchor is *actionable*: its centre is inside the viewport and nothing
+	 *  else — a modal scrim, a dropdown backdrop — sits on top of it (the card
+	 *  itself excepted, since a clamped card may overlap its anchor). Pointing
+	 *  at a target the user cannot click is worse than waiting. */
+	function actionable(el: Element, r: DOMRect): boolean {
+		const cx = r.left + r.width / 2;
+		const cy = r.top + r.height / 2;
+		if (r.width === 0 || r.height === 0) return false;
+		if (cx < 0 || cy < 0 || cx > vw || cy > vh) return false;
+		const modal = document.querySelector(MODAL_SEL);
+		if (modal && !modal.contains(el)) return false;
+		const top = document.elementFromPoint(cx, cy);
+		if (!top) return false;
+		if (cardEl && cardEl.contains(top)) return true;
+		return el.contains(top) || top.contains(el);
+	}
+
+	/** Resolve the active tip's anchor. Returns whether it is *mounted* (the
+	 *  skip clock runs on that); `rect` is set only when it is actionable, so
+	 *  the card hides while its target is covered or scrolled away. */
+	function locate(): boolean {
+		if (typeof window === 'undefined') return false;
 		vw = window.innerWidth;
 		vh = window.innerHeight;
+		modalOpen = !!document.querySelector(MODAL_SEL);
 		if (!tip) {
 			rect = null;
-			return;
+			return false;
 		}
 		const el = document.querySelector(`[data-tour="${tip.anchor}"]`);
-		rect = el ? el.getBoundingClientRect() : null;
+		if (!el) {
+			rect = null;
+			return false;
+		}
+		const r = el.getBoundingClientRect();
+		rect = actionable(el, r) ? r : null;
+		return true;
 	}
 
 	// Re-resolve whenever the active tip changes, and keep the position glued to
-	// the anchor through scrolls / resizes. If the anchor never mounts, skip the
-	// tip after a grace period so it can't wedge the queue.
+	// the anchor through scrolls / resizes plus a light poll (occlusion — a
+	// modal opening or closing over the anchor — fires no DOM event we can
+	// listen for). Skip clock: an anchor that never mounts drops the beat
+	// *unseen* after a short grace; a mounted-but-covered anchor just waits.
 	$effect(() => {
 		const key = tip?.key;
 		if (!key) return;
 
-		let skipTimer: ReturnType<typeof setTimeout> | null = null;
-		const update = () => locate();
-
-		tick().then(() => {
-			locate();
-			if (!rect) {
-				skipTimer = setTimeout(() => {
-					locate();
-					if (!rect) dismissActive();
-				}, 600);
+		let unmountedSince: number | null = null;
+		let skipped = false;
+		const check = () => {
+			if (skipped) return;
+			const mounted = untrack(locate);
+			if (mounted) {
+				unmountedSince = null;
+				return;
 			}
-		});
+			const now = Date.now();
+			if (unmountedSince === null) unmountedSince = now;
+			else if (now - unmountedSince > 600) {
+				skipped = true;
+				skipActive();
+			}
+		};
+		const update = () => void untrack(locate);
+		const poll = setInterval(check, 250);
+		tick().then(check);
 
 		window.addEventListener('resize', update);
 		window.addEventListener('scroll', update, true);
 		return () => {
-			if (skipTimer) clearTimeout(skipTimer);
+			clearInterval(poll);
 			window.removeEventListener('resize', update);
 			window.removeEventListener('scroll', update, true);
 		};
@@ -95,21 +145,6 @@
 	$effect(() => {
 		tip?.key;
 		dragOffset = null;
-	});
-
-	// Click anywhere outside the card to dismiss. Deferred a tick so the click
-	// that opened the tip doesn't immediately close it; non-blocking (no
-	// backdrop) so the app underneath stays usable.
-	$effect(() => {
-		if (!tip) return;
-		const onDown = (e: PointerEvent) => {
-			if (cardEl && !cardEl.contains(e.target as Node)) dismissActive();
-		};
-		const id = setTimeout(() => window.addEventListener('pointerdown', onDown), 0);
-		return () => {
-			clearTimeout(id);
-			window.removeEventListener('pointerdown', onDown);
-		};
 	});
 
 	// Keep the measured card size live as its content (text / footer) changes,
@@ -144,10 +179,12 @@
 	}
 
 	function onKey(e: KeyboardEvent) {
-		if (e.key === 'Escape' && tip) {
-			e.preventDefault();
-			dismissActive();
-		}
+		if (e.key !== 'Escape' || !tip) return;
+		// A modal owns Esc while it's open — one keypress must never both drop
+		// the tip and cancel the fetch the tip is explaining.
+		if (document.querySelector(MODAL_SEL)) return;
+		e.preventDefault();
+		dismissActive();
 	}
 
 	function runAction() {
@@ -196,8 +233,9 @@
 <svelte:window on:keydown={onKey} />
 
 {#if tip}
-	<!-- Spotlight ring: visual only, never intercepts clicks. -->
-	<div class="dt-ring" style={ringStyle}></div>
+	<!-- Spotlight ring: visual only, never intercepts clicks. Mask-less while
+	     a modal is open so its scrim isn't dimmed twice. -->
+	<div class="dt-ring" class:dt-ring--nomask={modalOpen} style={ringStyle}></div>
 
 	<div class="dt-card" bind:this={cardEl} style={cardStyle} role="dialog" aria-label={tip.title}>
 		<!-- Header doubles as the drag handle so a wonky auto-placement can be
@@ -245,6 +283,9 @@
 			0 0 0 9999px var(--spotlight-mask);
 		pointer-events: none;
 		transition: all 140ms ease;
+	}
+	.dt-ring--nomask {
+		box-shadow: 0 0 0 2px color-mix(in srgb, var(--affordance-walkthrough) 30%, transparent);
 	}
 	.dt-card {
 		position: fixed;

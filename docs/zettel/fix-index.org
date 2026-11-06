@@ -69,11 +69,12 @@ stay as provenance. Source evaluation:
 
 * Walkthrough & onboarding
 
-- [ ] [[file:fix-walkthrough-index.org][Walkthrough & onboarding map]]
-  (high, UX) — the first-run walk dies silently (first card cancels the
-  fetch, click-outside burns tips, Skip doesn't stick, Auto mode gets
+- [-] [[file:fix-walkthrough-index.org][Walkthrough & onboarding map]]
+  (high, UX) — the first-run walk died silently (first card cancelled
+  the fetch, click-outside burned tips, Skip didn't stick, Auto mode got
   nothing), plus popup stacking, six names for one system, jargon on
-  first contact; seven fix sets (2026-11-06)
+  first contact; seven fix sets (2026-11-06; F1–F3 shipped the same day
+  on =fix/walkthrough-ux=, F4–F7 copy/terminology open)
 
 * Build & Android
 

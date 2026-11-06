@@ -1,6 +1,6 @@
 #+TITLE: Fix Index: Walkthrough & Onboarding
 #+TYPE: meta
-#+STATUS: open
+#+STATUS: in-progress
 #+DATE: 2026-11-06
 
 The issue map for the contextual walkthrough (the "W" coachmark system)
@@ -72,6 +72,16 @@ Same shape: "Three ways in" (=:139-154=) is both an onboarding beat and
 the Settings panel's own tour (=tours.ts:53=), so a signed-in user who
 taps W in Settings gets a sign-in lesson.
 
+** W7. "Signed in" was inferred from the query, not the user
+Found while verifying F2: =+layout.svelte= chose between the "approve
+the first fetch" card and the "general feed — now optional" card by
+whether the intent's filters carried =authors=. The engine also scopes
+the feed by config =authors= and by the *assistant's* key (restored from
+the keyring at boot), so a logged-out first run got the signed-in card.
+Fixed in F2: the gate is the user's own pubkey, and the walkthrough's
+world =hasIdentity= is "has a pubkey" (a watch-only npub counts — the
+feed is scoped to it and there is nothing to teach about signing in).
+
 ** W6. "Then sync it again" has no target, and the walk has no end
 "Back to the feed" anchors to the logo, not to whatever re-runs the
 fetch; the app never calls it "sync". If the feed repaints from the
@@ -138,9 +148,13 @@ mode-line. The mode modal promises Confirm will build "an understanding
 of how Nostr works" (=NetworkModeChoiceModal.svelte:86=); the tips name
 concepts rather than explain them.
 
-** T4. "Sync" is a walkthrough-only verb
-"Feed sync", "sync it again" — the rest of the app says fetch, and the
-modal title is the intent's pattern label, never "sync".
+** T4. "Sync" was never anchored to the Sync button
+Correction (2026-11-06, while building F2): the feed header *does* have
+a =Sync= button (=FeedBuffer.svelte= =.sync= → =app.handleFeedSync=)
+and the modal is titled "Feed sync — list publications", so the verb is
+real. The walk just never pointed at the control: "sync it again" was
+anchored to the logo. Fixed by F2 (=feed-resync= / =feed-fetch= anchor
+=feed-sync-button=).
 
 ** T5. The mode modal copy is a wall of highlighted spans
 Two dense paragraphs with a dozen inline keyword chips each for a
@@ -172,21 +186,28 @@ topmost and clickable.
 Ordered by leverage; F1–F3 are small, contained changes that stop the
 walk dying, F4–F7 are copy and layout work.
 
-- [ ] *F1. Fix the dismiss model* (W2, W3, P2) — click-outside never
+- [X] *F1. Fix the dismiss model* (W2, W3, P2) — click-outside never
   dismisses; Esc dismisses only when no modal is open; "Skip the rest"
-  marks the whole =ONBOARDING_TIPS= set seen
-  (=discovery.svelte.ts:795-805=); only X / Next / Got it / Try it
-  count as seen.
-- [ ] *F2. Reorder the first-run walk and make it mode-agnostic* (W1,
-  W4, W5, W6) — approve the broad fetch first ("Approve to pull the
-  feed"), then sign in, then show the feed is now scoped. In Auto start
-  at the sign-in beat right after the mode choice. Chain "go home" from
-  sign-in success, not from the no-name card; make the no-name text
-  conditional. Anchor "fetch again" to the control that fetches. Always
-  reach "You're all set".
-- [ ] *F3. Anchor only to actionable targets* (W2, P1, E4) — resolve an
-  anchor only when it is topmost at its centre (=elementFromPoint=);
-  drop the spotlight mask while a modal is open.
+  marks the whole =ONBOARDING_TIPS= set seen; only X / Next / Got it /
+  Try it count as seen. An anchor that never mounts drops the beat
+  *unseen* and never chains (=skipActive=); a surface the user reaches
+  on request completes its card (=completeTip=). (shipped 2026-11-06 on
+  =fix/walkthrough-ux=)
+- [X] *F2. Reorder the first-run walk and make it mode-agnostic* (W1,
+  W4, W5, W6, W7) — the shape is now: [Confirm] approve the first pull →
+  the feed populates → publication → provenance → sign in (skipped
+  straight to the closing card when a pubkey is already present) →
+  Settings → ways in → signed in → back to the feed → *Sync* again →
+  "You're all set"; =general-feed= is a standalone one-time tip. Replay
+  bumps =discovery.epoch= so the feed beat re-fires with fresh vars;
+  an empty pool replays from the Sync button (=feed-fetch=). Verified
+  end to end on an isolated instance in both modes, plus Skip,
+  already-signed-in, replay, and the mobile shell (2026-11-06).
+- [X] *F3. Anchor only to actionable targets* (W2, P1, E4) — the overlay
+  shows a card only when its anchor's centre is topmost
+  (=elementFromPoint=; a modal that does not contain the anchor hides
+  it) and polls so a modal closing reveals the waiting card; no
+  spotlight mask while a modal is open (2026-11-06).
 - [ ] *F4. One instruction per card, with a counter* (P5, E1, E2, E3) —
   onboarding bodies ≤ 40 words; "step n of N"; detail moves to =?=
   references, with new references for feed and Settings; the first card
@@ -203,6 +224,16 @@ walk dying, F4–F7 are copy and layout work.
 - [ ] *F7. Soften the mode modal* (T3, T5, W4) — two one-line
   descriptions; the toggle reads "Show me around"; hidden or reworded
   for Auto until F2 lands.
+
+* Verification notes (2026-11-06)
+
+Driven headless (CDP) against an isolated engine on =:3131= with a fresh
+data dir and browser profile. Two gotchas that cost an hour, now in the
+=verify= skill: a surviving headless Chromium keeps the *first* bundle
+alive across "resets" (kill it by its =--user-data-dir=), and a debug
+=cargo build= does not always re-embed =web/build= (touch
+=src/static_assets.rs= first). The relays used for the feed pull take
+~45 s to all answer; the feed list stays empty (syncing) until then.
 
 * Related
 

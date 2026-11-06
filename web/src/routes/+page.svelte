@@ -50,6 +50,7 @@
 		replayWalkthrough,
 		runTour,
 		trigger as triggerTip,
+		completeTip,
 		armSurfaceTour,
 		discovery,
 		TIPS
@@ -145,6 +146,8 @@
 				buffer: { id: 'settings', kind: 'settings', label: 'settings' }
 			});
 		else if (kind === 'search') store.openBuffer({ className: 'research', buffer: searchBuf });
+		else if (kind === 'feed')
+			store.openBuffer({ className: 'work', buffer: { id: 'feed', kind: 'feed', label: 'feed' } });
 		// reader/etc. need a loaded document — leave those to an already-open buffer.
 	}
 	function guidesForClass(cls: ClassName): GuideEntry[] {
@@ -193,7 +196,10 @@
 				key: '__first_run__',
 				label: 'First-run walkthrough',
 				done: discovery.seen.includes('walk-done'),
-				run: () => replayWalkthrough()
+				run: () => {
+					openForTour('feed');
+					replayWalkthrough();
+				}
 			},
 			...work,
 			menu
@@ -705,6 +711,7 @@
 		}
 		if (cmd.id === 'tendrl-run-walkthrough') {
 			closeMinibuffer();
+			openForTour('feed');
 			replayWalkthrough();
 			return;
 		}
@@ -1276,18 +1283,23 @@
 		if (mePubkey) prefetchAuthors([mePubkey]);
 	});
 
-	// Walkthrough: the moment a sign-in lands (false→true), point at the me-chip
-	// to explain the name-less pubkey. Guarded so it fires once per login, not on
-	// every reactive re-run; resets on logout. trigger() itself no-ops when the
-	// walkthrough is off or this tip is already seen.
+	// Walkthrough: the moment a sign-in lands (false→true), point at the me-chip.
+	// Only while the walk is in progress (`sign-in` seen — the user was told to
+	// sign in), so an upgrade or a keyring auto-load never pops it unbidden.
+	// Guarded so it fires once per login, not on every reactive re-run; resets
+	// on logout. The body adapts: a name-less pubkey gets the "your profile
+	// arrives with the next Sync" note, a resolved one doesn't.
 	let signedInTipFired = false;
 	$effect(() => {
-		// Only when there's genuinely no name yet — the tip literally explains the
-		// name-less pubkey, so showing it to someone whose profile is already
-		// resolved (e.g. an established user replaying the walk) is wrong.
-		if (mePubkey && !meName && !signedInTipFired) {
+		if (mePubkey && !signedInTipFired) {
 			signedInTipFired = true;
-			triggerTip('signed-in-noname');
+			if (!discovery.seen.includes('sign-in')) return;
+			completeTip('sign-in-methods');
+			triggerTip('signed-in', {
+				nameNote: meName
+					? ''
+					: " A pubkey but no name or avatar yet — that's expected: your profile (a `kind 0` event) arrives with the next Sync."
+			});
 		} else if (!mePubkey) {
 			signedInTipFired = false;
 		}
