@@ -33,6 +33,9 @@ the =feat(web/theme)= commit series.
 
 * Gaps / open edges
 - The walkthrough registry is seeded but the full tip map is a TODO.
+- The first-run walk and its popups have a reviewed issue map with fix
+  sets: [[file:fix-walkthrough-index.org][walkthrough & onboarding]]
+  (2026-11-06).
 
 * Related
 - [[file:index.org][Index]]
