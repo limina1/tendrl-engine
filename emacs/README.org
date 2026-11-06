@@ -18,10 +18,12 @@ A wiki topic [[proof of work]], a mention {{@npub1…}}, a quote
   =nak= directly) and =M-x tendrl-fetch= (local first) take an nevent, naddr,
   note, 64-hex id or =kind:pubkey:d-tag= coordinate (default: the one at
   point) and open the event's *content* read-only, rendered in the major mode
-  its =format= tag names. The raw event stays apart: =j= in that buffer (or
-  =M-x tendrl-event-json= anywhere) opens the pretty-printed JSON in its own
-  read-only buffer; =R= re-fetches from the relays, =w= copies the id, =q=
-  quits. An npub / nprofile opens the profile (=M-x tendrl-profile=).
+  its =format= / =m= tag names, else the default for its kind (30818 and
+  30041 AsciiDoc, 30817 and 30023 Markdown), else =text-mode=. The raw event
+  stays apart: =j= in that buffer (or =M-x tendrl-event-json= anywhere) opens
+  the pretty-printed JSON in its own read-only buffer; =R= re-fetches from the
+  relays, =w= copies the id, =m= (=M-x tendrl-event-set-format=) re-renders as
+  asciidoc / markdown / org / text, =q= quits. An npub / nprofile opens the profile (=M-x tendrl-profile=).
 - =nostrdown-mode.el= — the reference layer described below, built on it.
 
 * What it does
@@ -46,7 +48,7 @@ A wiki topic [[proof of work]], a mention {{@npub1…}}, a quote
   first lines of its content.
 - *Follow*: a =ref= to a directory sibling opens that file; a resolved
   entity / coordinate opens the event in a =*nostrdown: <title>*= buffer (major
-  mode from its =format= tag, =nostrdown-mode= on, so refs inside it resolve
+  mode from its =format= tag or kind, =nostrdown-mode= on, so refs inside it resolve
   against their own publication); a mention shows the profile; an unresolved
   wiki topic offers a relay lookup.
 - *Completion*: =completion-at-point= after ={{= (prefixes) and after

@@ -510,11 +510,14 @@ impl Metadata {
         })
     }
 
-    /// Get the best display name available
+    /// Get the best display name available: `display_name`, else `name`.
+    /// A field that is present but blank (common: `"display_name": ""`) is
+    /// skipped, so a profile with only a `name` still gets a label.
     pub fn display_name(&self) -> Option<&str> {
-        self.display_name
-            .as_deref()
-            .or(self.name.as_deref())
+        [&self.display_name, &self.name]
+            .into_iter()
+            .filter_map(|f| f.as_deref().map(str::trim))
+            .find(|s| !s.is_empty())
     }
 }
 

@@ -103,9 +103,10 @@ engine's Confirm mode; use `nostrdown-resolve-online' for a relay pass."
 (defcustom nostrdown-prettify 'markup
   "How a resolved token is displayed.
 nil shows the raw token; `markup' hides the `{{prefix:' and `}}' chrome
-(and the target when a |display is given), like `org-link-descriptive';
-`label' replaces the whole token with the engine's resolved label.
-Point entering a token always reveals the raw text."
+like `org-link-descriptive' -- a |display is shown as written, otherwise
+the resolved label (a mention's profile name, an entity's title) stands
+in for the raw target; `label' replaces the whole token with the engine's
+resolved label.  Point entering a token always reveals the raw text."
   :type '(choice (const nil) (const markup) (const label)))
 
 (defcustom nostrdown-inline-embeds nil
@@ -367,24 +368,46 @@ An Org `#+TITLE:', a Markdown / AsciiDoc heading, or front-matter `title:'."
        (_ label))
      'face (nostrdown--state-face ref))))
 
+(defun nostrdown--markup-label (ref raw)
+  "What `markup' prettify shows over REF's RAW target, or nil to keep RAW.
+The engine's label replaces a bech32 entity or slug the reader should not
+have to read: a mention shows `@name' from the kind-0 profile, an entity
+ref its title.  RAW stays when the label is the target as written."
+  (let ((label (alist-get 'label ref)))
+    (when (and label (not (equal label (string-trim raw)))
+               (not (alist-get 'label-explicit ref)))
+      (propertize (if (equal (alist-get 'kind ref) "mention")
+                      (concat "@" (string-remove-prefix "@" label))
+                    label)
+                  'face (nostrdown--state-face ref)))))
+
 (defun nostrdown--hide-markup (ov)
-  "Add invisible child overlays over the `{{prefix:' … `}}' chrome of OV."
-  (let ((beg (overlay-start ov)) (end (overlay-end ov)) (children nil))
+  "Add child overlays hiding the `{{prefix:' … `}}' chrome of OV.
+Without a |display, a target the engine labelled (a mention, an entity)
+is shown as that label instead of the raw text."
+  (let ((beg (overlay-start ov)) (end (overlay-end ov)) (children nil)
+        (ref (overlay-get ov 'nostrdown-ref)))
     (save-excursion
       (goto-char beg)
       (when (and (looking-at nostrdown-token-regexp) (= (match-end 0) end))
-        (let ((mk (lambda (a b)
+        (let ((mk (lambda (a b &optional display)
                     (let ((c (make-overlay a b nil t nil)))
                       (overlay-put c 'nostrdown-child t)
-                      (overlay-put c 'invisible 'nostrdown)
+                      (if display
+                          (progn (overlay-put c 'nostrdown-display display)
+                                 (overlay-put c 'display display))
+                        (overlay-put c 'invisible 'nostrdown))
                       (overlay-put c 'evaporate t)
                       (push c children)))))
           (if (match-beginning 4)
               ;; {{ref:target|display}} -> show only the display text.
               (progn (funcall mk beg (match-beginning 4))
                      (funcall mk (match-end 4) end))
-            ;; {{ref:target}} -> show only the target.
+            ;; {{ref:target}} -> show the target, or its resolved label.
             (funcall mk beg (match-beginning 2))
+            (when-let* ((label (nostrdown--markup-label
+                                ref (match-string-no-properties 2))))
+              (funcall mk (match-beginning 2) (match-end 2) label))
             (funcall mk (match-end 2) end)))))
     (overlay-put ov 'nostrdown-children children)))
 
@@ -607,6 +630,7 @@ Used for `help-echo' and `nostrdown-describe-at-point'."
                                                (concat (substring target 0 10) "…"
                                                        (substring target -4))
                                              target)))
+                             (label-explicit . ,(and display t))
                              (found . ,(and (or sib entity) t))
                              (pending . ,(and entity t))
                              ,@(and sib `((title . ,(car sib))
@@ -663,11 +687,14 @@ Used for `help-echo' and `nostrdown-describe-at-point'."
         (let ((old nostrdown--revealed))
           (overlay-put old 'display (overlay-get old 'nostrdown-display))
           (dolist (c (overlay-get old 'nostrdown-children))
-            (overlay-put c 'invisible 'nostrdown))))
+            (if-let* ((d (overlay-get c 'nostrdown-display)))
+                (overlay-put c 'display d)
+              (overlay-put c 'invisible 'nostrdown)))))
       (setq nostrdown--revealed ov)
       (when ov
         (overlay-put ov 'display nil)
         (dolist (c (overlay-get ov 'nostrdown-children))
+          (overlay-put c 'display nil)
           (overlay-put c 'invisible nil))))))
 
 ;;;; Commands

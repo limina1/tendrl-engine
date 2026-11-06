@@ -230,7 +230,11 @@ CALLBACK receives the first event as an alist, or nil."
         (condition-case nil
             (let ((m (json-parse-string (alist-get 'content event)
                                         :object-type 'alist :null-object nil)))
-              (or (alist-get 'display_name m) (alist-get 'name m)))
+              ;; A blank display_name is common; fall through to name.
+              (seq-some (lambda (k) (let ((v (alist-get k m)))
+                                      (and (stringp v) (not (string-blank-p v))
+                                           (string-trim v))))
+                        '(display_name name)))
           (error nil)))))
 
 (defun tendrl-event-coord (event)
@@ -238,17 +242,40 @@ CALLBACK receives the first event as an alist, or nil."
   (when-let* ((d (tendrl-event-tag event "d")))
     (format "%s:%s:%s" (alist-get 'kind event) (alist-get 'pubkey event) d)))
 
+(defconst tendrl-kind-formats
+  '((30818 . "asciidoc")   ; wiki article (NIP-54)
+    (30817 . "markdown")   ; wiki article, markdown flavour
+    (30023 . "markdown")   ; long-form (NIP-23)
+    (30041 . "asciidoc"))  ; publication section (NKBIP-01) — unless its tags say otherwise
+  "Default content format per event kind, used when the event names none.")
+
+(defun tendrl-format-mode (fmt)
+  "Major mode for the content format name or mimetype FMT, or nil.
+`org' / `text/org', `markdown' / `md' / `text/markdown' and `asciidoc' /
+`adoc' / `text/asciidoc' are recognised; an unknown format, or one whose
+mode is not installed, yields nil."
+  (let ((f (downcase (or fmt ""))))
+    (cond ((string-match-p "org" f) (and (fboundp 'org-mode) 'org-mode))
+          ((string-match-p "markdown\\|\\bmd\\b" f)
+           (and (fboundp 'markdown-mode) 'markdown-mode))
+          ((string-match-p "asciidoc\\|adoc" f)
+           (and (fboundp 'adoc-mode) 'adoc-mode)))))
+
+(defun tendrl-event-format (event)
+  "The content format EVENT declares (its `format' / `m' / `M' tag),
+else the default for its kind from `tendrl-kind-formats', else nil."
+  (or (seq-some (lambda (tg) (and (member (car tg) '("format" "m" "M")) (cadr tg)))
+                (alist-get 'tags event))
+      (alist-get (alist-get 'kind event) tendrl-kind-formats)))
+
 (defun tendrl-event-major-mode (event)
-  "Major mode for EVENT's content, from its format / m / M tags."
-  (let ((fmt (downcase
-              (or (seq-some (lambda (tg) (and (member (car tg) '("format" "m" "M")) (cadr tg)))
-                            (alist-get 'tags event))
-                  ""))))
-    (cond ((string-match-p "org" fmt) 'org-mode)
-          ((and (string-match-p "markdown\\|\\bmd\\b" fmt) (fboundp 'markdown-mode)) 'markdown-mode)
-          ((and (string-match-p "asciidoc\\|adoc" fmt) (fboundp 'adoc-mode)) 'adoc-mode)
-          ((eql (alist-get 'kind event) 0) tendrl-json-mode)
-          (t 'text-mode))))
+  "Major mode for EVENT's content.
+Its declared format wins, then its kind's default (`tendrl-event-format');
+a kind-0 profile is JSON; anything else is `text-mode', and
+`tendrl-event-set-format' applies a markup layer by hand."
+  (cond ((tendrl-format-mode (tendrl-event-format event)))
+        ((eql (alist-get 'kind event) 0) tendrl-json-mode)
+        (t 'text-mode)))
 
 ;;;; Identifiers
 
@@ -364,6 +391,7 @@ CALLBACK receives the profile alist, or nil."
     (define-key m (kbd "j") #'tendrl-event-json)
     (define-key m (kbd "R") #'tendrl-event-refetch-from-relays)
     (define-key m (kbd "w") #'tendrl-event-copy-id)
+    (define-key m (kbd "m") #'tendrl-event-set-format)
     (define-key m (kbd "q") #'quit-window)
     m)
   "Keys in an event content buffer.")
@@ -371,47 +399,68 @@ CALLBACK receives the profile alist, or nil."
 (define-minor-mode tendrl-event-view-mode
   "Read-only view of one Nostr event's content.
 `j' shows the raw JSON in a separate buffer, `R' re-fetches from the relays,
-`w' copies the event id, `q' quits."
+`w' copies the event id, `m' re-renders in another markup, `q' quits."
   :lighter " Event"
   :keymap tendrl-event-view-mode-map)
 
 (defun tendrl--header-line (event source)
-  (format " %s · kind %s · %s… · %s · %s    j: json  R: relays  w: copy id  q: quit"
+  (format " %s · kind %s · %s… · %s · %s    j: json  R: relays  w: copy id  m: format  q: quit"
           (or (tendrl-event-title event) "untitled")
           (alist-get 'kind event)
           (substring (or (alist-get 'pubkey event) "????????") 0 8)
           (format-time-string "%Y-%m-%d %H:%M" (or (alist-get 'created_at event) 0))
           (or source "local")))
 
+(defun tendrl--render-event (buf event source ident mode)
+  "Fill BUF with EVENT's content under major MODE plus the event view.
+SOURCE and IDENT are kept as `tendrl-event-source' / `tendrl-event-ident'."
+  (with-current-buffer buf
+    (let ((inhibit-read-only t))
+      (erase-buffer)
+      (insert (or (alist-get 'content event) ""))
+      (when (and (eq mode tendrl-json-mode) (fboundp 'json-pretty-print-buffer))
+        (ignore-errors (json-pretty-print-buffer)))
+      (goto-char (point-min)))
+    ;; A major mode kills the buffer-locals, so everything is set after it.
+    (funcall mode)
+    (setq tendrl-event event
+          tendrl-event-source source
+          tendrl-event-ident ident
+          header-line-format (tendrl--header-line event source))
+    (when (require 'nostrdown-mode nil t)
+      (setq nostrdown-coord (tendrl-event-coord event)
+            nostrdown-author (alist-get 'pubkey event)
+            nostrdown-siblings nil))
+    (view-mode 1)
+    (tendrl-event-view-mode 1)
+    (when (and (fboundp 'nostrdown-mode) (not (eq mode tendrl-json-mode)))
+      (nostrdown-mode 1)
+      (nostrdown-resolve-buffer)))
+  buf)
+
 (defun tendrl-show-event (event &optional source ident)
-  "Display EVENT's content read-only, in the major mode its format names.
+  "Display EVENT's content read-only, in the major mode its format names
+\(see `tendrl-event-major-mode').
 SOURCE labels where it came from; IDENT is what it was fetched by."
   (let* ((title (or (tendrl-event-title event) (format "kind %s" (alist-get 'kind event))))
-         (mode (tendrl-event-major-mode event))
          (buf (get-buffer-create (format "*tendrl: %s*" title))))
-    (with-current-buffer buf
-      (let ((inhibit-read-only t))
-        (erase-buffer)
-        (insert (or (alist-get 'content event) ""))
-        (when (and (eql (alist-get 'kind event) 0) (fboundp 'json-pretty-print-buffer))
-          (ignore-errors (json-pretty-print-buffer)))
-        (goto-char (point-min)))
-      (funcall mode)
-      (setq tendrl-event event
-            tendrl-event-source source
-            tendrl-event-ident ident
-            header-line-format (tendrl--header-line event source))
-      (when (require 'nostrdown-mode nil t)
-        (setq nostrdown-coord (tendrl-event-coord event)
-              nostrdown-author (alist-get 'pubkey event)
-              nostrdown-siblings nil))
-      (view-mode 1)
-      (tendrl-event-view-mode 1)
-      (when (and (fboundp 'nostrdown-mode) (not (eq mode tendrl-json-mode)))
-        (nostrdown-mode 1)
-        (nostrdown-resolve-buffer)))
+    (tendrl--render-event buf event source ident (tendrl-event-major-mode event))
     (pop-to-buffer buf)
     buf))
+
+(defun tendrl-event-set-format (fmt)
+  "Re-render this event buffer as FMT: asciidoc, markdown, org or text.
+For an event whose kind and tags name no format (shown in `text-mode'),
+this applies the markup layer by hand; nostrdown overlays are re-resolved."
+  (interactive
+   (list (completing-read "Render as: " '("asciidoc" "markdown" "org" "text") nil t
+                          nil nil (tendrl-event-format tendrl-event))))
+  (unless tendrl-event (user-error "Not in a tendrl event buffer"))
+  (let ((mode (or (tendrl-format-mode fmt) 'text-mode)))
+    (when (and (eq mode 'text-mode) (not (equal fmt "text")))
+      (message "tendrl: no major mode installed for %s; using text-mode" fmt))
+    (tendrl--render-event (current-buffer) tendrl-event tendrl-event-source
+                          tendrl-event-ident mode)))
 
 (defun tendrl-show-profile (profile &optional source)
   "Display a kind-0 PROFILE alist in a read-only buffer."
