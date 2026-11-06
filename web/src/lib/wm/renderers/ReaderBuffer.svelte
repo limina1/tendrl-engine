@@ -25,6 +25,9 @@
 	import { getActiveStore, type NavAction } from '../buffer-store.svelte';
 	import { onStoreEvent, concernsRoot, type StoreEvent } from '$lib/store-events.svelte';
 	import { shell } from '../shell.svelte';
+	import { layers, bindMimetype, bindPublication } from '$lib/layers/store.svelte';
+	import { LAYERS, SOURCE_ID, layerById, formatLabel } from '$lib/layers/registry';
+	import { resolveLayer, type LayerPick } from '$lib/layers/resolve';
 	import { mobileNav } from '../mobile-nav.svelte';
 	import { ResolutionTracker } from '$lib/nostr/resolution-progress.svelte';
 	import type {
@@ -87,6 +90,10 @@
 		 *  remount re-reads them from the local store (no relay pull). */
 		insertionsLoaded: boolean;
 		insertionsScope: 'mine' | 'anyone';
+		/** Rendering-layer pick for this buffer: undefined = automatic (declared
+		 *  format + bindings), null = source, else a layer id. Un-promoted, so
+		 *  it lives with the other view state and dies with the buffer. */
+		layerPick?: LayerPick;
 		/** Pixel offsets of the two scrollers (the reader's content column and
 		 *  the scroll view's own container — whichever one actually scrolls in
 		 *  the current layout). Tracked live: a torn-down element reads 0. */
@@ -118,6 +125,7 @@
 			toolsOpen,
 			insertionsLoaded,
 			insertionsScope,
+			layerPick,
 			scroll: { ...scrollTops }
 		} satisfies ReaderViewState);
 	}
@@ -223,6 +231,10 @@
 		/** NIP-54 fork marker on this node's index event (Leaf nodes never
 		 *  set it — the marker only lives on 30040 index events). */
 		forked?: boolean;
+		/** Engine-resolved content format (own `m` tag, else inherited from the
+		 *  nearest enclosing index) — drives the rendering-layer decision. */
+		effectiveFormat?: string | null;
+		formatSource?: 'own' | 'kind' | 'inherited' | 'none';
 	};
 	// Two reading modes — paged (one section per page) and scroll
 	// (continuous). The outline view is gone (2026-09-11): the § toc
@@ -1110,6 +1122,91 @@
 	// ComposeView's "Read" affordance which spawns the draft buffer.
 	const isDraftMode = false;
 	const sections = $derived<LazySection[]>(pristineSections);
+
+	// ---- Rendering layers (lib/layers) ----
+	// The per-buffer pick (chip in the T → render row). `undefined` = automatic.
+	let layerPick = $state<LayerPick>(savedView?.layerPick);
+	// A `?highlight=` deep link must land on byte-identical text → force source.
+	const layerForce = $derived(!!parsedHighlightId);
+	const pubCoord = $derived(
+		publication && publication.addr.kind === 30040
+			? `30040:${publication.addr.pubkey}:${publication.addr.d_tag}`
+			: null
+	);
+	// The section the picker describes: the current page, or the first loaded
+	// content section in scroll view (a mixed book may differ per section —
+	// each section still decides for itself; this is the sheet's probe).
+	const layerProbe = $derived(
+		viewMode === 'paginated'
+			? sections[currentSection]
+			: sections.find((s) => s.status === 'loaded' && s.addr?.kind !== 30040)
+	);
+	const layerDecision = $derived(
+		resolveLayer(
+			{
+				effectiveFormat: layerProbe?.effective_format ?? null,
+				pubCoord,
+				pick: layerPick,
+				forceSource: layerForce
+			},
+			layers
+		)
+	);
+	const layerHint = $derived.by(() => {
+		const fmt = layerProbe?.effective_format ?? null;
+		const base = layerById(layerDecision.layerId)?.label ?? 'source';
+		switch (layerDecision.source) {
+			case 'forced':
+				return 'source — highlight link';
+			case 'pick':
+				return `${base} — your pick (this buffer)`;
+			case 'publication':
+				return `${base} — bound for this book`;
+			case 'mimetype':
+				return `${base} — bound for ${fmt}`;
+			case 'format':
+				switch (layerProbe?.format_source) {
+					case 'inherited':
+						return `${base} — from the book's m tag (${fmt})`;
+					case 'kind':
+						return `${base} — the kind's spec format (${fmt})`;
+					default:
+						return `${base} — from this section's m tag (${fmt})`;
+				}
+			case 'untagged':
+				return `${base} — your fallback for untagged sections`;
+			default:
+				return fmt
+					? `off — ${formatLabel(fmt)}, its layer is switched off`
+					: 'off — no m tag; pick a markup, or set a fallback in Settings → Layers';
+		}
+	});
+	// Two-step armed promotion ("always for …"): first click arms, second
+	// commits; arming expires on its own.
+	let layerArm = $state<'mimetype' | 'publication' | null>(null);
+	let layerArmTimer: ReturnType<typeof setTimeout> | undefined;
+	function promoteLayer(scope: 'mimetype' | 'publication') {
+		if (layerArm !== scope) {
+			layerArm = scope;
+			clearTimeout(layerArmTimer);
+			layerArmTimer = setTimeout(() => {
+				if (layerArm === scope) layerArm = null;
+			}, 4000);
+			return;
+		}
+		clearTimeout(layerArmTimer);
+		const value = layerPick === undefined ? layerDecision.layerId ?? SOURCE_ID : layerPick ?? SOURCE_ID;
+		const label = layerById(value)?.label ?? 'source';
+		if (scope === 'mimetype' && layerProbe?.effective_format) {
+			bindMimetype(layerProbe.effective_format, value);
+			app.pushToast(`${label} is now the base for ${layerProbe.effective_format}`);
+		} else if (scope === 'publication' && pubCoord) {
+			bindPublication(pubCoord, value);
+			app.pushToast(`${label} is now the base for this book`);
+		}
+		layerArm = null;
+		layerPick = undefined;
+	}
 	// (Down here, not with the rest of the mobile-TOC block: TS flags a
 	// use-before-declaration on isDraftMode/sections up there, lazy or not.)
 	const showTocButton = $derived(!isDraftMode && sections.length > 0);
@@ -1304,7 +1401,9 @@
 					relays: n.relays,
 					signed: n.signed,
 					links: n.links,
-					forked: n.forked
+					forked: n.forked,
+					effective_format: n.effectiveFormat ?? null,
+					format_source: n.formatSource ?? 'none'
 				});
 				if (ancestors.has(key)) return; // cycle — node shown, subtree cut
 				const next = new Set(ancestors).add(key);
@@ -1382,7 +1481,9 @@
 					childKeys: ev.children.map((c) => addrKey(c.addr)),
 					relays: ev.relays ?? [],
 					signed: ev.signed ?? true,
-					forked: ev.forked ?? false
+					forked: ev.forked ?? false,
+					effectiveFormat: ev.effective_format ?? null,
+					formatSource: ev.format_source ?? 'none'
 				});
 				if (ev.is_root) rootKey = k;
 				for (const c of ev.children) {
@@ -1423,7 +1524,9 @@
 					status: 'loaded',
 					relays: ev.relays ?? [],
 					signed: ev.signed ?? true,
-					links: ev.links ?? []
+					links: ev.links ?? [],
+					effectiveFormat: ev.effective_format ?? null,
+					formatSource: ev.format_source ?? 'none'
 				});
 				inHorizon.add(k);
 				resolvedCount++;
@@ -1661,7 +1764,9 @@
 					content: ev.content ?? '',
 					position: 0,
 					status: 'loaded' as const,
-					relays: ev.relays ?? []
+					relays: ev.relays ?? [],
+					effective_format: resp.effective_format ?? null,
+					format_source: resp.format_source ?? 'none'
 				}
 			];
 		} catch (e) {
@@ -1720,7 +1825,11 @@
 					content: ev.content ?? '',
 					position: 0,
 					status: 'loaded' as const,
-					relays: ev.relays ?? []
+					relays: ev.relays ?? [],
+					// Engine-derived: own m tag, else the kind's spec (30818 →
+					// AsciiDoc, 30023 → Markdown), else none.
+					effective_format: resp.effective_format ?? null,
+					format_source: resp.format_source ?? 'none'
 				}
 			];
 		} catch (e) {
@@ -2429,6 +2538,16 @@
 				title="Scroll — every section in one continuous column">scroll</button
 			>
 		</span>
+		<!-- Markup in force: the base's short label (md / adoc / org), or `off`.
+		     Opens the tools sheet, whose "markup" row is the selector. -->
+		<button
+			class="tb-icon tb-layer"
+			class:active={!!layerDecision.layerId}
+			onclick={() => (toolsOpen = !toolsOpen)}
+			title="Markup: {layerHint}"
+			aria-label="Markup layer: {layerHint}"
+			data-tour="reader-render"
+		>{layerById(layerDecision.layerId)?.short ?? 'off'}</button>
 		{#if resolution.resolving}
 			<span
 				class="nd-resolving"
@@ -2681,6 +2800,55 @@
 			{/if}
 			<div class="tools-sheet__sec">
 				<div class="tools-sheet__head">
+					<span class="cap">markup</span>
+					<span class="hint">{layerHint}</span>
+				</div>
+				<div class="tools-sheet__row">
+					<button
+						class:active={layerDecision.layerId === null}
+						disabled={layerForce}
+						onclick={() => {
+							layerPick = null;
+							layerArm = null;
+						}}
+						title="Off — the text exactly as stored, no markup styling"
+					>off</button>
+					{#each LAYERS.filter((l) => layers.enabled.includes(l.id)) as l (l.id)}
+						<button
+							class:active={layerDecision.layerId === l.id}
+							disabled={layerForce}
+							onclick={() => {
+								layerPick = l.id;
+								layerArm = null;
+							}}
+							title="{l.label} — styles the stored text in place; nothing is rewritten"
+						>{l.short}</button>
+					{/each}
+					{#if layers.enabled.length === 0}
+						<span class="layer-none">all layers off — Settings → Layers</span>
+					{/if}
+				</div>
+				{#if layerPick !== undefined && !layerForce}
+					<div class="tools-sheet__row">
+						{#if layerProbe?.effective_format && layers.byMimetype[layerProbe.effective_format] !== (layerPick ?? SOURCE_ID)}
+							<button
+								class:armed={layerArm === 'mimetype'}
+								onclick={() => promoteLayer('mimetype')}
+								title="Remember this choice for every {formatLabel(layerProbe.effective_format)} section (click twice)"
+							>{layerArm === 'mimetype' ? 'confirm — ' : ''}always for {layerProbe.effective_format}</button>
+						{/if}
+						{#if pubCoord && layers.byPublication[pubCoord] !== (layerPick ?? SOURCE_ID)}
+							<button
+								class:armed={layerArm === 'publication'}
+								onclick={() => promoteLayer('publication')}
+								title="Remember this choice for this publication (click twice)"
+							>{layerArm === 'publication' ? 'confirm — ' : ''}always for this book</button>
+						{/if}
+					</div>
+				{/if}
+			</div>
+			<div class="tools-sheet__sec">
+				<div class="tools-sheet__head">
 					<span class="cap">reading</span>
 					<span class="hint">faces &amp; measure — persists per device</span>
 				</div>
@@ -2858,6 +3026,8 @@
 					onviewjson={openSectionJsonBySection}
 					highlightsFor={highlightsForSection}
 					focusedHighlightId={parsedHighlightId}
+					{layerPick}
+					forceSource={layerForce}
 					threadsFor={threadsForSection}
 					focusedCommentId={parsedFocusCommentId}
 					insertionsFor={insertionsLoaded ? insertionsForSection : null}
@@ -2881,6 +3051,8 @@
 					onsectionjson={openSectionJsonByIndex}
 					highlightsFor={highlightsForSection}
 					focusedHighlightId={parsedHighlightId}
+					{layerPick}
+					forceSource={layerForce}
 					threadsFor={threadsForSection}
 					focusedCommentId={parsedFocusCommentId}
 					insertionsFor={insertionsLoaded ? insertionsForSection : null}
@@ -3388,6 +3560,11 @@
 		align-items: center;
 		justify-content: center;
 	}
+	.toolbar .tb-layer {
+		font-family: var(--font-mono);
+		font-size: var(--t-xs);
+		min-width: 34px;
+	}
 	.toolbar .tb-letter {
 		font-weight: 700;
 		font-size: var(--t-sm);
@@ -3495,6 +3672,8 @@
 		border-color: var(--id-yours);
 	}
 	.tools-sheet__row button.edit { color: var(--red); border-color: var(--red); }
+	.tools-sheet__row button.armed { color: var(--id-forked); border-color: var(--id-forked); }
+	.tools-sheet__row .layer-none { font-size: var(--t-xs); color: var(--fg-muted); }
 	.tree-row .depth-knob__val { white-space: nowrap; }
 	@media (max-width: 480px) {
 		.tools-sheet__row button,

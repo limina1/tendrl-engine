@@ -2,6 +2,7 @@
 	import { untrack } from 'svelte';
 	import { getActiveStore } from '$lib/wm/buffer-store.svelte';
 	import { shell } from '$lib/wm/shell.svelte';
+	import { CANONICAL_MIMETYPES, FORMAT_LABEL } from '$lib/layers/registry';
 	import type { ComposeState, ContextItem, TagEntry, SyncMode } from '$lib/types';
 	import type { DraftSummary } from '$lib/api';
 	import { resolveNostrdown, search } from '$lib/api';
@@ -325,6 +326,9 @@
 	// select reflects it; a non-preset kind shows the free numeric input.
 	const PRESET_KINDS = new Set(KIND_PRESETS.filter((p) => p.kind !== -1).map((p) => p.kind));
 	const composeKind = $derived(app.composeKind);
+	// Default content format for the sections — the engine stamps it as each
+	// 30041's `m` tag; a section's own select overrides it.
+	const composeFormat = $derived(app.composeFormat);
 	const isAtomic = $derived(composeKind !== 30040);
 	const isCustomKind = $derived(!PRESET_KINDS.has(composeKind));
 
@@ -706,7 +710,7 @@
 	// for the reactive commit.
 	function handlePlainFullEdit(
 		text: string
-	): { title: string; tags: TagEntry[]; sections: ContextItem[] } {
+	): { title: string; format: string; tags: TagEntry[]; sections: ContextItem[] } {
 		const parsed = parseAll(text);
 		const oldSections = compose.sections;
 
@@ -742,8 +746,10 @@
 			};
 		});
 
-		onupdate({ title: parsed.title, tags: parsed.tags, sections: newSections });
-		return { title: parsed.title, tags: parsed.tags, sections: newSections };
+		// Plain-mode re-parse keeps the document's format (per-section overrides
+		// are per-card state and don't survive a plain round trip, like tags).
+		onupdate({ title: parsed.title, format: compose.format, tags: parsed.tags, sections: newSections });
+		return { title: parsed.title, format: compose.format, tags: parsed.tags, sections: newSections };
 	}
 
 	// Detected structure for plain mode sidebar
@@ -1073,6 +1079,11 @@
 		onupdate({ ...compose, sections });
 	}
 
+	function updateSectionFormat(id: string, format: string | undefined) {
+		const sections = compose.sections.map((s) => (s.id === id ? { ...s, format } : s));
+		onupdate({ ...compose, sections });
+	}
+
 	function resetSection(id: string) {
 		const sections = compose.sections.map((s) =>
 			s.id === id ? { ...s, content: s.original_content, modified: false } : s
@@ -1275,6 +1286,21 @@
 					title="Event kind number"
 				/>
 			{/if}
+		</label>
+		<!-- Content format — stamped by the engine as every section's `m`
+		     mimetype tag (never on the index). Each section card can override
+		     it; the default here is what "inherit" means. -->
+		<label class="kind-group" data-tour="compose-format" title="Content format of the sections (their m tag). Readers pick a rendering layer from it; a section's own select overrides this default.">
+			<span class="kind-label">format</span>
+			<select
+				class="kind-select"
+				value={composeFormat}
+				onchange={(e) => (app.composeFormat = e.currentTarget.value)}
+			>
+				{#each CANONICAL_MIMETYPES as mt (mt)}
+					<option value={mt}>{FORMAT_LABEL[mt]}</option>
+				{/each}
+			</select>
 		</label>
 		{#if !isAtomic}
 			<!-- Output shape, AUTO-DETECTED from the document title and shown read-
@@ -1542,6 +1568,8 @@
 							oncollapse={toggleCollapse}
 							onupdate={updateSection}
 							onupdatetags={updateSectionTags}
+							onupdateformat={updateSectionFormat}
+							inheritedFormat={composeFormat}
 							onreset={resetSection}
 							onremove={removeSection}
 							onsendtochat={onsenditemtochat}

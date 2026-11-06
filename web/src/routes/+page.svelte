@@ -617,6 +617,10 @@
 			isOpen: () => app.highlightComposer !== null,
 			close: () => (app.highlightComposer = null)
 		});
+		mobileNav.registerCloser('event-composer', 49, {
+			isOpen: () => app.eventComposer !== null,
+			close: () => (app.eventComposer = null)
+		});
 		mobileNav.registerCloser('republish', 48, {
 			isOpen: () => app.republishPrompt !== null,
 			close: () => app.cancelRepublish()
@@ -764,6 +768,11 @@
 		}
 		if (cmd.id === 'tendrl-annotations-table') {
 			openAnnotationsTable();
+			closeMinibuffer();
+			return;
+		}
+		if (cmd.id === 'tendrl-compose-event') {
+			app.eventComposer = {};
 			closeMinibuffer();
 			return;
 		}
@@ -1525,6 +1534,7 @@
 			onOpenSettings={openSettings}
 			onOpenCompose={openCompose}
 			onOpenHighlight={() => (app.highlightComposer = {})}
+			onOpenEvent={() => (app.eventComposer = {})}
 			onIdentityTap={() => {
 				if (identityPill.kind === 'connect') connectIdentity();
 				else if (identityPill.kind === 'me') openMyProfile();

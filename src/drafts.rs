@@ -65,6 +65,11 @@ pub struct DraftComposeState {
     /// reopens the composer in the right mode. Legacy drafts default to `None`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub kind: Option<u32>,
+    /// Default content format for the sections (`markdown` | `org` |
+    /// `asciidoc` | `plain`). `None` on legacy drafts — the composer asks
+    /// before publishing; the engine refuses an unset format.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub format: Option<String>,
 }
 
 /// Serializable tag entry
@@ -92,6 +97,9 @@ pub struct DraftSectionCompose {
     /// item is a slot, not authored content. `None` on legacy drafts.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub slot: Option<String>,
+    /// Per-section content-format override; `None` = inherit the draft's.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub format: Option<String>,
 }
 
 fn default_section_level() -> u8 {
@@ -158,6 +166,7 @@ impl DraftStore {
             title: compose.title.clone(),
             d_tag: compose.d_tag.clone(),
             kind: compose.kind,
+            format: compose.format.clone(),
             tags: compose
                 .tags
                 .iter()
@@ -175,6 +184,7 @@ impl DraftStore {
                     level: s.level,
                     d_tag: s.d_tag.clone(),
                     slot: s.slot_coord.clone(),
+                    format: s.format.clone(),
                     tags: s
                         .tags
                         .iter()
@@ -385,6 +395,7 @@ impl From<&DraftComposeState> for ComposeState {
         // mint fresh nanoids on next emission.
         compose.d_tag = draft.d_tag.clone();
         compose.kind = draft.kind;
+        compose.format = draft.format.clone();
         compose.tags = draft
             .tags
             .iter()
@@ -401,6 +412,7 @@ impl From<&DraftComposeState> for ComposeState {
                 content: s.content.clone(),
                 level: s.level,
                 d_tag: s.d_tag.clone(),
+                format: s.format.clone(),
                 tags: s
                     .tags
                     .iter()
@@ -792,6 +804,7 @@ mod tests {
             title: title.to_string(),
             d_tag: Some("fixed-dtag".to_string()),
             kind: None,
+            format: None,
             tags: tags
                 .iter()
                 .map(|(n, v)| DraftTagEntry {
@@ -808,6 +821,7 @@ mod tests {
                     level: *lvl,
                     d_tag: None,
                     slot: None,
+                    format: None,
                 })
                 .collect(),
         }

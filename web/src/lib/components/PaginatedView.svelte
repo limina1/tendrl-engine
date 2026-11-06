@@ -8,6 +8,7 @@
 	import NotesStrip from './NotesStrip.svelte';
 	import { coordMatchesAddr } from '$lib/nostr/nostrdown';
 	import type { ResolutionTracker } from '$lib/nostr/resolution-progress.svelte';
+	import type { LayerPick } from '$lib/layers/use.svelte';
 	import { readingVars } from '$lib/theme/reading.svelte';
 	import CommentThread from './CommentThread.svelte';
 	import PoolStateBadges from './PoolStateBadges.svelte';
@@ -36,7 +37,9 @@
 		siblings = undefined,
 		resolution = undefined,
 		hotAddr = null,
-		onannotate = undefined
+		onannotate = undefined,
+		layerPick = undefined,
+		forceSource = false
 	}: {
 		sections: LazySection[];
 		currentSection?: number;
@@ -81,6 +84,9 @@
 		hotAddr?: { root: string; addr: string; count: number } | null;
 		/** The title row's "n annotate" — the annotate window on this section. */
 		onannotate?: ((section: LazySection) => void) | undefined;
+		/** Rendering layer picked for the enclosing buffer (see ContinuousView). */
+		layerPick?: LayerPick;
+		forceSource?: boolean;
 	} = $props();
 
 	const section = $derived(sections[currentSection]);
@@ -230,6 +236,8 @@
 						{publicationAtag}
 						{siblings}
 						{resolution}
+						{layerPick}
+						{forceSource}
 						onopenlocal={openLocalSection}
 					/>
 				</div>

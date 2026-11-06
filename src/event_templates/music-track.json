@@ -1,0 +1,31 @@
+{
+  "name": "music-track",
+  "kind": 36787,
+  "title": "Music track",
+  "description": "Addressable metadata for one audio file (lyrics and credits in the content).",
+  "spec": "Music Tracks (kind 36787)",
+  "content": {
+    "label": "lyrics & credits",
+    "hint": "Optional — plain text or Markdown"
+  },
+  "tags": [
+    { "name": "d", "label": "identifier", "required": true, "hint": "Generate a new one, or paste an existing track's to update it" },
+    { "name": "title", "required": true },
+    { "name": "artist", "required": true },
+    { "name": "url", "label": "audio url", "required": true, "type": "url", "hint": "Direct link to the audio file (Blossom preferred)" },
+    { "name": "t", "label": "tags", "required": true, "multi": true, "fixed": ["music"], "hint": "Genre / category — `music` is always included" },
+    { "name": "alt", "label": "description", "auto": "Music track: {title} by {artist}", "hint": "NIP-31 human-readable fallback; blank = generated" },
+    { "name": "image", "label": "artwork url", "type": "url" },
+    { "name": "video", "label": "video url", "type": "url" },
+    { "name": "album" },
+    { "name": "track_number", "label": "track number", "type": "integer" },
+    { "name": "released", "type": "date", "hint": "YYYY-MM-DD" },
+    { "name": "language", "type": "language", "hint": "ISO 639-1, e.g. en" },
+    { "name": "explicit", "type": "boolean" },
+    { "name": "duration", "type": "integer", "hint": "Seconds" },
+    { "name": "format", "hint": "mp3, flac, m4a, ogg" },
+    { "name": "bitrate", "hint": "e.g. 320kbps" },
+    { "name": "sample_rate", "label": "sample rate", "type": "integer", "hint": "Hz" },
+    { "name": "zap", "label": "zap split", "multi": true, "hint": "Lightning address per split; blank = the author's profile address" }
+  ]
+}

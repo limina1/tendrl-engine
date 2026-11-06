@@ -74,6 +74,12 @@ imported publications are 3-tier trees with deterministic d-tags.
   =[[wikilink]]= inside a highlighted run stays a live link. Details in
   [[file:feat-discussions.org][Discussions & highlights]] (overlay merge
   model).
+- Rendering layers (2026-10-01): a decorated-source base contributes style
+  spans that are applied as a *post-pass* over the ref/highlight merge
+  (=web/src/lib/layers/style-segments.ts=) — refs and tokens keep their
+  extent and merely inherit the covering classes, so a ={{ref:}}= inside a
+  styled heading is still a live chip at its true offset.
+  [[file:idea-rendering-layers.org][Rendering layers]].
 
 * Resolution pipeline overhaul (2026-08-11)
 

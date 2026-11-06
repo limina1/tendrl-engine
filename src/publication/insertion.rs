@@ -342,7 +342,10 @@ pub fn ensure_mime_tag(kind: u32, tags: &mut Vec<Vec<String>>) {
     let mime = if kind == 30040 {
         "application/json".to_string()
     } else {
-        crate::tree::node::ContentMode::from_tags(tags).mime().to_string()
+        crate::tree::node::ContentMode::from_tags(tags)
+            .unwrap_or_default()
+            .mimetype()
+            .to_string()
     };
     tags.push(vec!["m".to_string(), mime]);
 }
@@ -415,14 +418,15 @@ pub fn build_insertion_template(
     let mode = crate::tree::node::ContentMode::from_tags(&[vec![
         "format".to_string(),
         format.unwrap_or("markdown").trim().to_ascii_lowercase(),
-    ]]);
+    ]])
+    .unwrap_or_default();
     if let Some(f) = format.map(str::trim).filter(|f| !f.is_empty()) {
         let f = f.to_ascii_lowercase();
         if f != "markdown" && f != "md" {
             tags.push(vec!["format".to_string(), f]);
         }
     }
-    tags.push(vec!["m".to_string(), mode.mime().to_string()]);
+    tags.push(vec!["m".to_string(), mode.mimetype().to_string()]);
     for t in extra_tags {
         if t.len() >= 2 && !t[0].is_empty() {
             tags.push(t.clone());

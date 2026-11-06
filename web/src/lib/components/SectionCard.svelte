@@ -8,6 +8,7 @@
 	import { registerResolveView } from '$lib/nostr/resolve-status.svelte';
 	import RichContent from './RichContent.svelte';
 	import EventLinks from './EventLinks.svelte';
+	import { decideFor, ensureLoaded, spansFor, type LayerPick } from '$lib/layers/use.svelte';
 
 	const app = getAppState();
 
@@ -23,7 +24,9 @@
 		publicationAtag = undefined,
 		siblings = undefined,
 		resolution = undefined,
-		onopenlocal = undefined
+		onopenlocal = undefined,
+		layerPick = undefined,
+		forceSource = false
 	}: {
 		section: LazySection;
 		truncate?: boolean;
@@ -51,9 +54,19 @@
 		/** In-document navigation hand-off for refs resolved to sibling sections
 		 *  not in the DOM (paginated view) — threaded to RichContent. */
 		onopenlocal?: ((coord: string) => boolean) | undefined;
+		/** Rendering layer picked for the enclosing buffer (see ContinuousView). */
+		layerPick?: LayerPick;
+		forceSource?: boolean;
 	} = $props();
 
 	const status: SectionStatus = $derived(section.status ?? 'loaded');
+
+	// Rendering layer for this card: decided from the section's declared
+	// format + the user's bindings; the chunk loads lazily on first need.
+	const layerDecision = $derived(decideFor(section, publicationAtag ?? null, layerPick, forceSource));
+	$effect(() => {
+		if (layerDecision.layerId) ensureLoaded(layerDecision.layerId);
+	});
 
 	const displayContent = $derived.by(() => {
 		if (status !== 'loaded' || !section.content) return null;
@@ -213,6 +226,7 @@
 	{#if status === 'loaded' && displayContent}
 		<RichContent
 			content={displayContent}
+			styles={spansFor(layerDecision.layerId, displayContent)}
 			spans={highlightSpans}
 			refs={nostrdownRefs}
 			tokens={nostrdownTokens}

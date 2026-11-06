@@ -23,6 +23,7 @@
 	import type { ResolvedRef, ParsedToken } from '$lib/nostr/nostrdown';
 	import { shouldNetworkFetch } from '$lib/nostr/fetch-dedupe';
 	import { registerResolveView } from '$lib/nostr/resolve-status.svelte';
+	import { decideFor, ensureLoaded, spansFor } from '$lib/layers/use.svelte';
 
 	// A slim viewer for single addressable documents — NIP-23 long-form
 	// articles (kind 30023) and NKBIP-02 wiki pages (kind 30818). The
@@ -75,6 +76,17 @@
 	let docRelays = $state<string[]>([]);
 	let summary = $state<string | null>(null);
 	let body = $state('');
+	// Engine-resolved content format (own `m` tag, else the kind's spec —
+	// 30023 Markdown, 30818 AsciiDoc). Drives the markup layer for this doc;
+	// no per-buffer pick here (one-event view), and a `?highlight=` deep link
+	// forces source so the anchor lands on byte-identical text.
+	let effectiveFormat = $state<string | null>(null);
+	const layerDecision = $derived(
+		decideFor({ effective_format: effectiveFormat }, null, undefined, !!focusHighlightId)
+	);
+	$effect(() => {
+		if (layerDecision.layerId) ensureLoaded(layerDecision.layerId);
+	});
 	let kindLabel = $state('');
 	let authorPubkey = $state('');
 	let authorProfile = $state<Profile | null>(null);
@@ -234,6 +246,7 @@
 				});
 			}
 			const ev = resp.event as DocEvent | null;
+			effectiveFormat = resp.effective_format ?? null;
 			if (!ev) {
 				const noun =
 					p.kind === 30023 ? 'Article'
@@ -470,6 +483,7 @@
 					spans={highlightSpans}
 					refs={docRefs}
 					tokens={docTokens}
+					styles={spansFor(layerDecision.layerId, body)}
 					backfilling={docBackfilling}
 					focusedHighlightId={focusHighlightId}
 				/>

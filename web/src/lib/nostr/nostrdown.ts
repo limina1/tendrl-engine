@@ -63,6 +63,9 @@ export interface ResolvedRef {
 export interface SegmentSource {
 	srcStart: number;
 	srcEnd: number;
+	/** Rendering-layer style classes covering this run (see lib/layers —
+	 *  applied as a post-pass, never part of the merge below). */
+	styles?: string[];
 }
 
 /** One renderable run of a section's content. */

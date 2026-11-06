@@ -141,7 +141,7 @@ impl Default for InventoryOptions {
 pub const WELL_KNOWN_KINDS: &[u32] = &[
     0, 1, 3, 4, 5, 6, 7, 9, 16, 20, 777, 1040, 1063, 1111, 1222, 1244, 1617, 1618, 1619, 1621,
     1630, 1631, 1632, 1633, 9021, 9735, 9802, 10000, 10002, 10003, 10006, 10007, 30000, 30002,
-    30023, 30040, 30041, 30045, 30078, 30617, 30618, 30817, 30818, 31234, 39701,
+    30023, 30040, 30041, 30045, 30078, 30617, 30618, 30817, 30818, 31234, 36787, 39701,
 ];
 
 /// Human label for a kind, where one is well established.
@@ -195,6 +195,7 @@ pub fn kind_label(kind: u32) -> Option<&'static str> {
         30817 => "wiki redirect",
         30818 => "wiki article",
         31234 => "draft",
+        36787 => "music track",
         39701 => "web bookmark",
         _ => return None,
     })

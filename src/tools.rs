@@ -539,6 +539,11 @@ fn schema_publish_publication() -> Value {
         "type": "object",
         "properties": {
             "title": { "type": "string", "description": "Publication (or atomic event) title." },
+            "format": {
+                "type": "string",
+                "enum": ["markdown", "org", "asciidoc", "plain"],
+                "description": "Content format of every section (and of an atomic event's body). REQUIRED — the engine stamps it as the `m` mimetype tag on each 30041. Use markdown unless the user or the publication you are adding to says otherwise."
+            },
             "sections": {
                 "type": "array",
                 "description": "Ordered sections for the 30040/30041 path (ignored when `kind` is set).",
@@ -548,6 +553,7 @@ fn schema_publish_publication() -> Value {
                         "title": { "type": "string" },
                         "content": { "type": "string" },
                         "level": { "type": "integer", "description": "Heading depth: 2 = top-level section, 3+ = nested." },
+                        "format": { "type": "string", "enum": ["markdown", "org", "asciidoc", "plain"], "description": "Override the publication-level `format` for this section only." },
                         "tags": {
                             "type": "array",
                             "items": { "type": "array", "items": { "type": "string" }, "minItems": 2, "maxItems": 2 },
@@ -572,7 +578,7 @@ fn schema_publish_publication() -> Value {
                 "description": "Optional relay URLs (defaults to the configured publish relays)."
             }
         },
-        "required": ["title"]
+        "required": ["title", "format"]
     })
 }
 
@@ -783,6 +789,7 @@ fn schema_save_draft() -> Value {
         "type": "object",
         "properties": {
             "title": { "type": "string", "description": "Publication title." },
+            "format": { "type": "string", "enum": ["markdown", "org", "asciidoc", "plain"], "description": "Content format of the sections (default markdown)." },
             "sections": {
                 "type": "array",
                 "description": "Ordered sections.",
@@ -1247,6 +1254,14 @@ async fn save_draft(engine: &Arc<Engine>, input: Value) -> Result<Value> {
 
     let mut compose = ComposeState {
         title,
+        // Assistant policy: every draft declares its format; markdown unless told otherwise.
+        format: Some(
+            input
+                .get("format")
+                .and_then(Value::as_str)
+                .unwrap_or("markdown")
+                .to_string(),
+        ),
         ..Default::default()
     };
     for s in sections {
@@ -1267,6 +1282,7 @@ async fn save_draft(engine: &Arc<Engine>, input: Value) -> Result<Value> {
             tags: Vec::new(),
             level: 2,
             d_tag: None,
+            format: None,
             tag_mode: false,
             current_tag_name: String::new(),
             current_tag_value: String::new(),
@@ -1822,6 +1838,9 @@ async fn prepare_merge(engine: &Arc<Engine>, input: Value) -> Result<Value> {
         current_tag_name: String::new(),
         current_tag_value: String::new(),
         slot_coord: None,
+        // The contributor's declared format (`m`, legacy `format`) carries
+        // into the owner's next version; nothing is sniffed.
+        format: crate::mimetype::from_tags(&next.tags).map(String::from),
     };
     let mut compose = ComposeState::default();
     let mut section_count = 0usize;
@@ -1850,6 +1869,7 @@ async fn prepare_merge(engine: &Arc<Engine>, input: Value) -> Result<Value> {
                         current_tag_name: String::new(),
                         current_tag_value: String::new(),
                         slot_coord: Some(coord),
+                        format: None,
                     });
                 }
             }
@@ -2065,7 +2085,14 @@ async fn publish_publication(cx: &ToolCx, input: Value) -> Result<Value> {
             .and_then(Value::as_str)
             .unwrap_or_default()
             .to_string();
-        let tags = tag_pairs(input.get("tags"));
+        let mut tags = tag_pairs(input.get("tags"));
+        crate::publication::compose::stamp_mimetype(
+            &mut tags,
+            crate::publication::compose::resolve_format(
+                input.get("format").and_then(Value::as_str),
+                None,
+            )?,
+        );
         let ev = crate::publication::build_signed_atomic_event_via_signer(
             kind as u32,
             &title,
@@ -2094,6 +2121,7 @@ async fn publish_publication(cx: &ToolCx, input: Value) -> Result<Value> {
         compose.title = title.clone();
         compose.tags = tag_pairs(input.get("tags"));
         compose.d_tag = d_tag.clone();
+        compose.format = input.get("format").and_then(Value::as_str).map(String::from);
         compose.sections = sections
             .iter()
             .map(|sec| {
@@ -2109,10 +2137,12 @@ async fn publish_publication(cx: &ToolCx, input: Value) -> Result<Value> {
                     .unwrap_or_default()
                     .to_string();
                 sc.level = sec.get("level").and_then(Value::as_u64).unwrap_or(2) as u8;
+                sc.format = sec.get("format").and_then(Value::as_str).map(String::from);
                 sc.tags = tag_pairs(sec.get("tags"));
                 sc
             })
             .collect();
+        compose.stamp_section_mimetypes()?;
         crate::publication::build_signed_publication_events_via_signer(&mut compose, &pubkey, signer)
             .await
             .map_err(|e| EngineError::Other(format!("sign: {e}")))?

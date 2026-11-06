@@ -126,6 +126,21 @@ async fn begin_single_fetch_gate(
     }
 }
 
+/// `{ event, format, effective_format, format_source }` — the single-event
+/// response shape shared by the id and addressable endpoints. The content
+/// format rides along so no frontend re-implements the tag/kind rule: the
+/// event's own `m` tag (`own`), else what its kind defines by spec (`kind`:
+/// 30023 Markdown, 30818 AsciiDoc), else `none`.
+fn single_event_json(e: serde_json::Value) -> serde_json::Value {
+    let (effective_format, format_source) = crate::mimetype::declared_or_kind(&e);
+    json!({
+        "format": crate::mimetype::from_event(&e),
+        "effective_format": effective_format,
+        "format_source": format_source,
+        "event": e,
+    })
+}
+
 /// GET /api/v1/events/:id
 ///
 /// Get a single event by its ID
@@ -176,7 +191,7 @@ pub async fn get_event_handler(
     }
 
     match event {
-        Some(e) => Ok((StatusCode::OK, Json(json!({ "event": e })))),
+        Some(e) => Ok((StatusCode::OK, Json(single_event_json(e)))),
         None => Ok((
             StatusCode::NOT_FOUND,
             Json(json!({ "event": null, "message": "Event not found" })),
@@ -266,7 +281,7 @@ pub async fn get_addressable_handler(
     }
 
     match event {
-        Some(e) => Ok((StatusCode::OK, Json(json!({ "event": e })))),
+        Some(e) => Ok((StatusCode::OK, Json(single_event_json(e)))),
         None => Ok((
             StatusCode::NOT_FOUND,
             Json(json!({ "event": null, "message": "Addressable event not found" })),
@@ -2176,7 +2191,8 @@ pub async fn load_sections_handler(
                 "title": s.title,
                 "content": s.content,
                 "position": s.position,
-                "loaded": s.event.is_loaded()
+                "loaded": s.event.is_loaded(),
+                "format": s.event.data().and_then(crate::mimetype::from_event),
             })
         })
         .collect();
@@ -2240,6 +2256,7 @@ pub async fn get_section_handler(
             "content": section.content,
             "position": section.position,
             "loaded": section.event.is_loaded(),
+            "format": section.event.data().and_then(crate::mimetype::from_event),
             "event": section.event.data()
         }
     })))
@@ -5424,6 +5441,91 @@ pub async fn discussion_highlight_preview_handler(
     Ok(Json(json!({ "event": template })))
 }
 
+// ---------------------------------------------------------------------------
+// Generic event composition from kind templates (`event_template.rs`)
+// ---------------------------------------------------------------------------
+
+/// A filled kind-template form plus the broadcast override — the generic
+/// twin of `DiscussionHighlightRequest`.
+#[derive(Debug, Deserialize)]
+pub struct EventComposeRequest {
+    #[serde(flatten)]
+    pub form: crate::event_template::EventRequest,
+    #[serde(default)]
+    pub relays: Option<Vec<String>>,
+}
+
+/// GET /api/v1/event/templates — the kind templates the composer can
+/// offer: builtins plus `<data_dir>/event-templates/*.json`.
+pub async fn event_templates_handler(
+    State(engine): State<AppState>,
+) -> Result<Json<serde_json::Value>, EngineError> {
+    let reg = crate::event_template::Registry::load(engine.data_dir());
+    Ok(Json(json!({ "templates": reg.list() })))
+}
+
+/// GET /api/v1/event/mint-d — a fresh opaque identifier for an addressable
+/// event, the same nanoid shape compose stamps on publications. The
+/// composer's "generate" button; a pasted one replaces an existing event.
+pub async fn event_mint_d_handler() -> Json<serde_json::Value> {
+    Json(json!({ "d": crate::publication::mint_d_tag() }))
+}
+
+/// Shared front half of preview and publish: the unsigned template the
+/// form resolves to, plus every validation problem. Same builder on both
+/// paths so the preview can never drift from what gets signed.
+fn event_from_form(
+    engine: &AppState,
+    form: &crate::event_template::EventRequest,
+) -> Result<crate::event_template::Built, EngineError> {
+    if form.content.len() > MAX_DISCUSSION_CONTENT_BYTES {
+        return Err(EngineError::BadRequest(format!(
+            "content exceeds {MAX_DISCUSSION_CONTENT_BYTES} bytes"
+        )));
+    }
+    let reg = crate::event_template::Registry::load(engine.data_dir());
+    crate::event_template::build(&reg, form, unix_now_i64()).map_err(EngineError::BadRequest)
+}
+
+/// POST /api/v1/event/preview — `{event, problems}`: the exact unsigned
+/// template `publish` would sign (client tag stamped, pubkey filled when
+/// a signer is active) and the validation findings, so the form can show
+/// both live. Never 4xx for a half-filled form — only for a malformed
+/// request (unknown template, kind mismatch).
+pub async fn event_preview_handler(
+    State(engine): State<AppState>,
+    Extension(signing): Extension<crate::signing::SigningController>,
+    Json(req): Json<EventComposeRequest>,
+) -> Result<Json<serde_json::Value>, EngineError> {
+    let mut built = event_from_form(&engine, &req.form)?;
+    crate::signing::ensure_client_tag(&mut built.event.tags);
+    if let Ok(pk) = require_active_pubkey(&signing).await {
+        built.event.pubkey = Some(pk);
+    }
+    Ok(Json(json!({ "event": built.event, "problems": built.problems })))
+}
+
+/// POST /api/v1/event/publish — sign, ingest, broadcast a template-built
+/// event. Refuses (400) while the form has validation problems.
+pub async fn event_publish_handler(
+    State(engine): State<AppState>,
+    Extension(signing): Extension<crate::signing::SigningController>,
+    Json(req): Json<EventComposeRequest>,
+) -> Result<Json<DiscussionPublishResponse>, EngineError> {
+    let built = event_from_form(&engine, &req.form)?;
+    if !built.is_ok() {
+        let msg = built
+            .problems
+            .iter()
+            .map(|p| format!("{}: {}", p.field, p.message))
+            .collect::<Vec<_>>()
+            .join("; ");
+        return Err(EngineError::BadRequest(msg));
+    }
+    let resp = sign_ingest_broadcast(&engine, &signing, built.event, req.relays.clone()).await?;
+    Ok(Json(resp))
+}
+
 /// POST /api/v1/discussions/delete — publish a NIP-09 deletion request for
 /// one of the caller's own events. The list handler's tombstone filter hides
 /// the target locally regardless of relay acceptance.
@@ -5556,6 +5658,9 @@ fn event_a_tag(event: &Value) -> Option<String> {
 #[derive(Debug, Deserialize)]
 pub struct DraftSectionRequest {
     pub title: String,
+    /// Per-section content-format override; absent = inherit.
+    #[serde(default)]
+    pub format: Option<String>,
     #[serde(default)]
     pub content: String,
     #[serde(default)]
@@ -5577,6 +5682,9 @@ pub struct DraftSectionRequest {
 #[derive(Debug, Deserialize)]
 pub struct SaveDraftRequest {
     pub title: String,
+    /// Default content format for the sections — see `PublishRequest::format`.
+    #[serde(default)]
+    pub format: Option<String>,
     #[serde(default)]
     pub tags: Vec<(String, String)>,
     #[serde(default)]
@@ -5595,6 +5703,7 @@ fn compose_from_draft_request(req: SaveDraftRequest) -> ComposeState {
     compose.title = req.title;
     compose.d_tag = req.d_tag;
     compose.kind = req.kind;
+    compose.format = req.format;
     compose.tags = req
         .tags
         .into_iter()
@@ -5608,6 +5717,7 @@ fn compose_from_draft_request(req: SaveDraftRequest) -> ComposeState {
             content: s.content,
             level: s.level.unwrap_or(2),
             d_tag: s.d_tag,
+            format: s.format,
             slot_coord: s
                 .slot
                 .as_deref()
@@ -5729,6 +5839,7 @@ fn request_to_draft_compose(req: &SaveDraftRequest) -> crate::drafts::DraftCompo
         title: req.title.clone(),
         d_tag: req.d_tag.clone(),
         kind: req.kind,
+        format: req.format.clone(),
         tags: req
             .tags
             .iter()
@@ -5754,6 +5865,7 @@ fn request_to_draft_compose(req: &SaveDraftRequest) -> crate::drafts::DraftCompo
                 level: s.level.unwrap_or(2),
                 d_tag: s.d_tag.clone(),
                 slot: s.slot.clone(),
+                format: s.format.clone(),
             })
             .collect(),
     }
@@ -5807,6 +5919,8 @@ fn publication_to_draft_compose(
                 d_tag: Some(s.addr.d_tag.clone()),
                 // A flattened published section is real content, never a slot.
                 slot: None,
+                // The published 30041's own declaration (its `m` tag), if any.
+                format: s.event.data().and_then(crate::mimetype::from_event).map(String::from),
             });
         }
         for nested in &pub_.nested {
@@ -5821,6 +5935,8 @@ fn publication_to_draft_compose(
         d_tag: Some(pub_.addr.d_tag.clone()),
         // A loaded publication flattened for diffing is always the 30040 graph.
         kind: None,
+        // Indexes carry no content format; each flattened section has its own.
+        format: None,
         tags: custom_tags(pub_.index.data()),
         sections,
     }
@@ -5909,6 +6025,13 @@ use crate::publication::compose::{
 #[derive(Debug, Deserialize)]
 pub struct PublishRequest {
     pub title: String,
+    /// Content format of every section (or of the atomic event's body):
+    /// `markdown` | `org` | `asciidoc` | `plain` (or a `text/*` mimetype).
+    /// **Required** — the engine stamps it as the `["m", …]` tag on each
+    /// 30041 and refuses (400) when neither this nor the section's own
+    /// `format` is set. Never written on the 30040 index.
+    #[serde(default)]
+    pub format: Option<String>,
     #[serde(default)]
     pub tags: Vec<(String, String)>,
     #[serde(default)]
@@ -6011,6 +6134,9 @@ pub(crate) async fn resolve_publish_signer(
 pub struct PublishSectionRequest {
     pub title: String,
     pub content: String,
+    /// Per-section content-format override; absent = the request's `format`.
+    #[serde(default)]
+    pub format: Option<String>,
     #[serde(default)]
     pub tags: Vec<(String, String)>,
     /// Heading depth (2 = top-level `==` section, 3+ = nested). Drives the
@@ -6313,6 +6439,11 @@ pub async fn publish_handler(
             })
             .collect();
         let content = req.content.unwrap_or_default();
+        let mut tags = tags;
+        crate::publication::compose::stamp_mimetype(
+            &mut tags,
+            crate::publication::compose::resolve_format(req.format.as_deref(), None)?,
+        );
         let event = crate::publication::build_signed_atomic_event_via_signer(
             kind,
             &req.title,
@@ -6347,6 +6478,7 @@ pub async fn publish_handler(
             sc.content = s.content.clone();
             sc.level = s.level.unwrap_or(2);
             sc.d_tag = s.d_tag.clone();
+            sc.format = s.format.clone();
             sc.slot_coord = s
                 .slot
                 .as_deref()
@@ -6363,6 +6495,8 @@ pub async fn publish_handler(
         })
         .collect();
     compose.d_tag = req.d_tag.clone();
+    compose.format = req.format.clone();
+    compose.stamp_section_mimetypes()?;
 
     // Publishing writes a SIGNED snapshot to the db. Unsigned working drafts
     // are saved via POST /api/v1/drafts — we never ingest placeholder-sig
@@ -6469,6 +6603,11 @@ pub async fn publish_preview_handler(
             })
             .collect();
         let content = req.content.clone().unwrap_or_default();
+        let mut tags = tags;
+        crate::publication::compose::stamp_mimetype(
+            &mut tags,
+            crate::publication::compose::resolve_format(req.format.as_deref(), None)?,
+        );
         let timestamp = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_secs())
@@ -6503,6 +6642,7 @@ pub async fn publish_preview_handler(
             sc.content = s.content.clone();
             sc.level = s.level.unwrap_or(2);
             sc.d_tag = s.d_tag.clone();
+            sc.format = s.format.clone();
             sc.slot_coord = s
                 .slot
                 .as_deref()
@@ -6519,6 +6659,8 @@ pub async fn publish_preview_handler(
         })
         .collect();
     compose.d_tag = req.d_tag.clone();
+    compose.format = req.format.clone();
+    compose.stamp_section_mimetypes()?;
 
     let (pub_event, section_events) = build_publication_events(&mut compose, &pubkey);
     // Notes mode previews just the standalone 30041 events — no 30040 index.
@@ -6588,6 +6730,10 @@ impl NAddrPayload {
 #[derive(Debug, Deserialize)]
 pub struct PublishBlockEntry {
     pub title: String,
+    /// Per-block content-format override; absent = the request's `format`.
+    /// Ignored for imported blocks (they emit no event).
+    #[serde(default)]
+    pub format: Option<String>,
     #[serde(default)]
     pub tags: Vec<(String, String)>,
     /// Reuse this 30041 d-tag instead of minting a fresh nanoid — set when
@@ -6602,6 +6748,9 @@ pub struct PublishBlockEntry {
 #[derive(Debug, Deserialize)]
 pub struct PublishBlocksRequest {
     pub title: String,
+    /// Content format for every event-emitting block — see `PublishRequest::format`.
+    #[serde(default)]
+    pub format: Option<String>,
     #[serde(default)]
     pub tags: Vec<(String, String)>,
     /// Reuse this index d-tag instead of minting a fresh nanoid — set when
@@ -6628,15 +6777,17 @@ pub struct PublishBlocksRequest {
 /// event graph.
 fn compose_block_state_from_request(
     title: String,
+    format: Option<String>,
     tags: Vec<(String, String)>,
     d_tag: Option<String>,
     blocks: Vec<PublishBlockEntry>,
     source_publication_addr: Option<NAddrPayload>,
     source_publication_event_id: Option<String>,
-) -> ComposeBlockState {
+) -> Result<ComposeBlockState, EngineError> {
     use crate::publication::compose::TagEntry;
     let mut state = ComposeBlockState::new();
     state.title = title;
+    state.format = format;
     state.d_tag = d_tag;
     for (name, value) in tags {
         state.tags.push(TagEntry { name, value });
@@ -6679,9 +6830,11 @@ fn compose_block_state_from_request(
                 .collect(),
             collapsed: false,
             d_tag: entry.d_tag,
+            format: entry.format,
         });
     }
-    state
+    state.stamp_block_mimetypes()?;
+    Ok(state)
 }
 
 /// POST /api/v1/publish/blocks — publish a block-based draft.
@@ -6696,12 +6849,13 @@ pub async fn publish_blocks_handler(
 
     let mut state = compose_block_state_from_request(
         req.title,
+        req.format,
         req.tags,
         req.d_tag,
         req.blocks,
         req.source_publication_addr,
         req.source_publication_event_id,
-    );
+    )?;
 
     // Sign through the SigningController — the SAME path publish_handler uses:
     // engine in-process for the engine source, or the registered external
@@ -6785,12 +6939,13 @@ pub async fn publish_blocks_preview_handler(
 
     let mut state = compose_block_state_from_request(
         req.title,
+        req.format,
         req.tags,
         req.d_tag,
         req.blocks,
         req.source_publication_addr,
         req.source_publication_event_id,
-    );
+    )?;
 
     let (pub_event, section_events) =
         crate::publication::build_block_publication_events(&mut state, &pubkey, None);

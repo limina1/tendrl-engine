@@ -53,7 +53,57 @@ fn fill_section(section: &mut Section, event: Value) {
 /// Build the SSE `Leaf` event for a loaded section event. Mirrors the
 /// publication-index path: sig + relay provenance ride along so the section
 /// row renders the same draft / relay-label pill the root publication does.
-fn leaf_pub_event(addr: NAddr, depth: usize, leaf: &Value) -> PubLoadEvent {
+/// A content format inherited down the publication tree: the nearest
+/// enclosing 30040 that declares a `text/*` `m` tag, and which one it was.
+#[derive(Debug, Clone)]
+pub struct FormatInherit {
+    pub mimetype: String,
+    pub from: NAddr,
+}
+
+/// `format_source` values on `PubLoadEvent::Index` / `Leaf` (shared with the
+/// single-event endpoints via `crate::mimetype`).
+pub const FORMAT_SOURCE_OWN: &str = crate::mimetype::SOURCE_OWN;
+pub const FORMAT_SOURCE_KIND: &str = crate::mimetype::SOURCE_KIND;
+pub const FORMAT_SOURCE_INHERITED: &str = crate::mimetype::SOURCE_INHERITED;
+pub const FORMAT_SOURCE_NONE: &str = crate::mimetype::SOURCE_NONE;
+
+/// Resolve a node's `(format, effective_format, format_source, format_from)`
+/// from its own declaration, what its kind defines by spec, and whatever its
+/// ancestors declared — in that order (a spec beats an ancestor's
+/// declaration). Tag-or-spec only — there is deliberately no content
+/// sniffing (decision-mimetype-tag.org). In a 30040/30041 tree the kind
+/// rule never fires (NKBIP-01 fixes no format), but the order is principled.
+fn format_fields(
+    own: Option<&'static str>,
+    by_kind: Option<&'static str>,
+    inherited: Option<&FormatInherit>,
+) -> (Option<String>, Option<String>, &'static str, Option<NAddr>) {
+    match (own, by_kind, inherited) {
+        (Some(m), _, _) => (Some(m.into()), Some(m.into()), FORMAT_SOURCE_OWN, None),
+        (None, Some(m), _) => (None, Some(m.into()), FORMAT_SOURCE_KIND, None),
+        (None, None, Some(inh)) => (
+            None,
+            Some(inh.mimetype.clone()),
+            FORMAT_SOURCE_INHERITED,
+            Some(inh.from.clone()),
+        ),
+        (None, None, None) => (None, None, FORMAT_SOURCE_NONE, None),
+    }
+}
+
+fn leaf_pub_event(
+    addr: NAddr,
+    depth: usize,
+    leaf: &Value,
+    inherited: Option<&FormatInherit>,
+) -> PubLoadEvent {
+    let leaf_kind = leaf.get("kind").and_then(|k| k.as_u64()).unwrap_or(addr.kind);
+    let (format, effective_format, format_source, format_from) = format_fields(
+        crate::mimetype::from_event(leaf),
+        crate::mimetype::for_kind(leaf_kind),
+        inherited,
+    );
     let content = leaf.get("content").and_then(|v| v.as_str()).map(String::from);
     let title = leaf.get("tags").and_then(|v| v.as_array()).and_then(|tags| {
         tags.iter().find_map(|t| {
@@ -84,6 +134,10 @@ fn leaf_pub_event(addr: NAddr, depth: usize, leaf: &Value) -> PubLoadEvent {
         relays,
         signed,
         links,
+        format,
+        effective_format,
+        format_source,
+        format_from,
     }
 }
 
@@ -491,6 +545,8 @@ pub struct TocEntry {
     /// tree load fills this for every section inside the depth horizon, so the
     /// reader can render the whole tree without per-section round trips.
     pub content: Option<String>,
+    /// The node's own declared content format (canonical `m` mimetype), if any.
+    pub format: Option<String>,
     /// Children entries (for tree view)
     pub children: Vec<TocEntry>,
 }
@@ -895,6 +951,17 @@ pub enum PubLoadEvent {
         /// powers the `fork` provenance pill.
         #[serde(default)]
         forked: bool,
+        /// The node's own content format: its canonical `m` mimetype (legacy
+        /// `format` tag accepted), `None` when it declares nothing.
+        format: Option<String>,
+        /// Format the reader should use: own, else inherited from the nearest
+        /// enclosing 30040 that declares a `text/*` `m` tag, else `None`.
+        /// Tag-only — never sniffed from content.
+        effective_format: Option<String>,
+        /// `"own"` | `"inherited"` | `"none"`.
+        format_source: &'static str,
+        /// The index whose declaration was inherited (when `inherited`).
+        format_from: Option<NAddr>,
     },
     /// A content leaf (30041 or another `ZETTEL_KINDS` kind) resolved.
     Leaf {
@@ -913,6 +980,17 @@ pub enum PubLoadEvent {
         /// renders a link row without reading tags.
         #[serde(default)]
         links: Vec<String>,
+        /// The node's own content format: its canonical `m` mimetype (legacy
+        /// `format` tag accepted), `None` when it declares nothing.
+        format: Option<String>,
+        /// Format the reader should use: own, else inherited from the nearest
+        /// enclosing 30040 that declares a `text/*` `m` tag, else `None`.
+        /// Tag-only — never sniffed from content.
+        effective_format: Option<String>,
+        /// `"own"` | `"inherited"` | `"none"`.
+        format_source: &'static str,
+        /// The index whose declaration was inherited (when `inherited`).
+        format_from: Option<NAddr>,
     },
     /// A node (index or leaf) failed to resolve. Counted toward `N` so the
     /// client's `i/N` still terminates cleanly.
@@ -1625,6 +1703,7 @@ impl<'a> PublicationEngine<'a> {
             true,
             policy,
             std::collections::HashSet::new(),
+            None,
             tx.clone(),
             counter.clone(),
             authors.clone(),
@@ -1663,6 +1742,7 @@ impl<'a> PublicationEngine<'a> {
         is_root: bool,
         policy: FetchPolicy,
         ancestors: std::collections::HashSet<NAddr>,
+        inherited: Option<FormatInherit>,
         tx: tokio::sync::mpsc::Sender<PubLoadEvent>,
         counter: std::sync::Arc<std::sync::atomic::AtomicUsize>,
         authors: std::sync::Arc<std::sync::Mutex<std::collections::HashSet<String>>>,
@@ -1758,6 +1838,19 @@ impl<'a> PublicationEngine<'a> {
                 });
             }
 
+            // Content format: this index's own `text/*` declaration (if any)
+            // becomes the default its children inherit; otherwise whatever
+            // we inherited passes through unchanged. Tag-only, never sniffed.
+            let own_format = crate::mimetype::from_event(&event);
+            let (format, effective_format, format_source, format_from) =
+                format_fields(own_format, None, inherited.as_ref());
+            let child_inherit: Option<FormatInherit> = own_format
+                .map(|m| FormatInherit {
+                    mimetype: m.to_string(),
+                    from: addr.clone(),
+                })
+                .or(inherited);
+
             // 3. Emit this index — before any of its children's events.
             //    `pub_` already carries the provenance fields off the
             //    index event (Publication::from_event derives them), so
@@ -1775,6 +1868,10 @@ impl<'a> PublicationEngine<'a> {
                     relays: pub_.relays.clone(),
                     signed: pub_.signed,
                     forked: pub_.forked,
+                    format,
+                    effective_format,
+                    format_source,
+                    format_from,
                 },
             )
             .await
@@ -1801,7 +1898,7 @@ impl<'a> PublicationEngine<'a> {
                         if !emit_pub_event(
                             &tx,
                             &counter,
-                            leaf_pub_event(addr.clone(), depth + 1, &leaf),
+                            leaf_pub_event(addr.clone(), depth + 1, &leaf, child_inherit.as_ref()),
                         )
                         .await
                         {
@@ -1824,7 +1921,7 @@ impl<'a> PublicationEngine<'a> {
                 let reread = self.load_addrs_local(&pending).await;
                 for (addr, event) in pending.into_iter().zip(reread) {
                     let ev = match event {
-                        Some(leaf) => leaf_pub_event(addr, depth + 1, &leaf),
+                        Some(leaf) => leaf_pub_event(addr, depth + 1, &leaf, child_inherit.as_ref()),
                         None => PubLoadEvent::Error {
                             addr,
                             depth: depth + 1,
@@ -1853,6 +1950,7 @@ impl<'a> PublicationEngine<'a> {
                             let tx = tx.clone();
                             let counter = counter.clone();
                             let authors = authors.clone();
+                            let inherit = child_inherit.clone();
                             async move {
                                 self.stream_tree_inner(
                                     child_addr,
@@ -1861,6 +1959,7 @@ impl<'a> PublicationEngine<'a> {
                                     false,
                                     policy,
                                     ancestors,
+                                    inherit,
                                     tx,
                                     counter,
                                     authors,
@@ -1891,6 +1990,11 @@ impl<'a> PublicationEngine<'a> {
                 loaded: section.event.is_loaded(),
                 is_publication: false,
                 content: section.content.clone(),
+                format: section
+                    .event
+                    .data()
+                    .and_then(crate::mimetype::from_event)
+                    .map(String::from),
                 children: Vec::new(),
             });
         }
@@ -1916,6 +2020,11 @@ impl<'a> PublicationEngine<'a> {
                 loaded: nested.index.is_loaded(),
                 is_publication: true,
                 content: None,
+                format: nested
+                    .index
+                    .data()
+                    .and_then(crate::mimetype::from_event)
+                    .map(String::from),
                 children,
             });
         }
@@ -3586,8 +3695,8 @@ pub async fn build_signed_publication_events_via_signer(
         // The `m` MIME tag, from `format` when the author set one (Markdown
         // otherwise) — a single-letter tag any client can filter on.
         if !tags.iter().any(|t| t.first().map(String::as_str) == Some("m")) {
-            let mode = crate::tree::node::ContentMode::from_tags(&tags);
-            tags.push(vec!["m".to_string(), mode.mime().to_string()]);
+            let mode = crate::tree::node::ContentMode::from_tags(&tags).unwrap_or_default();
+            tags.push(vec!["m".to_string(), mode.mimetype().to_string()]);
         }
         // What the section references, as tags: `r` for every web URL in
         // the text, `w`/`ref`/`a`/`q`/`p` for nostrdown — the same emission
@@ -4375,6 +4484,90 @@ mod tests {
     /// Flat path (no section level > 2) keeps the original
     /// single-30040 + N-30041 shape — the branch in
     /// build_publication_events_internal must not regress this.
+    fn m_tags(ev: &Value) -> Vec<String> {
+        ev["tags"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|t| t[0] == "m")
+            .map(|t| t[1].as_str().unwrap().to_string())
+            .collect()
+    }
+
+    /// The publish contract: after `stamp_section_mimetypes`, every emitted
+    /// 30041 carries exactly one `m` tag (own override, else the publication
+    /// default) and the 30040 carries none — on the flat path.
+    #[test]
+    fn flat_publish_stamps_m_on_sections_not_index() {
+        use crate::publication::compose::ComposeState;
+        let mut compose = ComposeState {
+            title: "Flat".to_string(),
+            format: Some("markdown".to_string()),
+            sections: vec![
+                SectionCompose { title: "A".into(), content: "a".into(), ..Default::default() },
+                SectionCompose {
+                    title: "B".into(),
+                    content: "b".into(),
+                    format: Some("org".into()),
+                    ..Default::default()
+                },
+            ],
+            ..Default::default()
+        };
+        compose.stamp_section_mimetypes().unwrap();
+        let (root, children) = build_publication_events(&mut compose, &"feedface".repeat(8));
+        assert!(m_tags(&root).is_empty(), "index carries no m");
+        assert_eq!(m_tags(&children[0]), vec!["text/markdown"]);
+        assert_eq!(m_tags(&children[1]), vec!["text/org"]);
+    }
+
+    /// Nested path: the interior 30040 minted for a level-3 parent must NOT
+    /// inherit its section's `m` tag, while both 30041s carry theirs.
+    #[test]
+    fn nested_publish_keeps_m_off_interior_indexes() {
+        use crate::publication::compose::ComposeState;
+        let mut compose = ComposeState {
+            title: "Nested".to_string(),
+            format: Some("asciidoc".to_string()),
+            sections: vec![
+                SectionCompose { title: "Parent".into(), content: "p".into(), level: 2, ..Default::default() },
+                SectionCompose { title: "Child".into(), content: "c".into(), level: 3, ..Default::default() },
+            ],
+            ..Default::default()
+        };
+        compose.stamp_section_mimetypes().unwrap();
+        let (root, children) = build_publication_events(&mut compose, &"feedface".repeat(8));
+        assert!(m_tags(&root).is_empty());
+        for c in &children {
+            if c["kind"] == 30040 {
+                assert!(m_tags(c).is_empty(), "interior index must carry no m: {c}");
+            } else {
+                assert_eq!(c["kind"], 30041);
+                assert_eq!(m_tags(c), vec!["text/asciidoc"]);
+            }
+        }
+        assert!(children.iter().any(|c| c["kind"] == 30040), "nested path produced an interior index");
+    }
+
+    /// Block path: editable + forked blocks get the resolved `m`; the block
+    /// index gets none.
+    #[test]
+    fn block_publish_stamps_m_on_editable_and_forked() {
+        let mut state = ComposeBlockState::new();
+        state.title = "Blocks".into();
+        state.format = Some("markdown".into());
+        state.add_editable();
+        state.add_imported(NAddr::new(30041, "alice", "orig"), "o".into(), "alice".into(), "Orig".into());
+        state.toggle_fork(1);
+        state.stamp_block_mimetypes().unwrap();
+        let (root, sections) = build_block_publication_events(&mut state, "pubkey1", None);
+        assert!(m_tags(&root).is_empty());
+        assert_eq!(sections.len(), 2);
+        for s in &sections {
+            assert_eq!(m_tags(s), vec!["text/markdown"], "{s}");
+        }
+    }
+
     #[test]
     fn build_publication_events_flat_path_unchanged() {
         use crate::publication::compose::ComposeState;
@@ -5180,11 +5373,48 @@ mod tests {
     }
 
     fn fixture_section(pubkey: &str, d_tag: &str, title: &str, content: &str) -> Value {
-        let tags = vec![
+        fixture_section_tagged(pubkey, d_tag, title, content, &[])
+    }
+
+    /// `fixture_section` plus extra `[name, value]` tags (e.g. an `m` mimetype).
+    fn fixture_section_tagged(
+        pubkey: &str,
+        d_tag: &str,
+        title: &str,
+        content: &str,
+        extra: &[(&str, &str)],
+    ) -> Value {
+        let mut tags = vec![
             serde_json::json!(["d", d_tag]),
             serde_json::json!(["title", title]),
         ];
+        for (n, v) in extra {
+            tags.push(serde_json::json!([n, v]));
+        }
         fixture_event(pubkey, KIND_PUBLICATION_SECTION, Value::Array(tags), content)
+    }
+
+    /// `fixture_index` plus extra `[name, value]` tags.
+    fn fixture_index_tagged(
+        pubkey: &str,
+        d_tag: &str,
+        title: &str,
+        children: &[&NAddr],
+        extra: &[(&str, &str)],
+    ) -> Value {
+        // Tags must be in place BEFORE `fixture_event` computes the id/sig —
+        // mutating afterwards yields an event nostrdb rejects on ingest.
+        let mut tags = vec![
+            serde_json::json!(["d", d_tag]),
+            serde_json::json!(["title", title]),
+        ];
+        for c in children {
+            tags.push(serde_json::json!(["a", c.to_a_tag()]));
+        }
+        for (n, v) in extra {
+            tags.push(serde_json::json!([n, v]));
+        }
+        fixture_event(pubkey, KIND_PUBLICATION_INDEX, Value::Array(tags), "")
     }
 
     /// Spin up an in-memory engine, ingest the events, and poll until every
@@ -5830,6 +6060,142 @@ mod tests {
             Some(PubLoadEvent::Index { is_root, .. }) => assert!(*is_root),
             other => panic!("expected root Index first, got {other:?}"),
         }
+    }
+
+    /// Format precedence on the stream: a leaf's own `m` wins; an untagged
+    /// leaf inherits from the nearest enclosing 30040 that declares a `text/*`
+    /// `m`; an index stamped `application/json` (NKBIP-06) declares nothing
+    /// and passes the outer inheritance through; no tags anywhere = none.
+    #[test]
+    fn format_fields_precedence_is_own_kind_inherited() {
+        let inh = FormatInherit {
+            mimetype: "text/markdown".into(),
+            from: NAddr::new(KIND_PUBLICATION_INDEX, &test_pubkey(), "idx"),
+        };
+        // Own tag beats everything.
+        assert_eq!(
+            format_fields(Some("text/org"), Some("text/asciidoc"), Some(&inh)),
+            (
+                Some("text/org".into()),
+                Some("text/org".into()),
+                FORMAT_SOURCE_OWN,
+                None
+            )
+        );
+        // A kind's spec-defined format beats an ancestor's declaration.
+        assert_eq!(
+            format_fields(None, Some("text/asciidoc"), Some(&inh)),
+            (None, Some("text/asciidoc".into()), FORMAT_SOURCE_KIND, None)
+        );
+        assert_eq!(
+            format_fields(None, None, Some(&inh)),
+            (
+                None,
+                Some("text/markdown".into()),
+                FORMAT_SOURCE_INHERITED,
+                Some(inh.from.clone())
+            )
+        );
+        assert_eq!(
+            format_fields(None, None, None),
+            (None, None, FORMAT_SOURCE_NONE, None)
+        );
+    }
+
+    #[tokio::test]
+    async fn test_stream_tree_effective_format() {
+        let pk_owned = test_pubkey();
+        let pk = pk_owned.as_str();
+        let own = NAddr::new(KIND_PUBLICATION_SECTION, pk, "own");
+        let inherits = NAddr::new(KIND_PUBLICATION_SECTION, pk, "inherits");
+        let deep = NAddr::new(KIND_PUBLICATION_SECTION, pk, "deep");
+        let bare = NAddr::new(KIND_PUBLICATION_SECTION, pk, "bare");
+        let json_idx = NAddr::new(KIND_PUBLICATION_INDEX, pk, "json-idx");
+        let md_idx = NAddr::new(KIND_PUBLICATION_INDEX, pk, "md-idx");
+        let bare_idx = NAddr::new(KIND_PUBLICATION_INDEX, pk, "bare-idx");
+        let root_idx = NAddr::new(KIND_PUBLICATION_INDEX, pk, "root-idx");
+
+        let (engine, _dir) = engine_with_events(&[
+            // Legacy `format` tag on the leaf itself → own.
+            fixture_section_tagged(pk, "own", "Own", "* org", &[("format", "org")]),
+            fixture_section(pk, "inherits", "Inherits", "md"),
+            fixture_section(pk, "deep", "Deep", "md too"),
+            fixture_section(pk, "bare", "Bare", "nothing"),
+            // An NKBIP-06-style index: `application/json` is not a content format.
+            fixture_index_tagged(pk, "json-idx", "Json", &[&deep], &[("m", "application/json")]),
+            fixture_index_tagged(
+                pk,
+                "md-idx",
+                "Md",
+                &[&own, &inherits, &json_idx],
+                &[("m", "text/markdown")],
+            ),
+            fixture_index(pk, "bare-idx", "Bare", &[&bare]),
+            fixture_index(pk, "root-idx", "Root", &[&md_idx, &bare_idx]),
+        ])
+        .await;
+
+        let (_total, events) = stream_to_vec(&engine, &root_idx, 3).await;
+        let leaf = |d: &str| {
+            events
+                .iter()
+                .find_map(|e| match e {
+                    PubLoadEvent::Leaf {
+                        addr,
+                        format,
+                        effective_format,
+                        format_source,
+                        format_from,
+                        ..
+                    } if addr.d_tag == d => Some((
+                        format.clone(),
+                        effective_format.clone(),
+                        *format_source,
+                        format_from.clone(),
+                    )),
+                    _ => None,
+                })
+                .unwrap_or_else(|| panic!("no leaf {d}"))
+        };
+        assert_eq!(
+            leaf("own"),
+            (Some("text/org".into()), Some("text/org".into()), "own", None)
+        );
+        assert_eq!(
+            leaf("inherits"),
+            (None, Some("text/markdown".into()), "inherited", Some(md_idx.clone()))
+        );
+        // Through the application/json index: still the markdown ancestor.
+        assert_eq!(
+            leaf("deep"),
+            (None, Some("text/markdown".into()), "inherited", Some(md_idx.clone()))
+        );
+        assert_eq!(leaf("bare"), (None, None, "none", None));
+
+        // The markdown index reports its own declaration; the json one inherits.
+        let idx = |d: &str| {
+            events
+                .iter()
+                .find_map(|e| match e {
+                    PubLoadEvent::Index {
+                        addr,
+                        format,
+                        effective_format,
+                        format_source,
+                        ..
+                    } if addr.d_tag == d => {
+                        Some((format.clone(), effective_format.clone(), *format_source))
+                    }
+                    _ => None,
+                })
+                .unwrap_or_else(|| panic!("no index {d}"))
+        };
+        assert_eq!(
+            idx("md-idx"),
+            (Some("text/markdown".into()), Some("text/markdown".into()), "own")
+        );
+        assert_eq!(idx("json-idx"), (None, Some("text/markdown".into()), "inherited"));
+        assert_eq!(idx("root-idx"), (None, None, "none"));
     }
 
     #[tokio::test]

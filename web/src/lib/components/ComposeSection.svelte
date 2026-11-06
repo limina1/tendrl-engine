@@ -3,6 +3,7 @@
 	import TagEditor from './TagEditor.svelte';
 	import ItemBadge from './ItemBadge.svelte';
 	import { sectionState } from '$lib/compose/state';
+	import { CANONICAL_MIMETYPES, FORMAT_LABEL, formatLabel } from '$lib/layers/registry';
 
 	let {
 		section,
@@ -13,6 +14,8 @@
 		oncollapse,
 		onupdate,
 		onupdatetags,
+		onupdateformat = undefined,
+		inheritedFormat = 'text/markdown',
 		onreset,
 		onremove,
 		onsendtochat,
@@ -31,6 +34,10 @@
 		oncollapse: (id: string) => void;
 		onupdate: (id: string, title: string, content: string) => void;
 		onupdatetags: (id: string, tags: TagEntry[]) => void;
+		/** Per-section content-format override; `undefined` = inherit. */
+		onupdateformat?: (id: string, format: string | undefined) => void;
+		/** The compose-level default this section inherits when it sets none. */
+		inheritedFormat?: string;
 		onreset: (id: string) => void;
 		onremove: (id: string) => void;
 		onsendtochat: (id: string) => void;
@@ -74,6 +81,22 @@
 			placeholder="Section title"
 			disabled={section.readonly}
 		/>
+		{#if onupdateformat}
+			<!-- Content format: inherit the document default, or override for
+			     this section (a mixed document). Becomes the 30041's `m` tag. -->
+			<select
+				class="compose-section-format"
+				value={section.format ?? ''}
+				onchange={(e) => onupdateformat(section.id, e.currentTarget.value || undefined)}
+				disabled={section.readonly}
+				title="Content format of this section (its m tag). Inherit = the document's format."
+			>
+				<option value="">inherit ({formatLabel(inheritedFormat)})</option>
+				{#each CANONICAL_MIMETYPES as mt (mt)}
+					<option value={mt}>{FORMAT_LABEL[mt]}</option>
+				{/each}
+			</select>
+		{/if}
 		<ItemBadge item={section} {syncMode} panel="compose" {ontogglereadonly} {onlocksource} {oncrosspanelcopy} />
 		{#if onreorder}
 			<button
@@ -176,6 +199,17 @@
 		align-items: center;
 	}
 
+	.compose-section-format {
+		font-family: var(--font-mono);
+		font-size: var(--t-xs);
+		background: transparent;
+		color: var(--fg-muted);
+		border: 1px solid var(--base3);
+		border-radius: var(--r-sm);
+		padding: 1px 4px;
+		max-width: 11em;
+	}
+	.compose-section-format:disabled { opacity: 0.5; }
 	.compose-section-title {
 		flex: 1;
 		font-family: inherit;

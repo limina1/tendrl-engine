@@ -42,53 +42,35 @@ pub enum ContentMode {
 }
 
 impl ContentMode {
-    /// Detect content mode from event tags: tendrl's `format` tag first,
-    /// then the single-letter `m` MIME-type tag (NIP-94's media type, which
-    /// other NKBIP-01 writers put on sections: `text/markdown`, `text/org`,
-    /// `text/asciidoc`, `text/plain`).
-    pub fn from_tags(tags: &[Vec<String>]) -> Self {
-        for tag in tags {
-            if tag.len() >= 2 && tag[0] == "format" {
-                return match tag[1].to_lowercase().as_str() {
-                    "org" | "org-mode" | "orgmode" => ContentMode::OrgMode,
-                    "asciidoc" | "adoc" => ContentMode::AsciiDoc,
-                    "plain" | "text" | "txt" => ContentMode::PlainText,
-                    _ => ContentMode::Markdown,
-                };
-            }
-        }
-        for tag in tags {
-            if tag.len() >= 2 && tag[0] == "m" {
-                if let Some(mode) = Self::from_mime(&tag[1]) {
-                    return mode;
-                }
-            }
-        }
-        ContentMode::Markdown
+    /// Content mode declared by an event's tags (`m` mimetype first, legacy
+    /// `format` as an alias — see [`crate::mimetype::from_tags`]). `None` when
+    /// nothing is declared: there is no sniffing fallback by design.
+    pub fn from_tags(tags: &[Vec<String>]) -> Option<Self> {
+        crate::mimetype::from_tags(tags).and_then(Self::from_mimetype)
     }
 
-    /// The mode a MIME type names, if it is one of ours.
-    pub fn from_mime(mime: &str) -> Option<Self> {
-        let m = mime.trim().to_ascii_lowercase();
-        let m = m.split(';').next().unwrap_or("").trim();
-        match m {
-            "text/markdown" | "text/x-markdown" => Some(ContentMode::Markdown),
-            "text/org" | "text/x-org" => Some(ContentMode::OrgMode),
-            "text/asciidoc" | "text/x-asciidoc" => Some(ContentMode::AsciiDoc),
-            "text/plain" => Some(ContentMode::PlainText),
+    /// Content mode for a canonical (or alias) mimetype.
+    pub fn from_mimetype(mimetype: &str) -> Option<Self> {
+        match crate::mimetype::canonical(mimetype)? {
+            crate::mimetype::MARKDOWN => Some(ContentMode::Markdown),
+            crate::mimetype::ORG => Some(ContentMode::OrgMode),
+            crate::mimetype::ASCIIDOC => Some(ContentMode::AsciiDoc),
+            crate::mimetype::PLAIN => Some(ContentMode::PlainText),
             _ => None,
         }
     }
 
-    /// The MIME type to write as the `m` tag.
-    pub fn mime(self) -> &'static str {
+    /// Canonical mimetype for this content mode (the `m` tag value).
+    pub fn mimetype(&self) -> &'static str {
         match self {
-            ContentMode::Markdown => "text/markdown",
-            ContentMode::OrgMode => "text/org",
-            ContentMode::AsciiDoc => "text/asciidoc",
-            ContentMode::PlainText => "text/plain",
+            ContentMode::Markdown => crate::mimetype::MARKDOWN,
+            ContentMode::OrgMode => crate::mimetype::ORG,
+            ContentMode::AsciiDoc => crate::mimetype::ASCIIDOC,
+            ContentMode::PlainText => crate::mimetype::PLAIN,
         }
     }
+
+
 
     /// File extension for this content mode
     pub fn extension(&self) -> &'static str {
@@ -422,28 +404,20 @@ mod tests {
 
     #[test]
     fn test_content_mode_from_tags() {
-        let org_tags = vec![vec!["format".to_string(), "org".to_string()]];
-        assert_eq!(ContentMode::from_tags(&org_tags), ContentMode::OrgMode);
+        let m_tags = vec![vec!["m".to_string(), "text/org".to_string()]];
+        assert_eq!(ContentMode::from_tags(&m_tags), Some(ContentMode::OrgMode));
 
-        let md_tags = vec![vec!["format".to_string(), "markdown".to_string()]];
-        assert_eq!(ContentMode::from_tags(&md_tags), ContentMode::Markdown);
+        let legacy = vec![vec!["format".to_string(), "markdown".to_string()]];
+        assert_eq!(ContentMode::from_tags(&legacy), Some(ContentMode::Markdown));
 
+        // Nothing declared → nothing detected (no heuristics).
         let empty_tags: Vec<Vec<String>> = vec![];
-        assert_eq!(ContentMode::from_tags(&empty_tags), ContentMode::Markdown);
+        assert_eq!(ContentMode::from_tags(&empty_tags), None);
+        let json_only = vec![vec!["m".to_string(), "application/json".to_string()]];
+        assert_eq!(ContentMode::from_tags(&json_only), None);
+
+        assert_eq!(ContentMode::AsciiDoc.mimetype(), "text/asciidoc");
+        assert_eq!(ContentMode::from_mimetype("text/x-markdown"), Some(ContentMode::Markdown));
     }
 
-    #[test]
-    fn m_tag_is_read_when_format_is_absent_and_format_wins() {
-        let m_only = vec![vec!["m".to_string(), "text/org".to_string()]];
-        assert_eq!(ContentMode::from_tags(&m_only), ContentMode::OrgMode);
-        let params = vec![vec!["m".to_string(), "text/asciidoc; charset=utf-8".to_string()]];
-        assert_eq!(ContentMode::from_tags(&params), ContentMode::AsciiDoc);
-        let both = vec![
-            vec!["m".to_string(), "text/plain".to_string()],
-            vec!["format".to_string(), "org".to_string()],
-        ];
-        assert_eq!(ContentMode::from_tags(&both), ContentMode::OrgMode, "format is tendrl's own and wins");
-        assert_eq!(ContentMode::from_mime("image/png"), None);
-        assert_eq!(ContentMode::OrgMode.mime(), "text/org");
-    }
 }

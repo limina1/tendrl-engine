@@ -735,6 +735,8 @@ export interface DraftComposeSection {
 	content: string;
 	level: number;
 	d_tag?: string;
+	/** Per-section content-format override; absent = inherit the draft's. */
+	format?: string;
 	tags: { name: string; value: string }[];
 	/** Transclude slot target (naddr/coordinate) — set when this item is a slot,
 	 *  restored on resume so the `{{slot:…}}` line comes back. */
@@ -744,6 +746,8 @@ export interface DraftComposeSection {
 export interface DraftComposeState {
 	title: string;
 	d_tag?: string;
+	/** Default content format (canonical mimetype). Absent on legacy drafts. */
+	format?: string;
 	/** Output kind — absent/30040 = publication; any other kind = atomic draft
 	 *  (blog/wiki/custom) so resume reopens the composer in the right mode. */
 	kind?: number;
@@ -763,10 +767,13 @@ export interface DraftPublication {
 
 export interface SaveDraftPayload {
 	title: string;
+	/** Default content format (canonical mimetype) — restored on resume. */
+	format?: string;
 	tags: [string, string][];
 	sections: {
 		title: string;
 		content: string;
+		format?: string;
 		level?: number;
 		tags: [string, string][];
 		d_tag?: string;
@@ -1099,9 +1106,19 @@ export function getSection(pubkey: string, d_tag: string, index: number, policy 
  *  throwing — the engine's 404 carries that body already, and every
  *  caller branches on a null event rather than a raised string. Other
  *  statuses still throw. */
-async function fetchEventOrNull(url: string): Promise<{ event: unknown | null }> {
+/** Single-event responses carry the engine-derived content format beside the
+ *  event (own `m` tag → `format`; own tag, else the kind's spec-defined
+ *  format → `effective_format` + where it came from). Absent on misses. */
+export type SingleEventResponse = {
+	event: unknown | null;
+	format?: string | null;
+	effective_format?: string | null;
+	format_source?: 'own' | 'kind' | 'none';
+};
+
+async function fetchEventOrNull(url: string): Promise<SingleEventResponse> {
 	try {
-		return await fetchJson<{ event: unknown }>(url);
+		return await fetchJson<SingleEventResponse>(url);
 	} catch (e) {
 		const raw = e instanceof Error ? e.message : String(e);
 		if (/^404:/.test(raw)) return { event: null };
@@ -1673,10 +1690,17 @@ export function search(
 
 export interface PublishRequest {
 	title: string;
+	/** Content format of every section (or of the atomic body): a canonical
+	 *  mimetype (`text/markdown` | `text/org` | `text/asciidoc` | `text/plain`)
+	 *  or its short name. REQUIRED — the engine stamps it as each 30041's `m`
+	 *  tag and refuses (400) without it. Never written on the 30040. */
+	format: string;
 	tags: [string, string][];
 	sections: {
 		title: string;
 		content: string;
+		/** Per-section override of the request's `format`. */
+		format?: string;
 		tags: [string, string][];
 		level?: number;
 		/** Reuse this section d-tag (republish replace) instead of minting. */
@@ -1746,6 +1770,8 @@ export type PublishBlock =
 	| {
 			kind: 'editable';
 			title: string;
+			/** Per-block override of the request's `format`. */
+			format?: string;
 			tags: [string, string][];
 			content: string;
 			/** Reuse this 30041 d-tag (nanoid) on republish; omit to mint fresh. */
@@ -1762,6 +1788,7 @@ export type PublishBlock =
 	| {
 			kind: 'forked';
 			title: string;
+			format?: string;
 			tags: [string, string][];
 			original_addr: { kind: number; pubkey: string; d_tag: string };
 			content: string;
@@ -1772,6 +1799,8 @@ export type PublishBlock =
 
 export interface PublishBlocksRequest {
 	title: string;
+	/** Content format for every event-emitting block — see PublishRequest. */
+	format: string;
 	tags: [string, string][];
 	/** Reuse this index d-tag (nanoid) on republish; omit to mint fresh. */
 	d_tag?: string;
@@ -2621,6 +2650,88 @@ export function publishHighlight(req: {
 	relays?: string[];
 }) {
 	return fetchJson<DiscussionPublishResponse>('/api/v1/discussions/highlight', {
+		method: 'POST',
+		body: JSON.stringify(req)
+	});
+}
+
+// ---------------------------------------------------------------------------
+// Generic event composition from kind templates (engine `event_template.rs`)
+// ---------------------------------------------------------------------------
+
+export type EventTagValueType =
+	| 'text'
+	| 'url'
+	| 'date'
+	| 'integer'
+	| 'boolean'
+	| 'language'
+	| 'pubkey';
+
+/** One declared tag of a kind template — the form renders one input per
+ *  field; the engine adds `fixed` values and derives `auto` ones. */
+export interface EventTagField {
+	name: string;
+	label?: string | null;
+	hint?: string | null;
+	required: boolean;
+	multi: boolean;
+	type: EventTagValueType;
+	fixed: string[];
+	auto?: string | null;
+	/** Engine-side rewrite of the value (e.g. a bookmark's `d` = URL sans
+	 *  scheme) — such a `d` is pasted, never generated. */
+	transform?: string | null;
+}
+
+export interface KindTemplate {
+	name: string;
+	kind: number;
+	title: string;
+	description?: string | null;
+	spec?: string | null;
+	content: { label?: string | null; hint?: string | null; required: boolean };
+	tags: EventTagField[];
+	user_defined: boolean;
+}
+
+/** A filled form: `tags` rows exactly as typed (`[name, value, …]`);
+ *  `template` null = custom kind (then `kind` is required). */
+export interface EventComposeRequest {
+	template: string | null;
+	kind?: number | null;
+	content: string;
+	tags: string[][];
+	relays?: string[];
+}
+
+export interface EventProblem {
+	field: string;
+	message: string;
+}
+
+export function listEventTemplates() {
+	return fetchJson<{ templates: KindTemplate[] }>('/api/v1/event/templates');
+}
+
+/** A fresh opaque `d` (engine nanoid, the shape compose uses) for an
+ *  addressable event — the identifier field's "generate" button. */
+export function mintEventD() {
+	return fetchJson<{ d: string }>('/api/v1/event/mint-d');
+}
+
+/** The unsigned template the form resolves to plus its validation
+ *  problems — same engine builder as `publishEvent`, so no TS twin. */
+export function previewEvent(req: EventComposeRequest) {
+	return fetchJson<{ event: Record<string, unknown>; problems: EventProblem[] }>(
+		'/api/v1/event/preview',
+		{ method: 'POST', body: JSON.stringify(req) }
+	);
+}
+
+/** Sign, ingest, broadcast — 400 while the form still has problems. */
+export function publishEvent(req: EventComposeRequest) {
+	return fetchJson<DiscussionPublishResponse>('/api/v1/event/publish', {
 		method: 'POST',
 		body: JSON.stringify(req)
 	});

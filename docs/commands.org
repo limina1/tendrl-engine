@@ -2749,3 +2749,163 @@ curl -s -X DELETE $B/providers/ppq | jq .configured           # false
 Web: =pnpm -C web build= then open =http://127.0.0.1:3057/?shell=mobile= — the
 drawer's *agent services* row reads "add one" until a service exists; the
 modal is =AgentServicesModal.svelte= (mounted in =+layout=).
+
+* Rendering layers + the m-tag contract (branch =feat/rendering-layers=)
+
+Every 30041 tendrl publishes carries =["m", <mimetype>]=; indexes never do.
+The three markup bases (Markdown / AsciiDoc / Org) are on by default: the
+reader decorates by the section's =m= tag, else the kind's spec (30023
+Markdown, 30818 AsciiDoc), else the book's =m=, else the user's "untagged
+sections" preference, else the per-buffer pick. Design:
+=docs/zettel/idea-rendering-layers.org=, =decision-mimetype-tag.org=,
+=decision-layers-default-on.org=.
+
+** Unit tests
+
+#+begin_src sh
+cargo test --lib -- --test-threads=4 mimetype            # alias table, m-before-format, application/json → none, for_kind, declared_or_kind
+cargo test --lib -- --test-threads=4 format_fields_precedence   # own > kind > inherited > none
+cargo test --lib -- --test-threads=4 stamp_ resolve_format flat_publish nested_publish block_publish
+cargo test --lib -- --test-threads=4 test_stream_tree    # effective_format inheritance on the stream
+cargo test --lib -- --test-threads=4 tree::              # ContentMode::from_tags over m
+pnpm -C web test                                         # vitest: org/asciidoc tokenizers, applyStyles invariants, resolver (32 tests)
+pnpm -C web check && pnpm -C web build                   # each base lands in its own chunk: ls web/build/_app/immutable/chunks/ | grep -E 'org|asciidoc|markdown'
+#+end_src
+Expected: all green; three base chunks, no entry/node file pulls them in.
+
+** End-to-end via an isolated engine (never the user's :3030)
+
+#+begin_src sh
+S=/tmp/tendrl-layers; mkdir -p $S
+printf 'initial_relays=["wss://theforest.nostr1.com"]\ntimeout_ms=8000\n[network]\nmode="confirm"\n[embedding]\nenabled=false\n' > $S/config.toml
+cargo build && ./target/debug/tendrl-engine -c $S/config.toml --port 3058 --data-dir $S/data --no-open &
+B=http://127.0.0.1:3058/api/v1
+# 1. no format → 400
+curl -s -X POST $B/publish/preview -H 'content-type: application/json' -d '{"title":"T","tags":[],"sections":[{"title":"A","content":"a","tags":[]}],"sign":false,"broadcast":false}' | jq .
+# 2. document default org, one section overrides markdown → index has no m; sections carry text/org + text/markdown
+curl -s -X POST $B/publish/preview -H 'content-type: application/json' -d '{"title":"T","format":"org","tags":[],"sections":[{"title":"A","content":"* a","tags":[]},{"title":"B","content":"# b","format":"markdown","tags":[]}],"sign":false,"broadcast":false}' | jq '[.events[] | {kind, m: [.tags[] | select(.[0]=="m") | .[1]]}]'
+#+end_src
+Expected: =invalid … format is required= (400), then
+=[{"kind":30040,"m":[]},{"kind":30041,"m":["text/org"]},{"kind":30041,"m":["text/markdown"]}]=.
+
+** Seed events with a scratch key (no identity needed)
+
+#+begin_src sh
+S=/tmp/tendrl-layers; cd $S && nak key generate > key.txt && SK=$(cat key.txt) && PK=$(nak key public $SK)
+nak event --sec $SK -k 30041 -d org-sec  -t title=Intro -t m=text/org      -c '* Heading
+Some *bold* /it/ [[Hayek]] {{ref:second|x}}' < /dev/null > ev.ndjson
+nak event --sec $SK -k 30041 -d adoc-sec -t title=Second -t m=text/asciidoc -c '== Second
+NOTE: *bold* `mono` [[Hayek]]' < /dev/null >> ev.ndjson
+nak event --sec $SK -k 30041 -d bare-sec -t title=Untagged -c '== No m tag' < /dev/null >> ev.ndjson
+nak event --sec $SK -k 30040 -d layers-test -t title="Layers test" -t "a=30041:$PK:org-sec" -t "a=30041:$PK:adoc-sec" -t "a=30041:$PK:bare-sec" -c '' < /dev/null >> ev.ndjson
+nak event --sec $SK -k 30818 -d hayek -t title=Hayek -c '= Hayek
+The *knowledge* problem.' < /dev/null >> ev.ndjson
+nak event --sec $SK -k 30023 -d article -t title=Article -c '# Article
+NIP-23 **Markdown**.' < /dev/null >> ev.ndjson
+curl -s -X POST $B/ingest -H 'content-type: application/x-ndjson' --data-binary @ev.ndjson   # {"ingested":6,…}
+curl -s "$B/addressable/30818/$PK/hayek?policy=local_only" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d["effective_format"], d["format_source"])'   # text/asciidoc kind
+curl -s "$B/addressable/30041/$PK/bare-sec?policy=local_only" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d["effective_format"], d["format_source"])'   # None none
+#+end_src
+(=nak event= blocks on an open stdin — the =< /dev/null= matters.)
+
+** Reader walk (built SPA at =http://127.0.0.1:3058/=; fresh profile, no =tendrl.layers= key)
+
+1. Feed → *Layers test*. Section 1 renders Org straight away (no Settings
+   step): chip =org=, hint "from this section's m tag (text/org)"; heading,
+   TODO, tags, list, =#+BEGIN_SRC= fence, table header styled; the
+   =[[Hayek]]= wikilink and the ={{ref:}}= are still chips.
+2. Next → =adoc= (admonition, block title, =[source,python]= + =----= fence,
+   bullets, link macro); Next → =md=; Next → the untagged section: chip
+   =off=, hint "no m tag; pick a markup, or set a fallback".
+3. Chip → tools sheet → *markup* row = off | md | adoc | org. Pick *adoc* →
+   styled, hint "your pick (this buffer)"; *always for this book* twice →
+   =tendrl.layers.byPublication= holds the coordinate; reload → reopen →
+   hint "bound for this book".
+4. Settings → Layers: *Untagged sections* = AsciiDoc; *Org* off; By book →
+   remove. Back in the reader: the untagged section reads "your fallback
+   for untagged sections"; the Org section is =off= — "Org, its layer is
+   switched off".
+5. Research → =id:<30818 id>= → result → *Read wiki page*: chip =adoc=,
+   hint "the kind's spec format (text/asciidoc)". Same for the 30023 →
+   =md=. (These open in the reader's single-event mode; the =doc:= buffer
+   takes the same =effective_format= from the single-event endpoint.)
+6. Highlight capture across a styled Org heading → the NIP-84 quote equals
+   the source slice (stars included); =…?highlight=<id>= → forced =off=.
+   Soft breaks: a hard-wrapped AsciiDoc paragraph (one sentence per line)
+   flows as one paragraph; a line ending in ` +` still breaks; a blank
+   line still separates paragraphs; =----= listings keep every line.
+   Selecting across a joined line still yields the source newline in the
+   quote.
+7. Composer: mode bar *format* select + per-section *inherit (Markdown)*;
+   preview JSON shows =m= on every 30041, none on the 30040; save draft →
+   reload → both selects restored.
+
+* Kind templates — compose any event (branch =feat/event-templates=)
+
+The highlighter generalized: =src/event_template.rs= loads kind templates
+(=src/event_templates/*.json= built in, =<data_dir>/event-templates/*.json=
+user-added/overriding by =name=) and turns a filled form into the unsigned
+template — fixed values the spec mandates (=t: music=), derived
+=alt= (=Music track: {title} by {artist}=), typed checks (url /
+date / integer / boolean / language / pubkey), the addressable rule. The
+web (=EventComposerModal=, M-x =tendrl-compose-event=, =SPC e e=) renders the
+form from the template and shows the engine's preview + problems live; no
+TS twin. "custom kind…" is the template-less path (any kind, any tags).
+The =d= of an addressable kind is never derived: *generate* mints an
+engine nanoid (=GET /event/mint-d=, =publication::mint_d_tag=, compose's
+shape) and a pasted identifier replaces that existing event.
+
+** Unit tests
+
+#+begin_src sh
+cargo test --lib -- --test-threads=4 event_template     # builtins parse, spec example, problems, fixed dedup, custom kind, bookmark d transform
+cargo test --lib -- --test-threads=4 well_known_kinds   # 36787 "music track" label guard
+pnpm -C web check
+#+end_src
+
+** API against an isolated engine (never the user's :3030)
+
+#+begin_src sh
+S=/tmp/tendrl-kinds; mkdir -p $S
+printf 'initial_relays=["wss://theforest.nostr1.com"]\ntimeout_ms=8000\n[embedding]\nenabled=false\n[database]\ndata_dir="%s/data"\n' $S > $S/config.toml
+cargo build && ./target/debug/tendrl-engine -c $S/config.toml --port 3131 &
+B=http://127.0.0.1:3131/api/v1
+curl -s $B/event/templates | jq '[.templates[] | {name, kind, fields: (.tags | length)}]'    # music-track 36787 (18), web-bookmark 39701 (4)
+# preview: half-filled form → template + problems, never 4xx
+curl -s $B/event/mint-d                                   # {"d":"<21-char nanoid>"}
+curl -s -X POST $B/event/preview -H 'content-type: application/json' -d '{"template":"music-track","content":"","tags":[["title","Summer Nights"],["artist","X"],["url","ftp://x"]]}' | jq '{alt: [.event.tags[] | select(.[0]=="alt")], problems}'   # d: required (never slugged from the title)
+# publish needs an identity: scratch key, engine source
+SK=$(nak key generate </dev/null); NC=$(nak key encrypt "$SK" pw </dev/null)
+curl -s -X POST $B/identity/login  -H 'content-type: application/json' -d "{\"ncryptsec\":\"$NC\"}" >/dev/null
+curl -s -X POST $B/identity/unlock -H 'content-type: application/json' -d '{"password":"pw"}' | jq .state
+curl -s -X POST $B/event/publish -H 'content-type: application/json' -d '{"template":"music-track","content":"","tags":[["title","T"]],"relays":["wss://theforest.nostr1.com"]}'   # 400 "d: required; artist: required; url: required"
+curl -s -X POST $B/event/publish -H 'content-type: application/json' -d '{"template":"music-track","content":"Lyrics…","tags":[["d","verify-run-track"],["title","Verify Run Track"],["artist","tendrl verify"],["url","https://cdn.blossom.example/audio/v.mp3"],["t","test"],["released","2026-11-03"]],"relays":["wss://theforest.nostr1.com"]}' | jq '{tags: .event.tags, broadcast: .broadcast}'
+#+end_src
+Expected: =d= = =verify-run-track=, =t= = music then test, =alt= derived,
+=client= stamped; event local immediately (=POST /query {"kinds":[36787]}=).
+theforest refuses an unknown scratch pubkey with an empty message (=nak
+event= gets the same) — =0/1= there is the relay, not the path.
+
+** GUI (headless CDP, see "Headless GUI verification")
+
+Open the built SPA at =:3131=, =SPC e e= → "compose event" modal: template
+select (Music track · 36787 / Web bookmark · 39701 / custom kind…), required
+fields starred, =music= chip on tags, "derived" badge on blank =alt=;
+identifier = input + *generate* (fills a 21-char nanoid; a pasted one is
+kept verbatim); custom kind 30078 shows the same identifier field, kind 1 none.
+
+** Edit from the event menu (own replaceable / addressable events)
+
+Search =id:<id of a track you published>= → =m= opens the event menu →
+the actions row carries =e Edit= (only for your own kind 0/3, 10000–19999,
+30000–39999 — never 30040/30041, the publication composer owns those).
+Edit fetches the full event (a search result's content is the 200-char
+preview), closes the menu and opens the composer as *edit event* with
+the kind's template selected, =d= / fields / content prefilled, the fixed
+=music= stripped out of the tags field, undeclared tags as extra rows
+(trailing elements kept), and the footer button reading *Replace*.
+Change the title → Replace → =GET $B/addressable/36787/$PK/<d>= shows a
+new id with the same =d= and the edited title.
+Type a bad url + date → red borders with the engine's messages, footer
+"N to fix"; fix them → "ready · Ctrl-Enter", "event json" shows the
+template, Publish → toast, modal closes, draft cleared.

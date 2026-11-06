@@ -23,6 +23,7 @@
 	import InsertionComposerModal from '$lib/components/InsertionComposerModal.svelte';
 	import AnnotationRequestModal from '$lib/components/AnnotationRequestModal.svelte';
 	import RelinkModal from '$lib/components/RelinkModal.svelte';
+	import EventComposerModal from '$lib/components/EventComposerModal.svelte';
 	import AgentServicesModal from '$lib/components/AgentServicesModal.svelte';
 	// fetch-events self-starts the SSE subscription at module scope; we
 	// only need confirmState here to render the modal.
@@ -238,6 +239,10 @@
 
 {#if app.relink}
 	<RelinkModal />
+{/if}
+
+{#if app.eventComposer}
+	<EventComposerModal />
 {/if}
 
 {#if app.agentServicesModal}

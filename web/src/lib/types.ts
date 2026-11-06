@@ -191,6 +191,14 @@ export type PubLoadEvent =
 			 *  provenance pill. Older engines that don't emit this leave
 			 *  it undefined → renders as "not forked". */
 			forked?: boolean;
+			/** Declared content format (engine-canonical `m` mimetype), the
+			 *  format the reader should use (own, else inherited from the nearest
+			 *  enclosing 30040 that declares one), and where it came from. Tag-only
+			 *  — the engine never sniffs. Optional for older engines. */
+			format?: string | null;
+			effective_format?: string | null;
+			format_source?: 'own' | 'kind' | 'inherited' | 'none';
+			format_from?: NAddr | null;
 	  }
 	| {
 			type: 'leaf';
@@ -205,6 +213,14 @@ export type PubLoadEvent =
 			/** Outward web links — the leaf's `r` tags that are http(s) URLs,
 			 *  derived engine-side. */
 			links?: string[];
+			/** Declared content format (engine-canonical `m` mimetype), the
+			 *  format the reader should use (own, else inherited from the nearest
+			 *  enclosing 30040 that declares one), and where it came from. Tag-only
+			 *  — the engine never sniffs. Optional for older engines. */
+			format?: string | null;
+			effective_format?: string | null;
+			format_source?: 'own' | 'kind' | 'inherited' | 'none';
+			format_from?: NAddr | null;
 	  }
 	| { type: 'error'; addr: NAddr; depth: number; message: string }
 	| { type: 'done'; total: number };
@@ -215,6 +231,8 @@ export interface Section {
 	content: string | null;
 	position: number;
 	loaded: boolean;
+	/** The section's own declared content format (canonical `m` mimetype). */
+	format?: string | null;
 }
 
 export type SectionStatus = 'pending' | 'loading' | 'loaded' | 'error';
@@ -246,6 +264,11 @@ export interface LazySection {
 	 *  (sections never carry it). Drives the `fork` pill on the
 	 *  outline's nested-publication rows. */
 	forked?: boolean;
+	/** Content format the reader should use for this node: its own `m` tag,
+	 *  else the one inherited from the nearest enclosing index that declares
+	 *  one, else null. Drives the rendering-layer decision (lib/layers). */
+	effective_format?: string | null;
+	format_source?: 'own' | 'kind' | 'inherited' | 'none';
 }
 
 export interface SectionMeta {
@@ -476,6 +499,10 @@ export interface ContextItem {
 	 *  save/publish replace the same addressable event instead of minting a
 	 *  fresh nanoid — {{ref:d-tag}} references stay valid across publishes. */
 	d_tag?: string;
+	/** Per-section content-format override (canonical mimetype). Absent =
+	 *  inherit the compose-level `format`. Resolved at publish: the engine
+	 *  stamps the result as the section's `m` tag. */
+	format?: string;
 }
 
 export type SyncMode = 'reactive' | 'explicit';
@@ -485,6 +512,9 @@ export type ComposeDefaultMode = 'full' | 'plain';
 
 export interface ComposeState {
 	title: string;
+	/** Default content format for every section (canonical mimetype, e.g.
+	 *  `text/markdown`). Required by the publish API; sections may override. */
+	format: string;
 	tags: TagEntry[];
 	sections: ContextItem[];
 	/** When the draft was seeded from an existing publication, this is the

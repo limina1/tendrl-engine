@@ -1,0 +1,85 @@
+#+TITLE: Decision: content format is the m tag — tag or user, never heuristics
+#+TYPE: decision
+#+STATUS: current
+#+DATE: 2026-10-01
+
+* The decision
+
+A section's markup is whatever its =["m", <mimetype>]= tag declares. The
+engine never sniffs content to guess a format, and never publishes a
+section without one.
+
+- *Vocabulary*: NIP-94's =m= (as NKBIP-06 reuses it), canonical values
+  =text/markdown= / =text/org= / =text/asciidoc= / =text/plain=.
+  =text/x-…= spellings and the legacy =["format", <name>]= tag the kasten
+  builder used to emit are accepted on read and canonicalized
+  (=src/mimetype.rs=). Anything that is not a =text/*= markup —
+  =application/json= above all — declares nothing.
+- *Sections only*: tendrl stamps =m= on every 30041 it emits (flat, nested,
+  block, forked, atomic kinds such as 30023/30818) and on *no* 30040,
+  interior indexes included. NKBIP-06's example stamps =application/json=
+  on both to describe the *event*; we diverge by leaving indexes untagged
+  rather than writing a value that would have to be ignored.
+- *Explicit, not inherited, on the wire*: the composer's "inherit" is
+  resolved at publish time, so a tendrl section always carries its own
+  tag. Sections are reused across books; an untagged one would mean
+  different things on different paths.
+- *Declared at one choke point*: =PublishRequest.format= (+ per-section
+  =format=) is required → 400 without it.
+  =ComposeState::stamp_section_mimetypes= / =ComposeBlockState::
+  stamp_block_mimetypes= resolve override-or-default into each section's
+  custom tags before any builder runs — every builder already emits custom
+  tags, so no builder changed. Callers: the composer selector, the MCP
+  publish tools, the assistant tools (=publish_publication= requires
+  =format=; =save_draft= defaults to markdown), the kasten builder.
+- *Reading side*: the publication stream ships =format= (own),
+  =effective_format= (own → nearest enclosing index that declares a
+  =text/*= =m= → none), =format_source=, =format_from= per node, resolved
+  in Rust where the tree is assembled. Foreign untagged sections thus still
+  inherit from an index that declares; everything else is the user's pick
+  (see [[file:idea-rendering-layers.org][rendering layers]]).
+- *Deleted*: =src/tree/content.rs= (=ContentDetector::from_content=, the
+  =looks_like_*= sniffers, the =detect= fallback).
+
+* Why
+
+User's call, 2026-10-01, while designing the rendering-layer registry:
+"the information should fall on finding the tag, and the user can select
+after" — a guess that silently picks a renderer is the one thing an
+opt-in layer system must never do. Writing the tag everywhere tendrl
+publishes is what makes the reader's rule trustworthy; and =m= rather than
+=format= because it is the tag other Nostr kinds already use for media
+types, so other clients can key on it.
+
+Open interop question: Alexandria-style 30041s carry no =m= today; those
+render as source until the user picks (or the index declares).
+
+* What changed
+
+- =src/mimetype.rs= (new): =canonical=, =from_legacy_format=,
+  =from_tags=, =from_event=, =short_name=.
+- =src/publication/compose.rs=: =format= on =ComposeState= /
+  =SectionCompose= / =ComposeBlockState= / =ComposeBlock=;
+  =stamp_mimetype=, =resolve_format=, the two stamp methods.
+- =src/publication/tree_emit.rs=: interior 30040s drop a section's =m=.
+- =src/publication.rs=: =PubLoadEvent::{Index,Leaf}= format fields,
+  =FormatInherit=, =format_fields=; =TocEntry.format=;
+  test =test_stream_tree_effective_format=.
+- =src/api.rs=, =src/tools.rs=, =src/drafts.rs=: =format= threaded on
+  every publish/preview/blocks/draft request and the assistant tool
+  schemas; section JSON gains =format=.
+- Scripts: =scripts/tendrl-mcp.py= (=format= required on
+  =tendrl_publish=, derived from the extension on
+  =tendrl_publish_document=), =scripts/build-kasten-events.py= + its
+  =docs/zettel-guide= twin (=m= next to =format= on notes, none on
+  indexes).
+- Outside the repo (to align by hand): the kasten skill's builder copy
+  writes =m: application/json= on indexes; the tendrl-requests skill
+  should pass =format: markdown=.
+
+* Related
+- [[file:index.org][Index]]
+- [[file:idea-rendering-layers.org][Rendering layers]] — the consumer of this tag
+- [[file:decision-layers-default-on.org][Layers on by default; kind-defined formats; untagged fallback]] — the 2026-11-02 refinement (30023/30818 count as declarations; the user may answer for untagged sections)
+- [[file:feat-nostrdown.org][Nostrdown]] — shares the =m=/=M= vocabulary (NKBIP-06)
+- [[file:feat-reader.org][Reader]]

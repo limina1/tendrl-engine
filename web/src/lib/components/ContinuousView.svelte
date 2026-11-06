@@ -15,6 +15,7 @@
 	import { registerResolveView } from '$lib/nostr/resolve-status.svelte';
 	import { readingVars } from '$lib/theme/reading.svelte';
 	import type { ResolutionTracker } from '$lib/nostr/resolution-progress.svelte';
+	import { decideFor, ensureLoaded, spansFor, type LayerPick } from '$lib/layers/use.svelte';
 
 	const app = getAppState();
 
@@ -40,6 +41,8 @@
 		resolution = undefined,
 		hotAddr = null,
 		onannotate = undefined,
+		layerPick = undefined,
+		forceSource = false,
 		expanded = $bindable<Record<string, boolean>>({}),
 		onscroll = undefined
 	}: {
@@ -85,6 +88,11 @@
 		/** The section title's "n annotate" — the same door as the section
 		 *  menu's `n` (the annotate window on this section). */
 		onannotate?: ((section: LazySection) => void) | undefined;
+		/** Rendering layer the reader picked for this buffer (undefined = let the
+		 *  section's declared format + the user's bindings decide; null = source). */
+		layerPick?: LayerPick;
+		/** A `?highlight=` deep link: force source so the anchor lands. */
+		forceSource?: boolean;
 		/** Which nested 30040 indexes are expanded, by addr key. Bindable so
 		 *  the reader can park it across a buffer switch (this component
 		 *  unmounts with its buffer) — view state, owned by the frontend. */
@@ -154,6 +162,15 @@
 		return () => {
 			cancelled = true;
 		};
+	});
+
+	// Rendering layers: kick off the chunk load for every base this view
+	// needs. Sync reads only; the async continuation lives in loaded.svelte.ts.
+	$effect(() => {
+		for (const sec of sections) {
+			const id = decideFor(sec, publicationAtag ?? null, layerPick, forceSource).layerId;
+			if (id) ensureLoaded(id);
+		}
 	});
 
 	// Nostrdown `{{ }}` references per section, resolved engine-side in one
@@ -615,8 +632,10 @@
 					     companion sections looked permanently "waiting to load". -->
 					{#if section.content}
 						{@const k = section.addr ? addrKey(section.addr) : ''}
+						{@const ly = decideFor(section, publicationAtag ?? null, layerPick, forceSource)}
 						<RichContent
 							content={section.content}
+							styles={spansFor(ly.layerId, section.content)}
 							spans={k ? spansBySection[k] ?? [] : []}
 							refs={k ? refsBySection[k] ?? [] : []}
 							tokens={k ? tokensBySection[k] ?? [] : []}

@@ -438,6 +438,47 @@
 		onclose();
 	}
 
+	// Edit — reopen one of my replaceable (NIP-01 kind 0/3, 10000–19999) or
+	// addressable (30000–39999) events in the generic composer, tags and
+	// content prefilled, so publishing replaces it. Publication indexes and
+	// sections are excluded: the publication composer (reader toolbar
+	// `edit`) owns those, snapshot semantics and all. (a e)
+	const isReplaceableKind = $derived(
+		n.kind === 0 ||
+			n.kind === 3 ||
+			(n.kind >= 10000 && n.kind < 20000) ||
+			(n.kind >= 30000 && n.kind < 40000)
+	);
+	const canEdit = $derived(isOwnEvent && isReplaceableKind && n.kind !== 30040 && n.kind !== 30041);
+	let editLoading = $state(false);
+	async function onEditAction() {
+		if (!canEdit || editLoading) return;
+		// Snapshot before closing (see the note above onReadAction). The
+		// menu may hold a search result whose `content` is the truncated
+		// preview, so the full event is fetched from the engine first.
+		const id = n.id;
+		const kind = n.kind;
+		let tags = n.tags;
+		let content = n.content;
+		editLoading = true;
+		try {
+			const full = (await api.getEvent(id, { policy: 'local_only' })).event as {
+				tags?: string[][];
+				content?: string;
+			} | null;
+			if (full && Array.isArray(full.tags) && typeof full.content === 'string') {
+				tags = full.tags;
+				content = full.content;
+			}
+		} catch {
+			// fall back to what the card carries
+		} finally {
+			editLoading = false;
+		}
+		onclose();
+		app.eventComposer = { prefill: { kind, content, tags } };
+	}
+
 	// Shelve — put a publication index on one of my kind-30045 shelves.
 	// Opens a picker row (my shelves + "new shelf…"); the engine derives
 	// the next shelf version, we sign it, save local-first.
@@ -572,6 +613,9 @@
 			} else if (k === 'd' && isOwnEvent) {
 				e.preventDefault();
 				onDeleteAction();
+			} else if (k === 'e' && canEdit) {
+				e.preventDefault();
+				void onEditAction();
 			}
 			return;
 		}
@@ -1071,6 +1115,17 @@
 					>
 						<span class="evm__key">s</span>
 						<span class="evm__action-label">Shelve</span>
+					</button>
+				{/if}
+				{#if canEdit}
+					<button
+						class="evm__action"
+						onclick={onEditAction}
+						disabled={editLoading}
+						title="Edit this replaceable event's tags and content in the composer and publish the replacement (yours only)"
+					>
+						<span class="evm__key">e</span>
+						<span class="evm__action-label">{editLoading ? 'Loading…' : 'Edit'}</span>
 					</button>
 				{/if}
 				{#if isOwnEvent}

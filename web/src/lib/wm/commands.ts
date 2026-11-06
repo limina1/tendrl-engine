@@ -54,6 +54,7 @@ export const commands: Command[] = [
 	{ id: 'tendrl-fork-section', name: 'tendrl-fork-section', hiddenByDefault: true, description: 'Fork an imported section to make it editable', category: 'Compose', scope: 'contextual', context: 'a composer with an imported section', deferred: true },
 	{ id: 'tendrl-cycle-editor-view', name: 'tendrl-cycle-editor-view', description: 'Cycle through composer modes (button/plain/wysiwyg/preview)', category: 'Compose', scope: 'contextual', context: 'a composer buffer', deferred: true, keybinding: 'SPC e v' },
 	{ id: 'tendrl-highlight', name: 'tendrl-highlight', description: 'General highlighter — paste text, cite any source (nostr / URL / ISBN / DOI), annotate, publish', category: 'Compose', scope: 'action', keybinding: 'SPC h' },
+	{ id: 'tendrl-compose-event', name: 'tendrl-compose-event', description: 'Compose any event from a kind template (music track, web bookmark, …) or a custom kind — fill the tags, preview the JSON, sign and publish', category: 'Compose', scope: 'action', keybinding: 'SPC e e' },
 	// Configuration
 	{ id: 'tendrl-toggle-network-mode', name: 'tendrl-toggle-network-mode', description: 'Toggle between auto and confirm network mode', category: 'Configuration', scope: 'action', keybinding: 'SPC t n' },
 	{ id: 'tendrl-show-relays', name: 'tendrl-show-relays', description: 'Open the relay-config buffer', category: 'Configuration', scope: 'opener', keybinding: 'SPC r r' },

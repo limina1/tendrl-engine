@@ -34,6 +34,7 @@
 		onOpenSettings,
 		onOpenCompose,
 		onOpenHighlight,
+		onOpenEvent,
 		onIdentityTap,
 		activity = null,
 		onKillFetch,
@@ -64,6 +65,8 @@
 		onOpenCompose?: () => void;
 		/** Open the general highlighter (paste text, cite any source). */
 		onOpenHighlight?: () => void;
+		/** Open the generic event composer (any kind from a template). */
+		onOpenEvent?: () => void;
 		onIdentityTap?: () => void;
 		/** Live network-activity summary (the modeline ⇅ pill's data). */
 		activity?: NetworkStatus | null;
@@ -237,6 +240,14 @@
 				}}
 				title="General highlighter — paste text, cite any source (nostr / URL / ISBN / DOI)"
 			>+ highlight</button>
+			<button
+				class="mshell__drawer-add"
+				onclick={() => {
+					mobileNav.drawerOpen = false;
+					onOpenEvent?.();
+				}}
+				title="Compose any event from a kind template (music track, web bookmark, …) or a custom kind"
+			>+ event</button>
 			<button
 				class="mshell__drawer-add"
 				onclick={() => {
