@@ -435,7 +435,12 @@
 			<button
 				class="sync"
 				data-tour="feed-sync-button"
-				onclick={app.handleFeedSync}
+				onclick={() => {
+					// Walkthrough: pressing Sync is what the fetch / resync cards asked for.
+					completeTip('feed-fetch');
+					completeTip('feed-resync');
+					app.handleFeedSync();
+				}}
 				disabled={app.feedSyncing}
 				title={app.feedTimeline && app.feedTimeline !== 'local'
 					? `Fetch this timeline from ${relayHost(app.feedTimeline)}`

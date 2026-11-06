@@ -1,6 +1,6 @@
 <script lang="ts">
 	// Floating coachmark for the contextual walkthrough. Points at the element
-	// carrying `data-tour="<anchor>"` for the active tip: a light spotlight ring
+	// carrying `data-tour="<anchor>"` for the shown tip: a light spotlight ring
 	// around it (purely visual — pointer-events stay off so the app is still
 	// usable underneath) plus a small card with the description, an always-present
 	// X, an optional "try it" action, and Next / Skip when more tips are queued.
@@ -8,28 +8,39 @@
 	//
 	// The card is non-blocking and *stays* until the user dismisses it — no
 	// click-outside dismissal, because the click a card asks for ("open
-	// Settings here") must not be the click that kills it. It only shows when
-	// its anchor is actionable (mounted, on screen, not under a modal scrim);
-	// otherwise it waits, hidden. An anchor that never mounts drops the beat
-	// unseen after a short grace so the queue can't wedge.
+	// Settings here") must not be the click that kills it. The overlay shows
+	// the first *actionable* queued tip (mounted, on screen, not under a modal
+	// scrim), not strictly the head: when a modal opens over the head's anchor,
+	// a tip whose anchor is inside that modal shows meanwhile, and the head
+	// returns once the modal closes. A queued tip whose anchor never mounts is
+	// dropped unseen after a short grace so the queue can't wedge.
 
 	import { tick, untrack } from 'svelte';
 	import {
 		discovery,
-		activeTip,
+		TIPS,
 		renderBodyHtml,
-		dismissActive,
-		skipActive,
-		endWalkthrough
+		dismissTip,
+		skipTip,
+		endWalkthrough,
+		type TourTip
 	} from '$lib/wm/discovery.svelte';
 	import { shell } from '$lib/wm/shell.svelte';
 
 	const GAP = 10; // px between anchor and card
 	const MARGIN = 8; // px min gap from any viewport edge
+	const UNMOUNT_GRACE = 600; // ms an anchor may be absent before its tip is dropped
+	const MODAL_SEL = '[aria-modal="true"]';
 
 	let rect = $state<DOMRect | null>(null);
 	let vw = $state(0);
 	let vh = $state(0);
+	// A modal (`aria-modal`) is open somewhere: the ring drops its page mask so
+	// it never stacks a second dim layer on the modal's own scrim.
+	let modalOpen = $state(false);
+	// The queued tip the overlay is presenting (first actionable, else the head
+	// — hidden, waiting). Null when the queue is empty.
+	let shownKey = $state<string | null>(null);
 
 	// The card's own measured size — positioning clamps against these so the
 	// card (footer + Next button included) never spills off-screen. Re-measured
@@ -40,28 +51,24 @@
 	let cardH = $state(0);
 
 	// User-drag offset, applied on top of the anchored position. Reset whenever
-	// the active tip changes so each beat starts glued to its anchor again.
+	// the shown tip changes so each beat starts glued to its anchor again.
 	let dragOffset = $state<{ x: number; y: number } | null>(null);
 
 	// Per-shell resolution: a tip's `mobile` overrides (anchor / body /
 	// placement) apply when the mobile shell is active, so beats anchored to
-	// desktop chrome retarget instead of auto-skipping. The spread keeps
+	// desktop chrome retarget instead of being dropped. The spread keeps
 	// `key`, so vars/seen/queue bookkeeping is shell-agnostic.
-	const rawTip = $derived(activeTip());
-	const tip = $derived(
-		rawTip && shell.mode === 'mobile' && rawTip.mobile ? { ...rawTip, ...rawTip.mobile } : rawTip
-	);
+	function resolveTip(key: string): TourTip | null {
+		const t = TIPS[key];
+		if (!t) return null;
+		return shell.mode === 'mobile' && t.mobile ? { ...t, ...t.mobile } : t;
+	}
+	const tip = $derived(shownKey ? resolveTip(shownKey) : null);
 	const body = $derived(tip ? renderBodyHtml(tip) : '');
 	const remaining = $derived(discovery.queue.length);
 	// A guided segment chains one tip at a time (queue length 1) via `next`, so
 	// "more is coming" is either a stacked queue or a declared next link.
 	const hasMore = $derived(remaining > 1 || !!tip?.next);
-
-	// A modal (`aria-modal`) is open somewhere: the ring drops its page mask so
-	// it never stacks a second dim layer on the modal's own scrim.
-	let modalOpen = $state(false);
-
-	const MODAL_SEL = '[aria-modal="true"]';
 
 	/** The anchor is *actionable*: its centre is inside the viewport and nothing
 	 *  else — a modal scrim, a dropdown backdrop — sits on top of it (the card
@@ -80,70 +87,65 @@
 		return el.contains(top) || top.contains(el);
 	}
 
-	/** Resolve the active tip's anchor. Returns whether it is *mounted* (the
-	 *  skip clock runs on that); `rect` is set only when it is actionable, so
-	 *  the card hides while its target is covered or scrolled away. */
-	function locate(): boolean {
-		if (typeof window === 'undefined') return false;
-		vw = window.innerWidth;
-		vh = window.innerHeight;
-		modalOpen = !!document.querySelector(MODAL_SEL);
-		if (!tip) {
-			rect = null;
-			return false;
-		}
-		const el = document.querySelector(`[data-tour="${tip.anchor}"]`);
-		if (!el) {
-			rect = null;
-			return false;
-		}
-		const r = el.getBoundingClientRect();
-		rect = actionable(el, r) ? r : null;
-		return true;
-	}
-
-	// Re-resolve whenever the active tip changes, and keep the position glued to
-	// the anchor through scrolls / resizes plus a light poll (occlusion — a
-	// modal opening or closing over the anchor — fires no DOM event we can
-	// listen for). Skip clock: an anchor that never mounts drops the beat
-	// *unseen* after a short grace; a mounted-but-covered anchor just waits.
+	// Resolve the queue against the DOM: pick the first actionable tip to show
+	// (else the head, hidden), drop any tip whose anchor has been unmounted
+	// past the grace, and keep the ring glued through scrolls / resizes plus a
+	// light poll (a modal opening or closing over an anchor fires no DOM event
+	// we can listen for). Restarts whenever the queue changes.
 	$effect(() => {
-		const key = tip?.key;
-		if (!key) return;
-
-		let unmountedSince: number | null = null;
-		let skipped = false;
-		const check = () => {
-			if (skipped) return;
-			const mounted = untrack(locate);
-			if (mounted) {
-				unmountedSince = null;
-				return;
-			}
-			const now = Date.now();
-			if (unmountedSince === null) unmountedSince = now;
-			else if (now - unmountedSince > 600) {
-				skipped = true;
-				skipActive();
-			}
-		};
-		const update = () => void untrack(locate);
+		const keys = discovery.queue.slice();
+		if (!keys.length) {
+			shownKey = null;
+			rect = null;
+			return;
+		}
+		const unmountedSince = new Map<string, number>();
+		const check = () =>
+			untrack(() => {
+				if (typeof window === 'undefined') return;
+				vw = window.innerWidth;
+				vh = window.innerHeight;
+				modalOpen = !!document.querySelector(MODAL_SEL);
+				const now = Date.now();
+				const drop: string[] = [];
+				let picked: string | null = null;
+				let pickedRect: DOMRect | null = null;
+				for (const key of discovery.queue) {
+					const t = resolveTip(key);
+					const el = t ? document.querySelector(`[data-tour="${t.anchor}"]`) : null;
+					if (!el) {
+						const since = unmountedSince.get(key) ?? now;
+						unmountedSince.set(key, since);
+						if (now - since > UNMOUNT_GRACE) drop.push(key);
+						continue;
+					}
+					unmountedSince.delete(key);
+					if (picked) continue;
+					const r = el.getBoundingClientRect();
+					if (actionable(el, r)) {
+						picked = key;
+						pickedRect = r;
+					}
+				}
+				for (const k of drop) skipTip(k);
+				shownKey = picked ?? discovery.queue[0] ?? null;
+				rect = picked ? pickedRect : null;
+			});
 		const poll = setInterval(check, 250);
 		tick().then(check);
-
-		window.addEventListener('resize', update);
-		window.addEventListener('scroll', update, true);
+		window.addEventListener('resize', check);
+		window.addEventListener('scroll', check, true);
 		return () => {
 			clearInterval(poll);
-			window.removeEventListener('resize', update);
-			window.removeEventListener('scroll', update, true);
+			window.removeEventListener('resize', check);
+			window.removeEventListener('scroll', check, true);
 		};
 	});
 
 	// Each new beat starts re-anchored (drop any drag the user applied to the
-	// previous one). Depends only on the tip key, so dragging doesn't re-trigger.
+	// previous one). Depends only on the shown key, so dragging doesn't re-trigger.
 	$effect(() => {
-		tip?.key;
+		shownKey;
 		dragOffset = null;
 	});
 
@@ -178,19 +180,27 @@
 		window.addEventListener('pointerup', up);
 	}
 
+	function dismiss() {
+		if (shownKey) dismissTip(shownKey);
+	}
+
+	function skipRest() {
+		endWalkthrough(shownKey ?? undefined);
+	}
+
 	function onKey(e: KeyboardEvent) {
-		if (e.key !== 'Escape' || !tip) return;
+		if (e.key !== 'Escape' || !tip || !rect) return;
 		// A modal owns Esc while it's open — one keypress must never both drop
 		// the tip and cancel the fetch the tip is explaining.
 		if (document.querySelector(MODAL_SEL)) return;
 		e.preventDefault();
-		dismissActive();
+		dismiss();
 	}
 
 	function runAction() {
 		if (!tip?.action) return;
 		tip.action.run();
-		dismissActive();
+		dismiss();
 	}
 
 	// Card geometry, derived from the anchor rect + chosen placement, clamped
@@ -244,25 +254,25 @@
 		<header class="dt-head" onpointerdown={onHandleDown} title="Drag to reposition">
 			<span class="dt-badge">W</span>
 			<h4 class="dt-title">{tip.title}</h4>
-			<button class="dt-x" onclick={dismissActive} title="Dismiss" aria-label="Dismiss">×</button>
+			<button class="dt-x" onclick={dismiss} title="Dismiss" aria-label="Dismiss">×</button>
 		</header>
 		<p class="dt-body">{@html body}</p>
 		<footer class="dt-foot">
 			{#if remaining > 1}
 				<div class="dt-dots" aria-hidden="true">
-					{#each discovery.queue as k, i (k)}
-						<span class="dt-dot {i === 0 ? 'dt-dot--on' : ''}"></span>
+					{#each discovery.queue as k (k)}
+						<span class="dt-dot {k === shownKey ? 'dt-dot--on' : ''}"></span>
 					{/each}
 				</div>
 			{/if}
 			{#if hasMore}
-				<button class="dt-skip" onclick={endWalkthrough}>Skip the rest</button>
+				<button class="dt-skip" onclick={skipRest}>Skip the rest</button>
 			{/if}
 			<span class="dt-foot-spacer"></span>
 			{#if tip.action}
 				<button class="dt-try" onclick={runAction}>{tip.action.label}</button>
 			{/if}
-			<button class="dt-next" onclick={dismissActive}>
+			<button class="dt-next" onclick={dismiss}>
 				{hasMore ? 'Next' : 'Got it'}
 			</button>
 		</footer>

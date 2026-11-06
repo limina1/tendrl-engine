@@ -14,7 +14,7 @@
 //   open-Settings / sign-in / back-to-feed beats depend on the user actually
 //   doing them, so each fires from its real point. Where the next surface is
 //   reliably on screen a tip carries `next` and chains on dismiss. A beat whose
-//   anchor never mounts is dropped *unseen* (`skipActive`) — never chained, so
+//   anchor never mounts is dropped *unseen* (`skipTip`) — never chained, so
 //   a flicker can't run the walk ahead — and its own trigger re-fires it when
 //   the surface appears; a surface the user reaches on request completes its
 //   card (`completeTip`).
@@ -721,9 +721,12 @@ export function loadDiscovery() {
 }
 
 /** Queue a tip if it's enabled, unseen, known, and not already queued. The
- *  overlay resolves the anchor and skips (auto-advances) if it's not mounted,
- *  so callers can fire triggers freely without checking the DOM. */
-export function trigger(key: string, vars?: TipVars, opts?: { force?: boolean }) {
+ *  overlay resolves the anchor and drops it (unseen) if it never mounts, so
+ *  callers can fire triggers freely without checking the DOM. `at` inserts at
+ *  a queue position instead of the end — a dismissed card's `next` takes the
+ *  dismissed card's place so a chain is never pushed behind, or lost to, a
+ *  tip some surface queued meanwhile. */
+export function trigger(key: string, vars?: TipVars, opts?: { force?: boolean; at?: number }) {
 	if (vars) discovery.vars[key] = vars;
 	if (!discovery.enabled) return;
 	if (discovery.seen.includes(key)) return;
@@ -743,60 +746,59 @@ export function trigger(key: string, vars?: TipVars, opts?: { force?: boolean })
 	// the whole sign-in segment rather than just one card.
 	if (!opts?.force && tip.relevantWhen && !tip.relevantWhen(world())) {
 		const to = tip.skipTo ?? tip.next;
-		if (to) trigger(to);
+		if (to) trigger(to, undefined, { at: opts?.at });
 		return;
 	}
-	discovery.queue.push(key);
+	if (opts?.at !== undefined && opts.at < discovery.queue.length) discovery.queue.splice(opts.at, 0, key);
+	else discovery.queue.push(key);
 }
 
-/** Dismiss the active tip (the X, Esc, Next, Got it, or a "try it" action):
- *  mark it seen and advance. If the tip declares a `next` and the queue is now
- *  empty, chain to it. Only an explicit dismissal counts as seen — see
- *  `skipActive` for the overlay's auto-skip. */
-export function dismissActive() {
-	const key = discovery.queue[0];
+function removeFromQueue(key: string): number {
+	const i = discovery.queue.indexOf(key);
+	if (i >= 0) discovery.queue.splice(i, 1);
+	return i;
+}
+
+/** Dismiss a queued tip (the X, Esc, Next, Got it, or a "try it" action on
+ *  the card the overlay is showing): mark it seen, remove it, and chain its
+ *  `next` into the slot it vacated. Only an explicit dismissal counts as seen
+ *  — see `skipTip` for the overlay's unmount drop. The overlay may be showing
+ *  a tip that isn't `queue[0]` (the first *actionable* one), so the key is
+ *  explicit; it defaults to the head for callers without a view. */
+export function dismissTip(key: string | undefined = discovery.queue[0]) {
 	if (!key) return;
 	if (!discovery.seen.includes(key)) discovery.seen.push(key);
-	discovery.queue.shift();
+	const i = removeFromQueue(key);
 	persist();
 	const nextKey = TIPS[key]?.next;
-	if (nextKey && discovery.queue.length === 0) trigger(nextKey);
+	if (nextKey) trigger(nextKey, undefined, { at: Math.max(i, 0) });
 }
 
-/** Drop the active tip *without* marking it seen and *without* chaining.
- *  The overlay calls this when an anchor never mounts: the user never saw the
+/** Drop a queued tip *without* marking it seen and *without* chaining. The
+ *  overlay calls this when an anchor never mounts: the user never saw the
  *  card, so it must not count as done, and its `next` must not run ahead of
  *  it — a feed row that flickers away for a moment would otherwise skip the
  *  walk straight to "sign in". The tip fires again from its own trigger when
  *  its surface does appear (every surface-mounted trigger re-fires on
  *  change), which is the self-heal. */
-export function skipActive() {
-	if (!discovery.queue.length) return;
-	discovery.queue.shift();
+export function skipTip(key: string) {
+	removeFromQueue(key);
 }
 
-/** The user did what a card asked (opened Settings, went home): if that card
- *  is on screen, dismiss it as seen and advance; if it's queued behind another,
- *  drop it as seen so it never shows late. A no-op when it isn't queued. */
+/** The user did what a card asked (opened Settings, went home, pressed Sync):
+ *  if that card is queued — on screen or waiting behind another — dismiss it
+ *  as seen so it never shows late, and let its `next` take its place. A no-op
+ *  when it isn't queued. */
 export function completeTip(key: string) {
-	if (discovery.queue[0] === key) {
-		dismissActive();
-		return;
-	}
-	const i = discovery.queue.indexOf(key);
-	if (i < 0) return;
-	discovery.queue.splice(i, 1);
-	if (!discovery.seen.includes(key)) discovery.seen.push(key);
-	persist();
+	if (discovery.queue.includes(key)) dismissTip(key);
 }
 
-/** "Skip the rest": close the current walk for good. Marks seen the active tip
- *  and its whole `next` chain, and — when the active tip is a first-run beat —
- *  every first-run beat, so no surface (the next confirm modal, opening
- *  Settings, signing in) can bring the walk back one card at a time. Only a
- *  reset/replay un-sees them. */
-export function endWalkthrough() {
-	const key = discovery.queue[0];
+/** "Skip the rest": close the current walk for good. Marks seen the shown tip
+ *  and its whole `next` chain, every tip still queued, and — when the shown
+ *  tip is a first-run beat — every first-run beat, so no surface (the next
+ *  confirm modal, opening Settings, signing in) can bring the walk back one
+ *  card at a time. Only a reset/replay un-sees them. */
+export function endWalkthrough(key: string | undefined = discovery.queue[0]) {
 	const done = new Set<string>(discovery.queue);
 	let k: string | undefined = key;
 	while (k) {

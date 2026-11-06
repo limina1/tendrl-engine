@@ -190,8 +190,14 @@ walk dying, F4–F7 are copy and layout work.
   dismisses; Esc dismisses only when no modal is open; "Skip the rest"
   marks the whole =ONBOARDING_TIPS= set seen; only X / Next / Got it /
   Try it count as seen. An anchor that never mounts drops the beat
-  *unseen* and never chains (=skipActive=); a surface the user reaches
-  on request completes its card (=completeTip=). (shipped 2026-11-06 on
+  *unseen* and never chains (=skipTip=); a surface the user reaches on
+  request completes its card (=completeTip= — Settings, the logo, Sync,
+  approving the fetch). A dismissed card's =next= takes the slot it
+  vacated, never the back of the queue, and the overlay shows the first
+  *clickable* queued card rather than the head — so when Sync opens the
+  modal over the "Sync again" card, the general-feed tip shows inside
+  the modal and the closing card returns when it closes (found while
+  writing the tester worksheet). (shipped 2026-11-06 on
   =fix/walkthrough-ux=)
 - [X] *F2. Reorder the first-run walk and make it mode-agnostic* (W1,
   W4, W5, W6, W7) — the shape is now: [Confirm] approve the first pull →
