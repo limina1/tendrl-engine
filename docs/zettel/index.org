@@ -88,6 +88,9 @@ index, never deleted:
 
 - [[file:fix-index.org][Fix index]] — all open issues, grouped, with
   severity (14 open as of 2026-08-12)
+- [[file:fix-walkthrough-index.org][Walkthrough & onboarding map]] —
+  the tutorial review (2026-11-06): workflow breaks, popups,
+  terminology, explainability; seven fix sets
 - [[file:eval-performance-2026-08.org][Performance evaluation
   (2026-08-12)]] — the two-part desktop/Android audit the fix layer grew
   from; cost models, what's healthy, the leverage-ordered plan

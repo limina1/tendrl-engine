@@ -17,7 +17,7 @@
 		fetchSignerPubkey,
 		type Nip55SignerApp
 	} from '$lib/identity/nip55';
-	import { trigger as triggerTip } from '$lib/wm/discovery.svelte';
+	import { trigger as triggerTip, completeTip } from '$lib/wm/discovery.svelte';
 	import { discovery, rearmDiscovery, rearmFeatureTours, setWalkthroughEnabled } from '$lib/wm/discovery.svelte';
 	import * as api from '$lib/api';
 	import { serviceRows } from '$lib/services';
@@ -259,10 +259,12 @@
 						signerApps = [];
 					});
 			}
-			// Walkthrough: opening Settings is the "two ways in" beat of the one
-			// auto walk. Precondition-gated (`relevantWhen: !hasIdentity`), so it
+			// Walkthrough: opening Settings is what the `sign-in` card asked for —
+			// complete it — and the "ways in" beat of the first-run walk fires
+			// here. Precondition-gated (`relevantWhen: !hasIdentity`), so it
 			// self-suppresses for anyone already signed in; seen-gating stops it
 			// re-nagging. Also this buffer's opt-in registry `tour`.
+			completeTip('sign-in');
 			triggerTip('sign-in-methods');
 			// Force a fresh /identity + /settings fetch on mount so a recent engine
 			// restart doesn't leave stale status from the last 30s-poll tick.

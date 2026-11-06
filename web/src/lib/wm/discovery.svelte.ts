@@ -4,15 +4,20 @@
 // first appears), is descriptive up front, and is always dismissable (an X marks
 // it seen so it never nags again). Deeper tips may carry a "try it" action.
 //
-// The first-run flow is the "feed sync" login walk: the Confirm-mode fetch modal
-// explains the broad pull → points at Settings to sign in → (once Settings opens)
-// shows the two ways in at the source controls → notes the name-less pubkey once
-// signed in → sends you home → shows that "General feed" is now an optional,
-// narrowable pull. It is *event-gated*, not a pre-queued stepper: the
-// open-Settings / sign-in / reopen-modal beats depend on the user actually doing
-// them, so each fires from its real point. Where the next surface is reliably present (modal→Settings,
-// me-chip→home) a tip carries `next` and chains on dismiss; auto-skip (anchor
-// never mounts) runs the same dismiss path, so the chain self-heals.
+// The first-run walk is mode-agnostic and always ends at `walk-done`:
+//   [Confirm only] feed-sync (approve the first pull) → the feed populates →
+//   feed-first-pub → feed-first-badges → sign-in (skipped straight to
+//   walk-done when already signed in) → Settings opens → sign-in-methods →
+//   sign-in lands → signed-in → go-home → the feed mounts → feed-resync →
+//   walk-done. `general-feed` is a standalone one-time tip on the scoped
+//   Confirm modal. It is *event-gated*, not a pre-queued stepper: the
+//   open-Settings / sign-in / back-to-feed beats depend on the user actually
+//   doing them, so each fires from its real point. Where the next surface is
+//   reliably on screen a tip carries `next` and chains on dismiss. A beat whose
+//   anchor never mounts is dropped *unseen* (`skipTip`) — never chained, so
+//   a flicker can't run the walk ahead — and its own trigger re-fires it when
+//   the surface appears; a surface the user reaches on request completes its
+//   card (`completeTip`).
 //
 // This is pure frontend view/interaction state (per the engine/web boundary):
 // the engine owns no part of it. "Seen" + "enabled" persist to localStorage so
@@ -78,6 +83,10 @@ export type TourTip = {
 	 *  the user hasn't already done. Omit for beats that are always relevant
 	 *  (and for on-demand `W` tours, which the user asked for explicitly). */
 	relevantWhen?: (w: WalkthroughWorld) => boolean;
+	/** Where a `relevantWhen`-suppressed beat chains to instead of `next` —
+	 *  e.g. "already signed in" skips the whole sign-in segment straight to
+	 *  the closing card. Defaults to `next`. */
+	skipTo?: string;
 	/** Per-shell overrides, applied by the overlay when the mobile shell is
 	 *  active. A beat anchored to desktop chrome (header, mode-line) would
 	 *  otherwise auto-skip on mobile — silently marked seen, burning the walk
@@ -87,12 +96,10 @@ export type TourTip = {
 	mobile?: { anchor?: string; body?: string; placement?: 'top' | 'bottom' | 'left' | 'right' };
 };
 
-// Registry. The first-run "feed sync" login walk (feed-sync → sign-in →
-// sign-in-methods → signed-in → home → general-feed → feed-first-pub →
-// feed-first-badges) plus standalone discovery tips. `ENTRY_TIP`
-// is what the "Run walkthrough" / "W" affordances kick off; everything else
+// Registry. The first-run walk (see the header) plus standalone discovery
+// tips. `ENTRY_TIP` is the replay entry for an empty pool; everything else
 // fires from its own discovery point (see the per-surface triggers in +page /
-// +layout).
+// +layout / FeedBuffer / SettingsBuffer).
 //
 // Component tours hang off the feed's "read or work with the event" fork: the
 // reader tour (reader-open → reader-menu → reader-edit) is event-gated — it
@@ -107,32 +114,61 @@ export type TourTip = {
 //     real example query through the live box.
 //   • event menu (menu-overview → copy → actions → pool → found).
 export const TIPS: Record<string, TourTip> = {
-	// ── First-run login walk ─────────────────────────────────────────────
+	// ── First-run walk ───────────────────────────────────────────────────
+	// Confirm mode only: the per-fetch approval modal is the first thing a
+	// fresh install sees, so explain it and ask for the approval. No `next` —
+	// approving closes the modal, the anchor unmounts, the beat is skipped
+	// unseen, and the populated feed fires the next beat on its own.
 	'feed-sync': {
 		key: 'feed-sync',
 		anchor: 'feed-sync',
-		title: 'Feed sync',
-		body: "Nothing is fetched until you approve it — this panel shows exactly what tendrl will pull, and from which relays. You're logged out, so this is the broad public feed: recent publications from these relays. Open *Details* to see the precise query and how many. When you're ready, close this (`Esc`) — let's sign in.",
+		title: 'Approve the first fetch',
+		body: 'tendrl asks before it talks to a relay. This panel is the first pull — recent publications from the relays listed. *Approve* (or `Enter`) to fetch them; *Details* shows the exact query.',
 		placement: 'right',
-		next: 'sign-in',
-		// A populated pool means the user has fetched before — skip the
-		// "here's your first sync" beat entirely.
+		// A populated pool means the user has fetched before.
 		relevantWhen: (w) => !w.dbHasEvents
+	},
+	// Replay entry for an empty pool with no modal on screen: point at the
+	// feed's Sync button, which raises the fetch (and, in Confirm, the modal).
+	'feed-fetch': {
+		key: 'feed-fetch',
+		anchor: 'feed-sync-button',
+		title: 'Fetch the feed',
+		body: 'Press *Sync* to pull recent publications from your read relays into the local pool. Everything else starts from here.',
+		placement: 'bottom'
+	},
+	// ── The feed has events ──────────────────────────────────────────────
+	'feed-first-pub': {
+		key: 'feed-first-pub',
+		anchor: 'feed-first-pub',
+		title: 'A publication is a book',
+		body: 'A publication is like a book — a `kind-30040` index that orders a set of sections (`kind 30041`) into a whole. This first one, *{title}*, gathers {sections}.',
+		placement: 'bottom',
+		next: 'feed-first-badges'
+	},
+	'feed-first-badges': {
+		key: 'feed-first-badges',
+		anchor: 'feed-first-badges',
+		title: 'Provenance & actions',
+		body: 'These pills show provenance — where the event lives in the network. The top one says it’s on *{relays}* right now. Click the row body to *read* the publication, or the `menu` pill to work with the raw event in depth.',
+		placement: 'bottom',
+		next: 'sign-in'
 	},
 	'sign-in': {
 		key: 'sign-in',
 		anchor: 'settings',
 		title: 'Sign in',
-		body: 'Open *Settings* here and sign in — a `NIP-07` browser extension, or paste an `ncryptsec` key with its password. Heads up: the moment you sign in you\'ll see your pubkey but no name yet.',
+		body: 'Open *Settings* here and sign in — a `NIP-07` browser extension, or paste an `ncryptsec` key with its password. The next tip meets you there.',
 		placement: 'bottom',
-		// Already signed in (e.g. a key auto-loaded from the keyring)? Don't
-		// teach signing in. Skips this and the source-controls beat below.
+		// Already signed in (a key auto-loaded from the keyring, an established
+		// user replaying)? Nothing left to teach in this segment — close out.
 		relevantWhen: (w) => !w.hasIdentity,
+		skipTo: 'walk-done',
 		mobile: {
 			anchor: 'mobile-menu',
 			// No NIP-07 pitch here — browser extensions don't exist in a phone
 			// WebView; watch-only npub is the first way in on mobile.
-			body: 'Open the `☰` drawer and tap *settings* to sign in — the lightest way is to paste your `npub1…` and browse as yourself (watch-only); add an `ncryptsec` key later when you want to sign. Heads up: the moment you sign in you\'ll see your pubkey but no name yet.',
+			body: 'Open the `☰` drawer and tap *settings* to sign in — the lightest way is to paste your `npub1…` and browse as yourself (watch-only); add an `ncryptsec` key later when you want to sign. The next tip meets you there.',
 			placement: 'top'
 		}
 	},
@@ -152,16 +188,19 @@ export const TIPS: Record<string, TourTip> = {
 			body: '*Signer app* — the best way to sign on a phone: if Amber (or another NIP-55 signer) is installed, tap *Sign in with Amber* and approve; your key stays in the signer app. *npub (watch-only)* — the lightest way in: paste your `npub1…` and browse as yourself (feed, profile, `by:me`); signing stays off. *Engine* — paste an `ncryptsec` below and unlock it with its password; held for this session only, never written to disk.'
 		}
 	},
-	'signed-in-noname': {
-		key: 'signed-in-noname',
+	// Fires from +page the moment a sign-in lands (and only while the walk is
+	// in progress — `sign-in` seen). `{nameNote}` is empty when the profile is
+	// already resolved, else the "why no name yet" explanation.
+	'signed-in': {
+		key: 'signed-in',
 		anchor: 'me-chip',
-		title: 'Signed in — no name yet',
-		body: "There you are: a pubkey, but no display name or avatar. That's expected — your profile (a `kind 0` event) lives on a relay you haven't pulled from yet. Fetching the feed will bring it in.",
+		title: 'Signed in',
+		body: 'There you are.{nameNote} Next: head back to the feed.',
 		placement: 'bottom',
 		next: 'go-home',
 		mobile: {
 			anchor: 'mobile-menu',
-			body: "You're signed in. The `☰` drawer's *identity* row shows a pubkey, but no display name or avatar yet. That's expected — your profile (a `kind 0` event) lives on a relay you haven't pulled from yet. Fetching the feed will bring it in.",
+			body: "You're signed in — the `☰` drawer's *identity* row shows you.{nameNote} Next: head back to the feed.",
 			placement: 'top'
 		}
 	},
@@ -169,37 +208,32 @@ export const TIPS: Record<string, TourTip> = {
 		key: 'go-home',
 		anchor: 'home',
 		title: 'Back to the feed',
-		body: 'Head home — click the *tendrl* logo (or the feed tab) to return to your feed, then sync it again.',
+		body: 'Click the *tendrl* logo (or the feed tab) to return to your feed — the last beat waits there.',
 		placement: 'bottom',
 		mobile: {
 			anchor: 'mobile-menu',
-			body: 'Head home — open the `☰` drawer and pick *feed* to return to your feed, then sync it again.',
+			body: 'Open the `☰` drawer and pick *feed* to return to your feed — the last beat waits there.',
 			placement: 'top'
 		}
 	},
+	// Fires when the feed mounts after `go-home` (FeedBuffer) — the pull is
+	// now scoped to the signed-in user, in either network mode.
+	'feed-resync': {
+		key: 'feed-resync',
+		anchor: 'feed-sync-button',
+		title: 'Sync again — as you',
+		body: "Press *Sync* once more. Now that you're signed in the pull is scoped to you: your profile (name, avatar) and your own publications come in with it.",
+		placement: 'bottom',
+		next: 'walk-done'
+	},
+	// Standalone: the scoped Confirm modal, once. Not in the chain, so Auto
+	// mode (no modal) never waits on it.
 	'general-feed': {
 		key: 'general-feed',
 		anchor: 'general-feed',
 		title: 'General feed — now optional',
 		body: "Now that you're signed in, the query is scoped to you. *General feed* adds the broad public pull on top — toggle it off to fetch only the relays and authors you choose. Open *Details* to watch the query change (it now carries `by:‹you›`).",
 		placement: 'left'
-	},
-	// ── After the first fetch: the feed has events ────────────────────────
-	'feed-first-pub': {
-		key: 'feed-first-pub',
-		anchor: 'feed-first-pub',
-		title: 'A publication is a book',
-		body: 'A publication is like a book — a `kind-30040` index that orders a set of sections (`kind 30041`) into a whole. This first one, *{title}*, gathers {sections}.',
-		placement: 'bottom',
-		next: 'feed-first-badges'
-	},
-	'feed-first-badges': {
-		key: 'feed-first-badges',
-		anchor: 'feed-first-badges',
-		title: 'Provenance & actions',
-		body: 'These pills show provenance — where the event lives in the network. The top one says it’s on *{relays}* right now. Click the row body to *read* the publication, or the `menu` pill to work with the raw event in depth.',
-		placement: 'bottom',
-		next: 'walk-done'
 	},
 	// Closing card of the one auto walk — hands off to the opt-in affordances so
 	// the user knows where every other tour lives. The last thing they see.
@@ -559,10 +593,10 @@ export const TIPS: Record<string, TourTip> = {
 	}
 };
 
-/** The tip the "Run walkthrough" / "W" affordances kick off. On first run the
- *  Confirm-mode fetch modal is already open so this resolves immediately; with
- *  the modal closed it auto-skips and chains straight to `sign-in`. */
-export const ENTRY_TIP = 'feed-sync';
+/** The replay entry when the pool is empty: point at the feed's Sync button.
+ *  (A populated pool needs no entry — the feed's own effect re-fires the first
+ *  feed beat on the epoch bump; see `replayWalkthrough`.) */
+export const ENTRY_TIP = 'feed-fetch';
 
 type TipVars = Record<string, string | number>;
 
@@ -576,6 +610,11 @@ type DiscoveryState = {
 	/** Per-tip `{token}` substitutions, set at trigger time. Ephemeral — not
 	 *  persisted; a data-driven tip restocks them each time its surface fires. */
 	vars: Record<string, TipVars>;
+	/** Bumped by every (re)start of the walk. Surfaces whose trigger lives in
+	 *  an effect (the feed's first-publication beat) depend on it, so a replay
+	 *  re-fires them with fresh vars instead of waiting for their data to
+	 *  change. Ephemeral. */
+	epoch: number;
 	/** A tour armed to start when its surface next mounts. Set when a tour is
 	 *  launched from afar (the global W) but its anchors live in a surface the
 	 *  user must open first — e.g. the event menu. The surface clears it via
@@ -591,6 +630,7 @@ export const discovery = $state<DiscoveryState>({
 	seen: [],
 	queue: [],
 	vars: {},
+	epoch: 0,
 	armed: null
 });
 
@@ -681,9 +721,12 @@ export function loadDiscovery() {
 }
 
 /** Queue a tip if it's enabled, unseen, known, and not already queued. The
- *  overlay resolves the anchor and skips (auto-advances) if it's not mounted,
- *  so callers can fire triggers freely without checking the DOM. */
-export function trigger(key: string, vars?: TipVars, opts?: { force?: boolean }) {
+ *  overlay resolves the anchor and drops it (unseen) if it never mounts, so
+ *  callers can fire triggers freely without checking the DOM. `at` inserts at
+ *  a queue position instead of the end — a dismissed card's `next` takes the
+ *  dismissed card's place so a chain is never pushed behind, or lost to, a
+ *  tip some surface queued meanwhile. */
+export function trigger(key: string, vars?: TipVars, opts?: { force?: boolean; at?: number }) {
 	if (vars) discovery.vars[key] = vars;
 	if (!discovery.enabled) return;
 	if (discovery.seen.includes(key)) return;
@@ -698,32 +741,75 @@ export function trigger(key: string, vars?: TipVars, opts?: { force?: boolean })
 	// marking a never-shown tour seen would wrongly tick it off. The predicate
 	// is re-evaluated on every trigger, so it stays suppressed while the
 	// condition holds without needing the seen flag. Skipped for `force` (an
-	// on-demand W tour the user asked for explicitly).
+	// on-demand W tour the user asked for explicitly). A suppressed beat
+	// chains to its `skipTo` (else `next`), so "already signed in" can jump
+	// the whole sign-in segment rather than just one card.
 	if (!opts?.force && tip.relevantWhen && !tip.relevantWhen(world())) {
-		if (tip.next) trigger(tip.next);
+		const to = tip.skipTo ?? tip.next;
+		if (to) trigger(to, undefined, { at: opts?.at });
 		return;
 	}
-	discovery.queue.push(key);
+	if (opts?.at !== undefined && opts.at < discovery.queue.length) discovery.queue.splice(opts.at, 0, key);
+	else discovery.queue.push(key);
 }
 
-/** Dismiss the active tip (the X, Esc, Next, or a "try it" action): mark it seen
- *  and advance. Also covers the overlay's auto-skip when an anchor never mounts,
- *  so a guided segment self-heals over an absent surface. If the tip declares a
- *  `next` and the queue is now empty, chain to it. */
-export function dismissActive() {
-	const key = discovery.queue[0];
+function removeFromQueue(key: string): number {
+	const i = discovery.queue.indexOf(key);
+	if (i >= 0) discovery.queue.splice(i, 1);
+	return i;
+}
+
+/** Dismiss a queued tip (the X, Esc, Next, Got it, or a "try it" action on
+ *  the card the overlay is showing): mark it seen, remove it, and chain its
+ *  `next` into the slot it vacated. Only an explicit dismissal counts as seen
+ *  — see `skipTip` for the overlay's unmount drop. The overlay may be showing
+ *  a tip that isn't `queue[0]` (the first *actionable* one), so the key is
+ *  explicit; it defaults to the head for callers without a view. */
+export function dismissTip(key: string | undefined = discovery.queue[0]) {
 	if (!key) return;
 	if (!discovery.seen.includes(key)) discovery.seen.push(key);
-	discovery.queue.shift();
+	const i = removeFromQueue(key);
 	persist();
 	const nextKey = TIPS[key]?.next;
-	if (nextKey && discovery.queue.length === 0) trigger(nextKey);
+	if (nextKey) trigger(nextKey, undefined, { at: Math.max(i, 0) });
 }
 
-/** Close the walkthrough entirely — drop every queued tip but leave them
- *  unseen (a later reset/run can show them again). Used by "skip the rest". */
-export function endWalkthrough() {
+/** Drop a queued tip *without* marking it seen and *without* chaining. The
+ *  overlay calls this when an anchor never mounts: the user never saw the
+ *  card, so it must not count as done, and its `next` must not run ahead of
+ *  it — a feed row that flickers away for a moment would otherwise skip the
+ *  walk straight to "sign in". The tip fires again from its own trigger when
+ *  its surface does appear (every surface-mounted trigger re-fires on
+ *  change), which is the self-heal. */
+export function skipTip(key: string) {
+	removeFromQueue(key);
+}
+
+/** The user did what a card asked (opened Settings, went home, pressed Sync):
+ *  if that card is queued — on screen or waiting behind another — dismiss it
+ *  as seen so it never shows late, and let its `next` take its place. A no-op
+ *  when it isn't queued. */
+export function completeTip(key: string) {
+	if (discovery.queue.includes(key)) dismissTip(key);
+}
+
+/** "Skip the rest": close the current walk for good. Marks seen the shown tip
+ *  and its whole `next` chain, every tip still queued, and — when the shown
+ *  tip is a first-run beat — every first-run beat, so no surface (the next
+ *  confirm modal, opening Settings, signing in) can bring the walk back one
+ *  card at a time. Only a reset/replay un-sees them. */
+export function endWalkthrough(key: string | undefined = discovery.queue[0]) {
+	const done = new Set<string>(discovery.queue);
+	let k: string | undefined = key;
+	while (k) {
+		done.add(k);
+		k = TIPS[k]?.next;
+		if (k && done.has(k)) break; // cycle guard
+	}
+	if (key && ONBOARDING_TIPS.has(key)) for (const t of ONBOARDING_TIPS) done.add(t);
+	for (const t of done) if (!discovery.seen.includes(t)) discovery.seen.push(t);
 	discovery.queue = [];
+	persist();
 }
 
 /** Flip the master switch. Off clears the queue so nothing lingers. Backs the
@@ -742,18 +828,18 @@ export function startWalkthrough() {
 	discovery.enabled = true;
 	discovery.seen = [];
 	discovery.queue = [];
+	discovery.epoch += 1;
 	persist();
 }
 
-/** Arm + immediately surface the entry tip — for an on-demand replay (the
- *  header "Run walkthrough" button) where no surface is about to mount on its
- *  own. Forced past preconditions: this is an explicit "show me the walk again"
- *  request, so the entry appears even for an established user (signed in, pool
- *  populated) who would otherwise have every first-run beat self-suppress. The
- *  later beats remain event-gated (they fire as the user navigates). */
+/** On-demand replay (the logo W / M-x). With a populated pool the feed's own
+ *  effect re-fires the first feed beat on the epoch bump (the caller opens the
+ *  feed buffer first); an empty pool has no feed beat to hang off, so point at
+ *  the Sync button directly — forced, since this is an explicit "show me the
+ *  walk again". The later beats remain event-gated. */
 export function replayWalkthrough() {
 	startWalkthrough();
-	trigger(ENTRY_TIP, undefined, { force: true });
+	if (!world().dbHasEvents) trigger(ENTRY_TIP, undefined, { force: true });
 }
 
 /** Run a specific tour now, on demand (the mode-line's W chip): enable tips,
@@ -794,13 +880,15 @@ export function rearmDiscovery() {
  *  beat here; new panel/feature tours need no change (they're the complement). */
 const ONBOARDING_TIPS = new Set<string>([
 	'feed-sync',
-	'sign-in',
-	'sign-in-methods',
-	'signed-in-noname',
-	'go-home',
-	'general-feed',
+	'feed-fetch',
 	'feed-first-pub',
 	'feed-first-badges',
+	'sign-in',
+	'sign-in-methods',
+	'signed-in',
+	'go-home',
+	'feed-resync',
+	'general-feed',
 	'walk-done'
 ]);
 

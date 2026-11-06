@@ -8,6 +8,7 @@
 	// when summary is absent (older engine intents).
 
 	import type { FetchEvent, NipFilter, CompositionShape, Phase } from '$lib/types';
+	import { completeTip } from '$lib/wm/discovery.svelte';
 	import { resolveConfirm, reissueConfirm } from '$lib/network/fetch-events.svelte';
 	import { addRelay, removeRelay, getRelayConfig } from '$lib/api';
 	import { getAppState } from '$lib/state.svelte';
@@ -270,6 +271,8 @@
 	}
 
 	function confirm() {
+		// Walkthrough: approving is what the first-run "approve the first fetch" card asked for.
+		completeTip('feed-sync');
 		if (selectedRelays.length === 0) return;
 		// Appended relays were already persisted to the read set at Add-relay
 		// time (see addExtra), so a plain confirm just fires the fetch. The

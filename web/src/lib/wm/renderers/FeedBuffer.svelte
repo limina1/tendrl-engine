@@ -10,7 +10,8 @@
 	import {
 		discovery,
 		trigger as triggerTip,
-		setTipVars
+		setTipVars,
+		completeTip
 	} from '$lib/wm/discovery.svelte';
 
 	let { buffer }: { buffer: Buffer } = $props();
@@ -186,29 +187,37 @@
 		if (cursor >= activeList.length) cursor = Math.max(0, activeList.length - 1);
 	});
 
-	// Walkthrough: once the feed has events (the user fetched), introduce the
-	// top publication + its provenance pills. Gated on `general-feed` already
-	// seen so these fire *after* the login walk's fetch beat, not on an initial
-	// local load. Fires once; trigger() itself no-ops when not armed.
-	let feedTipFired = false;
+	// Walkthrough: once the feed has events, introduce the top publication +
+	// its provenance pills — the first beats of the walk in either network mode
+	// (after the approved first pull in Confirm, the silent one in Auto).
+	// `discovery.epoch` is a dependency so a replay re-fires them with fresh
+	// vars. trigger() itself no-ops when the walk is off or the tip is seen /
+	// queued; `walk-done` seen means an established user — never nag.
 	$effect(() => {
 		const top = app.feed[0];
+		void discovery.epoch;
 		if (!top) return;
 		untrack(() => {
-			if (feedTipFired) return;
-			if (!discovery.enabled || discovery.seen.includes('feed-first-pub')) return;
-			if (!discovery.seen.includes('general-feed')) return;
-			feedTipFired = true;
+			if (!discovery.enabled || discovery.seen.includes('walk-done')) return;
 			const s = top.section_count;
 			const r = top.relays.length;
-			triggerTip('feed-first-pub', {
-				title: top.title ?? '[Untitled]',
-				sections: `${s} section${s === 1 ? '' : 's'}`
-			});
 			// Pre-stash the chained badges tip's relay count (it surfaces via `next`).
 			setTipVars('feed-first-badges', {
 				relays: r === 0 ? 'no relays yet' : `${r} relay${r === 1 ? '' : 's'}`
 			});
+			triggerTip('feed-first-pub', {
+				title: top.title ?? '[Untitled]',
+				sections: `${s} section${s === 1 ? '' : 's'}`
+			});
+		});
+	});
+
+	// Walkthrough: arriving on the feed is what `go-home` asked for — complete
+	// that card and surface the resync beat on the Sync button. Mount-once.
+	$effect(() => {
+		untrack(() => {
+			completeTip('go-home');
+			if (discovery.seen.includes('go-home')) triggerTip('feed-resync');
 		});
 	});
 
@@ -425,7 +434,13 @@
 			<span class="count">{app.feed.length}</span>
 			<button
 				class="sync"
-				onclick={app.handleFeedSync}
+				data-tour="feed-sync-button"
+				onclick={() => {
+					// Walkthrough: pressing Sync is what the fetch / resync cards asked for.
+					completeTip('feed-fetch');
+					completeTip('feed-resync');
+					app.handleFeedSync();
+				}}
 				disabled={app.feedSyncing}
 				title={app.feedTimeline && app.feedTimeline !== 'local'
 					? `Fetch this timeline from ${relayHost(app.feedTimeline)}`

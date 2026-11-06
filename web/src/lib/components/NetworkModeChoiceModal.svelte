@@ -75,7 +75,7 @@
 					<span class="nm-kw">fine-grained control</span> and for building an
 					<span class="nm-kw">understanding of how Nostr works</span> under the hood.
 				</span>
-				<span class="nm-choice-tip">New here and want to explore? Pick Confirm — the walkthrough is built around it.</span>
+				<span class="nm-choice-tip">New here? Pick Confirm to see each fetch before it runs — the walkthrough works in either mode.</span>
 			</button>
 
 			<button class="nm-choice" onclick={() => pick('auto')} disabled={submitting}>

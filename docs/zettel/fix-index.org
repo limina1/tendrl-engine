@@ -67,6 +67,15 @@ stay as provenance. Source evaluation:
   editor in [[file:idea-relay-kind-routing.org][kind-scoped routing]]
   (fixed 2026-08-14)
 
+* Walkthrough & onboarding
+
+- [-] [[file:fix-walkthrough-index.org][Walkthrough & onboarding map]]
+  (high, UX) — the first-run walk died silently (first card cancelled
+  the fetch, click-outside burned tips, Skip didn't stick, Auto mode got
+  nothing), plus popup stacking, six names for one system, jargon on
+  first contact; seven fix sets (2026-11-06; F1–F3 shipped the same day
+  on =fix/walkthrough-ux=, F4–F7 copy/terminology open)
+
 * Build & Android
 
 - [X] [[file:fix-release-profile.org][Release profile]] (critical, cheap) —
