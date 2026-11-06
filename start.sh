@@ -69,11 +69,18 @@ free_port() {
     fi
 }
 
-# Check config
-if [[ ! -f "$CONFIG" ]]; then
+# Config is optional: without one the engine runs on built-in defaults and
+# keeps UI-made settings in <data_dir>/config.toml. An explicit -c that does
+# not exist is still an error (a typo should not silently become defaults).
+CONFIG_ARGS=()
+if [[ -f "$CONFIG" ]]; then
+    CONFIG_ARGS=(-c "$CONFIG")
+elif [[ "$CONFIG" != "config.toml" ]]; then
     echo "Config not found: $CONFIG"
-    echo "Copy config.example.toml to config.toml and customize."
     exit 1
+else
+    echo "No config.toml — running on defaults (copy config.example.toml to preset relays/identity)."
+    CONFIG="(defaults)"
 fi
 
 # Compile the engine up front, before anything is launched. `cargo run` alone
@@ -105,7 +112,7 @@ fi
 echo "Starting backend..."
 # --no-open: this script owns the browser (see header). The engine would
 # otherwise pop a :3030 tab on every restart — the wrong port for this flow.
-cargo run -- -c "$CONFIG" --no-open "${HOST_ARGS[@]}" &
+cargo run -- "${CONFIG_ARGS[@]}" --no-open "${HOST_ARGS[@]}" &
 PIDS+=($!)
 
 # 2. Start frontend

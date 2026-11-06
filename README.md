@@ -90,6 +90,21 @@ Log in with a **NIP-07** browser extension (Alby, nos2x, …) — the key stays 
 extension; the engine never handles it. Pass `--no-open` to skip the browser launch
 (e.g. on a server), or `-c config.toml` to use a non-default config.
 
+### Quick start for testers (no config file)
+
+The engine runs on built-in defaults. Settings you change in the UI are written to
+`<data_dir>/config.toml`, which it creates itself — `config.example.toml` is the
+documented reference, not a prerequisite. To run a throwaway instance beside one you
+already use, give it its own directory and port:
+
+```bash
+./target/release/tendrl-engine --data-dir /tmp/tendrl-test --port 3131
+```
+
+It boots in first-run state (the network-mode choice, an empty pool, the guided
+walkthrough) at <http://127.0.0.1:3131>. Delete the directory to start over.
+`tendrl-engine --help` lists every flag.
+
 ### Portable release build (for distribution)
 
 `build-bundle.sh` links against the **build host's** glibc, so a binary built on a
@@ -159,10 +174,10 @@ For hot-reload web work, run the stack as separate processes. `start.sh` launche
 every enabled service and tears them all down on `Ctrl+C`:
 
 ```bash
-cp config.example.toml config.toml   # first time — set [identity], adjust relay sets
 pnpm -C web install                  # install web dependencies
+cp config.example.toml config.toml   # optional — only to preset relay sets / identity
 
-./start.sh                  # engine + web preview (port 5174)
+./start.sh                  # engine + web preview (port 5174); no config.toml = defaults
 ./start.sh --dev            # Vite dev server with hot reload (port 5173)
 ./start.sh --build          # rebuild web/build/ before starting preview
 ./start.sh -c other.toml    # use a non-default config
@@ -176,7 +191,7 @@ Once up:
 Run components individually:
 
 ```bash
-cargo run -- -c config.toml         # engine only
+cargo run                           # engine only, defaults (-c config.toml to preset; --data-dir/--port for a second instance)
 pnpm -C web dev                     # web dev server only
 ```
 

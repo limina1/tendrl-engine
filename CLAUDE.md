@@ -22,8 +22,10 @@ scripts/publish-release.sh               # tag v<version> if needed, push the ta
                                          # (CHANGELOG section = notes, portable tarball = asset; --dry-run to preview,
                                          #  --no-asset for notes-only, `publish-release.sh X.Y.Z --no-asset` to backfill an old tag)
 
-# Run
-cargo run -- -c config.toml         # run engine with config
+# Run (no config file needed — defaults + <data_dir>/config.toml, written by the UI)
+cargo run                           # engine on :3030 with defaults
+cargo run -- -c config.toml         # run engine with a preset config
+./target/debug/tendrl-engine --data-dir /tmp/tendrl-test --port 3131   # isolated test instance (first-run state); never reuse the live :3030
 ./start.sh                          # start all services (engine + web preview)
 ./start.sh --dev                    # use the Vite dev server (hot reload) for the web UI
 ./start.sh --build                  # rebuild web/build/ before starting preview
