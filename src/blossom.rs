@@ -355,6 +355,59 @@ impl BlossomClient {
         }
     }
 
+    /// BUD-06 `HEAD /upload` pre-check: would `server` accept a blob of
+    /// this hash / size / type under its current policy? Advisory (the PUT
+    /// can still fail), but it turns a 413 into a clear message before the
+    /// bytes move. Servers that lack BUD-06 answer 404 / 405 — treated as
+    /// "unknown, go ahead".
+    pub async fn preflight(
+        &self,
+        server: &str,
+        sha256: &str,
+        size: usize,
+        mime: &str,
+        auth: &str,
+    ) -> Result<()> {
+        let url = format!("{}/upload", server.trim_end_matches('/'));
+        let resp = match self
+            .http
+            .head(&url)
+            .header("Authorization", auth)
+            .header("X-SHA-256", sha256)
+            .header("X-Content-Length", size)
+            .header("X-Content-Type", mime)
+            .send()
+            .await
+        {
+            Ok(r) => r,
+            Err(_) => return Ok(()),
+        };
+        let status = resp.status().as_u16();
+        if (200..300).contains(&status) || status == 404 || status == 405 {
+            return Ok(());
+        }
+        let reason = resp
+            .headers()
+            .get("x-reason")
+            .and_then(|v| v.to_str().ok())
+            .map(str::to_string)
+            .unwrap_or_default();
+        let mib = size as f64 / (1024.0 * 1024.0);
+        let msg = match status {
+            413 => format!("{server} refuses a {mib:.1} MiB blob (HTTP 413 {reason}) — over its upload cap"),
+            402 => format!("{server} wants payment for this upload (HTTP 402 {reason})"),
+            401 | 403 => format!("{server} refused the upload token (HTTP {status} {reason})"),
+            415 => format!("{server} does not accept {mime} (HTTP 415 {reason})"),
+            429 => format!("{server} rate-limited the upload (HTTP 429 {reason})"),
+            _ => format!("{server} preflight HTTP {status} {reason}"),
+        };
+        Err(match status {
+            401 | 403 => EngineError::Auth(msg),
+            500..=599 => EngineError::Relay(msg),
+            _ => EngineError::BadRequest(msg),
+        })
+    }
+
     /// BUD-02 `PUT /upload`. `auth` is the `Authorization` header value
     /// from [`auth_header`] for an `upload` token carrying this blob's hash.
     pub async fn upload(

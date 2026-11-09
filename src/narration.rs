@@ -38,6 +38,44 @@ pub const KIND_NARRATION: u64 = 32176;
 pub const AUDIO_MIME: &str = "audio/mpeg";
 /// Max nested-30040 depth walked when narrating or discovering.
 pub const TREE_DEPTH: usize = 5;
+/// Largest blob the generator uploads as one piece. blossom.band caps a
+/// free upload at 20 MiB (100 MiB paid; no count/retention limit), and
+/// NKBIP-07 leaves may carry several ordered `b` pieces, so a longer
+/// section is split at TTS-chunk boundaries into ≤ this many bytes each.
+pub const DEFAULT_PIECE_BYTES: usize = 20 * 1024 * 1024;
+/// Rough bytes of MP3 per spoken character at ppq's 48 kbps / ~15 chars
+/// per second of speech — for the pre-run size estimate only.
+pub const BYTES_PER_CHAR_ESTIMATE: usize = 400;
+
+/// Expected blob size for `chars` of text and how many pieces that is at
+/// `piece_cap` bytes each.
+pub fn size_estimate(chars: usize, piece_cap: usize) -> (usize, usize) {
+    let bytes = chars * BYTES_PER_CHAR_ESTIMATE;
+    let pieces = if bytes == 0 { 0 } else { bytes.div_ceil(piece_cap.max(1)) };
+    (bytes, pieces)
+}
+
+/// Group per-chunk MP3 parts into pieces of at most `cap` bytes each
+/// (never splitting a part; a single part over `cap` becomes its own
+/// piece and the server decides). Returns the joined bytes per piece.
+pub fn group_pieces(parts: &[Vec<u8>], cap: usize) -> Vec<Vec<u8>> {
+    let mut pieces: Vec<Vec<u8>> = Vec::new();
+    let mut cur: Vec<Vec<u8>> = Vec::new();
+    let mut cur_len = 0usize;
+    for part in parts {
+        if !cur.is_empty() && cur_len + part.len() > cap {
+            pieces.push(join_mp3(&cur));
+            cur.clear();
+            cur_len = 0;
+        }
+        cur_len += part.len();
+        cur.push(part.clone());
+    }
+    if !cur.is_empty() {
+        pieces.push(join_mp3(&cur));
+    }
+    pieces
+}
 
 // ---------------------------------------------------------------------------
 // TTS models
@@ -1081,18 +1119,26 @@ impl Narration {
     /// Playable URLs for the first piece: the event's own `blossom` hints,
     /// then `fallback` servers (the user's set), deduped, in that order.
     pub fn urls(&self, fallback: &[String]) -> Vec<String> {
-        let Some(piece) = self.pieces.first() else {
-            return Vec::new();
-        };
+        self.piece_urls(fallback).into_iter().next().unwrap_or_default()
+    }
+
+    /// Candidate URLs per `b` piece, in assembly order — a leaf split over
+    /// several blobs plays them back to back.
+    pub fn piece_urls(&self, fallback: &[String]) -> Vec<Vec<String>> {
         let ext = blossom::ext_for_mime(self.mime.as_deref().unwrap_or(AUDIO_MIME));
-        let mut out: Vec<String> = Vec::new();
-        for server in self.servers.iter().chain(fallback.iter()) {
-            let u = blossom::blob_url(server, &piece.sha256, ext);
-            if !out.contains(&u) {
-                out.push(u);
-            }
-        }
-        out
+        self.pieces
+            .iter()
+            .map(|piece| {
+                let mut out: Vec<String> = Vec::new();
+                for server in self.servers.iter().chain(fallback.iter()) {
+                    let u = blossom::blob_url(server, &piece.sha256, ext);
+                    if !out.contains(&u) {
+                        out.push(u);
+                    }
+                }
+                out
+            })
+            .collect()
     }
 }
 
@@ -1114,8 +1160,10 @@ pub struct Recording {
     #[serde(flatten)]
     pub narration: Narration,
     pub version_match: VersionMatch,
-    /// Ordered candidate URLs for the audio (first = preferred).
+    /// Ordered candidate URLs for the first piece (first = preferred).
     pub urls: Vec<String>,
+    /// Candidate URLs per piece, assembly order (one entry per `b` tag).
+    pub piece_urls: Vec<Vec<String>>,
     /// The narrator is the active user.
     pub mine: bool,
 }
@@ -1150,6 +1198,7 @@ pub fn rank(
             };
             Recording {
                 urls: n.urls(fallback_servers),
+                piece_urls: n.piece_urls(fallback_servers),
                 mine: me.map(|m| m == n.pubkey).unwrap_or(false),
                 narration: n.clone(),
                 version_match,
@@ -1208,7 +1257,8 @@ pub fn leaf_template(
     about: &NAddr,
     about_event: &str,
     title: &str,
-    blob: &BlobDescriptor,
+    blobs: &[BlobDescriptor],
+    full_sha256: &str,
     duration_secs: Option<f64>,
     servers: &[String],
     spec: &VoiceSpec,
@@ -1220,9 +1270,12 @@ pub fn leaf_template(
         vec!["title".into(), title.to_string()],
     ];
     tags.extend(binding_tags(about, about_event, relay_hint));
-    tags.push(vec!["b".into(), blob.sha256.clone(), blob.size.to_string()]);
-    tags.push(vec!["x".into(), blob.sha256.clone()]);
-    tags.push(vec!["size".into(), blob.size.to_string()]);
+    for blob in blobs {
+        tags.push(vec!["b".into(), blob.sha256.clone(), blob.size.to_string()]);
+    }
+    let total: u64 = blobs.iter().map(|b| b.size).sum();
+    tags.push(vec!["x".into(), full_sha256.to_lowercase()]);
+    tags.push(vec!["size".into(), total.to_string()]);
     tags.push(vec!["m".into(), AUDIO_MIME.into()]);
     tags.push(vec!["type".into(), "media".into()]);
     if let Some(d) = duration_secs {
@@ -1386,7 +1439,7 @@ pub enum GenEvent {
     SectionStart { index: usize, total: usize, coord: String, title: String, chunks: usize },
     Chunk { index: usize, total: usize, section: usize },
     Skipped { coord: String, reason: String, existing: String },
-    Uploaded { coord: String, sha256: String, url: String, size: u64, duration_secs: Option<f64> },
+    Uploaded { coord: String, sha256: String, url: String, size: u64, duration_secs: Option<f64>, piece: usize, pieces: usize },
     Signed { coord: String, narration: String, event_id: String },
     Broadcast { successful: usize, total: usize },
     Done { root: Option<String>, leaves: usize, spent_usd: Option<f64>, balance_usd: Option<f64> },
@@ -1803,46 +1856,70 @@ impl<'a> NarrationEngine<'a> {
             if failed || parts.is_empty() {
                 continue;
             }
-            let audio = join_mp3(&parts);
-            let duration = mp3_duration_secs(&audio);
-            let sha = blossom::sha256_hex(&audio);
-            let size = audio.len() as u64;
-            let blob = if self.client.has_blob(&server, &sha).await {
-                BlobDescriptor {
-                    url: blossom::blob_url(&server, &sha, "mp3"),
-                    sha256: sha.clone(),
-                    size,
-                    mime: AUDIO_MIME.into(),
-                    uploaded: 0,
-                }
-            } else {
-                let auth = match self.upload_auth(signing, me, &sha, &server, "Upload narration audio").await {
-                    Ok(a) => a,
-                    Err(e) => {
+            // One blob per piece: the whole section when it fits the cap,
+            // else split at chunk boundaries (NKBIP-07 ordered `b` tags).
+            let full = join_mp3(&parts);
+            let duration = mp3_duration_secs(&full);
+            let full_sha = blossom::sha256_hex(&full);
+            drop(full);
+            let pieces = group_pieces(&parts, DEFAULT_PIECE_BYTES);
+            drop(parts);
+            let n_pieces = pieces.len();
+            let mut blobs: Vec<BlobDescriptor> = Vec::with_capacity(n_pieces);
+            let mut upload_failed = false;
+            for (pi, audio) in pieces.into_iter().enumerate() {
+                let sha = blossom::sha256_hex(&audio);
+                let size = audio.len() as u64;
+                let blob = if self.client.has_blob(&server, &sha).await {
+                    BlobDescriptor {
+                        url: blossom::blob_url(&server, &sha, "mp3"),
+                        sha256: sha.clone(),
+                        size,
+                        mime: AUDIO_MIME.into(),
+                        uploaded: 0,
+                    }
+                } else {
+                    let auth = match self.upload_auth(signing, me, &sha, &server, "Upload narration audio").await {
+                        Ok(a) => a,
+                        Err(e) => {
+                            emit!(GenEvent::Error { message: e.to_string(), coord: Some(node.coord.clone()) });
+                            upload_failed = true;
+                            break;
+                        }
+                    };
+                    if let Err(e) = self.client.preflight(&server, &sha, audio.len(), AUDIO_MIME, &auth).await {
                         emit!(GenEvent::Error { message: e.to_string(), coord: Some(node.coord.clone()) });
-                        continue;
+                        upload_failed = true;
+                        break;
+                    }
+                    match self.client.upload(&server, audio, AUDIO_MIME, &auth).await {
+                        Ok(mut d) => {
+                            if d.size == 0 {
+                                d.size = size;
+                            }
+                            d
+                        }
+                        Err(e) => {
+                            emit!(GenEvent::Error { message: e.to_string(), coord: Some(node.coord.clone()) });
+                            upload_failed = true;
+                            break;
+                        }
                     }
                 };
-                match self.client.upload(&server, audio, AUDIO_MIME, &auth).await {
-                    Ok(mut d) => {
-                        if d.size == 0 {
-                            d.size = size;
-                        }
-                        d
-                    }
-                    Err(e) => {
-                        emit!(GenEvent::Error { message: e.to_string(), coord: Some(node.coord.clone()) });
-                        continue;
-                    }
-                }
-            };
-            emit!(GenEvent::Uploaded {
-                coord: node.coord.clone(),
-                sha256: blob.sha256.clone(),
-                url: blob.url.clone(),
-                size: blob.size,
-                duration_secs: duration,
-            });
+                emit!(GenEvent::Uploaded {
+                    coord: node.coord.clone(),
+                    sha256: blob.sha256.clone(),
+                    url: blob.url.clone(),
+                    size: blob.size,
+                    duration_secs: if n_pieces == 1 { duration } else { None },
+                    piece: pi,
+                    pieces: n_pieces,
+                });
+                blobs.push(blob);
+            }
+            if upload_failed || blobs.is_empty() {
+                continue;
+            }
             let Some(event_id) = node.event_id.clone() else {
                 emit!(GenEvent::Error { message: "section event not local — cannot pin E".into(), coord: Some(node.coord.clone()) });
                 continue;
@@ -1851,7 +1928,8 @@ impl<'a> NarrationEngine<'a> {
                 &node.addr,
                 &event_id,
                 &node.title,
-                &blob,
+                &blobs,
+                &full_sha,
                 duration,
                 std::slice::from_ref(&server),
                 &spec,
@@ -2136,9 +2214,11 @@ pub mod handlers {
         let plan: Vec<Value> = nodes
             .iter()
             .map(|n| {
+                let (bytes, pieces) = size_estimate(n.chars, DEFAULT_PIECE_BYTES);
                 json!({
                     "coord": n.coord, "event_id": n.event_id, "title": n.title, "depth": n.depth,
                     "is_index": n.is_index, "chars": n.chars, "chunks": n.chunks,
+                    "est_bytes": bytes, "est_pieces": pieces,
                     "preview": n.text.as_deref().map(|t| t.chars().take(160).collect::<String>()),
                 })
             })
@@ -2150,6 +2230,8 @@ pub mod handlers {
             "total_chars": chars,
             "total_chunks": chunks,
             "estimate_usd": estimate_cost(chars, chunks, &model),
+            "est_bytes": size_estimate(chars, DEFAULT_PIECE_BYTES).0,
+            "piece_cap_bytes": DEFAULT_PIECE_BYTES,
             "balance_usd": balance,
             "server": ne.store().load().primary(),
         })))
@@ -2372,6 +2454,25 @@ mod tests {
     }
 
     #[test]
+    fn pieces_group_at_cap_and_sizes_estimate() {
+        let a = frame(1);
+        let parts = vec![a.clone(), a.clone(), a.clone()];
+        // Cap below two frames → three pieces of one frame each.
+        let p = group_pieces(&parts, 200);
+        assert_eq!(p.len(), 3);
+        assert_eq!(p[0].len(), 144);
+        // Cap for two frames → [2, 1].
+        let p = group_pieces(&parts, 288);
+        assert_eq!(p.iter().map(Vec::len).collect::<Vec<_>>(), vec![288, 144]);
+        // Roomy cap → one piece.
+        assert_eq!(group_pieces(&parts, 10_000).len(), 1);
+        assert_eq!(size_estimate(0, DEFAULT_PIECE_BYTES), (0, 0));
+        let (bytes, pieces) = size_estimate(60_000, DEFAULT_PIECE_BYTES);
+        assert_eq!(bytes, 24_000_000);
+        assert_eq!(pieces, 2);
+    }
+
+    #[test]
     fn parse_and_rank() {
         let leaf = |id: &str, pk: &str, d: &str, e: &str, ts: u64| {
             json!({
@@ -2415,18 +2516,25 @@ mod tests {
         let about = NAddr::new(30041, "pk", "sec");
         let blob = BlobDescriptor { url: "u".into(), sha256: "f".repeat(64), size: 9, mime: AUDIO_MIME.into(), uploaded: 0 };
         let spec = VoiceSpec { model: "deepgram_aura_2".into(), voice: Some("v".into()), language: Some("en".into()) };
-        let t = leaf_template(&about, "ABC", "Ch", &blob, Some(12.4), &["https://s".into()], &spec, Some("words"), Some("wss://r"));
+        let blob2 = BlobDescriptor { url: "u2".into(), sha256: "e".repeat(64), size: 4, mime: AUDIO_MIME.into(), uploaded: 0 };
+        let t = leaf_template(&about, "ABC", "Ch", &[blob.clone(), blob2], &"d".repeat(64), Some(12.4), &["https://s".into()], &spec, Some("words"), Some("wss://r"));
         assert_eq!(t.kind, 32176);
         let has = |k: &str, v: &str| t.tags.iter().any(|x| x[0] == k && x.get(1).map(String::as_str) == Some(v));
         assert!(has("A", "30041:pk:sec"));
         assert!(has("E", "abc"));
         assert!(has("K", "30041"));
         assert!(has("b", &"f".repeat(64)));
+        assert!(has("b", &"e".repeat(64)));
+        assert!(has("x", &"d".repeat(64)));
+        assert!(has("size", "13"));
         assert!(has("duration", "12"));
         assert!(has("transcript", "txt"));
         assert_eq!(t.content, "words");
         let n = Narration::from_event(&json!({"kind":32176,"id":"","pubkey":"me","created_at":1,"content":t.content,"tags":t.tags})).unwrap();
         assert_eq!(n.about_event.as_deref(), Some("abc"));
+        assert_eq!(n.pieces.len(), 2);
+        assert_eq!(n.piece_urls(&["https://m".into()]).len(), 2);
+        assert_eq!(n.piece_urls(&["https://m".into()])[1][1], format!("https://m/{}.mp3", "e".repeat(64)));
 
         let root = root_template(&NAddr::new(30040, "pk", "book"), "ROOT", "Book", &[("32176:me:x".into(), "Ch".into())], &[], &spec, 100.0, None);
         let r = Narration::from_event(&json!({"kind":32176,"id":"","pubkey":"me","created_at":1,"content":"","tags":root.tags})).unwrap();

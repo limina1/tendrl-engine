@@ -51,8 +51,13 @@ modal before any generation runs.)
 - BUD-10 =blossom:<sha>.<ext>?xs=&as=&sz== URI.
 - BUD-07 402 + =X-Lightning= / =X-Cashu= for paid servers.
 - blossom.band is live and answers =HEAD /upload= with 401 "authorization
-  required" — i.e. open to any signed pubkey until proven otherwise;
-  quotas unknown until a real upload.
+  required" — open to any signed pubkey. Limits (its site, 2026-11-09):
+  a hard cap of **100 MiB per upload, 20 MiB for free uploads**, no limit
+  on the number of uploads or retention. At 48 kbps that is ≈ 58 min of
+  narration per free blob, ≈ 4.8 h paid — so the generator splits a
+  longer section into several ordered =b= pieces (≤ 20 MiB each,
+  =DEFAULT_PIECE_BYTES=), runs a BUD-06 =HEAD /upload= preflight per
+  blob, and the player plays a leaf's pieces back to back.
 
 ** NKBIP-07 — Hierarchical Blossom Piece Indexes (the referenced note)
 {{ref:30817:fd208ee8c8f283780a9552896e4823cc9dc6bfd442063889577106940fd927c1:nkbip-07|NKBIP-07}}
@@ -209,7 +214,6 @@ manifest. Estimated as its own slice.
 
 - Take the =A=/=E=/=K= binding back to the NKBIP-07 author as a proposed
   extension (it is tendrl's convention until then).
-- blossom.band quotas / per-pubkey limits for multi-MB audio.
 - Mirroring: publish the mirrorer's own 32176 (same =A=/=E=, own
   =blossom= hint) so others find the copy, or keep it a local win?
 

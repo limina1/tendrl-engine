@@ -3069,6 +3069,8 @@ export interface NarrationRecording {
 	relays: string[];
 	version_match: NarrationVersionMatch;
 	urls: string[];
+	/** Candidate URLs per `b` piece, assembly order. */
+	piece_urls: string[][];
 	mine: boolean;
 }
 
@@ -3097,6 +3099,9 @@ export interface NarrationPlanNode {
 	is_index: boolean;
 	chars: number;
 	chunks: number;
+	/** Expected MP3 bytes and how many blobs that is at the piece cap. */
+	est_bytes?: number;
+	est_pieces?: number;
 	preview?: string | null;
 }
 
@@ -3107,6 +3112,8 @@ export interface NarrationEstimate {
 	total_chars: number;
 	total_chunks: number;
 	estimate_usd: number;
+	est_bytes?: number;
+	piece_cap_bytes?: number;
 	balance_usd: number | null;
 	server: string | null;
 }
@@ -3129,7 +3136,7 @@ export type NarrationGenEvent =
 	| { type: 'section_start'; index: number; total: number; coord: string; title: string; chunks: number }
 	| { type: 'chunk'; index: number; total: number; section: number }
 	| { type: 'skipped'; coord: string; reason: string; existing: string }
-	| { type: 'uploaded'; coord: string; sha256: string; url: string; size: number; duration_secs: number | null }
+	| { type: 'uploaded'; coord: string; sha256: string; url: string; size: number; duration_secs: number | null; piece: number; pieces: number }
 	| { type: 'signed'; coord: string; narration: string; event_id: string }
 	| { type: 'broadcast'; successful: number; total: number }
 	| { type: 'done'; root: string | null; leaves: number; spent_usd: number | null; balance_usd: number | null }

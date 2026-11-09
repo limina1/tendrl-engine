@@ -2326,7 +2326,8 @@ relays takes ~45 s to settle; nothing renders until then. Mobile shell:
 
 Engine-only smoke test on an isolated instance (never :3030). Spends real
 ppq credit (≈ $0.016 per 1000 chars on =deepgram_aura_2=) and uploads to
-blossom.band as the logged-in identity. Relay: theforest only.
+blossom.band as the logged-in identity (20 MiB per free upload, 100 MiB
+paid; a longer section becomes several =b= pieces). Relay: theforest only.
 
 #+begin_src bash
 S=/tmp/tendrl-narr; mkdir -p $S/data; B=http://127.0.0.1:3131/api/v1

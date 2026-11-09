@@ -1671,7 +1671,9 @@
 				Narrating a publication speaks each section with ppq.ai TTS, uploads the audio to the
 				first server (signed as you, BUD-11), and publishes one kind-32176 event per section
 				bound to the exact section version. "Mirror" on a recording copies its blob to the
-				other servers. This list is local — your kind-10063 list is only read as suggestions.
+				other servers. Sections longer than the per-blob cap (20 MiB ≈ 58 min — blossom.band's free
+				limit; 100 MiB on its paid plans) upload as several ordered pieces. This list is local — your
+				kind-10063 list is only read as suggestions.
 			</p>
 		</div>
 	</details>

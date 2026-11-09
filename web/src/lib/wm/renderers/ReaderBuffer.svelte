@@ -2312,6 +2312,16 @@
 							disabled={!publication}
 							title="Recordings — narrations of this publication (play, mirror, narrate)"
 						>recordings {narrationSummary.recordings}</button>
+						<button
+							class="narrate"
+							disabled={!publication || !canSignNow}
+							onclick={() =>
+								parsedAddr &&
+								(app.narrateModal = { pubkey: parsedAddr.pubkey, d_tag: parsedAddr.dTag, title: publication?.title ?? null })}
+							title={canSignNow
+								? 'Narrate — read this publication aloud with ppq.ai TTS, store the audio on Blossom, publish one kind-32176 recording per section'
+								: 'Sign in to narrate'}
+						>narrate</button>
 					{/if}
 					{#if publication?.summary}
 						<button
@@ -2703,6 +2713,9 @@
 </div>
 
 <style>
+	.tools-sheet__row .narrate {
+		color: var(--id-yours);
+	}
 	.reader-wrap {
 		display: flex;
 		flex-direction: column;

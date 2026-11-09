@@ -165,7 +165,7 @@
 						case 'uploaded':
 							log.push({
 								kind: 'ok',
-								text: `  uploaded ${(ev.size / 1024).toFixed(0)} KiB${ev.duration_secs ? ` · ${nar.fmtTime(ev.duration_secs)}` : ''}`
+								text: `  uploaded${ev.pieces > 1 ? ` piece ${ev.piece + 1}/${ev.pieces}` : ''} ${nar.fmtBytes(ev.size)}${ev.duration_secs ? ` · ${nar.fmtTime(ev.duration_secs)}` : ''} → ${(() => { try { return new URL(ev.url).host; } catch { return ev.url; } })()}`
 							});
 							break;
 						case 'signed':
@@ -297,7 +297,9 @@
 										<input type="checkbox" checked={picked[n.coord] !== false && n.chars > 0} disabled={running || n.chars === 0} onchange={(e) => (picked[n.coord] = (e.target as HTMLInputElement).checked)} />
 										<span class="nm-row__title" title={n.preview ?? ''}>{n.title}</span>
 									</label>
-									<span class="nm-row__meta">{n.chars === 0 ? 'no text' : `${n.chars} chars · ${n.chunks} call${n.chunks === 1 ? '' : 's'}`}</span>
+									<span class="nm-row__meta" class:nm-row__meta--split={(n.est_pieces ?? 0) > 1}
+										title={(n.est_pieces ?? 0) > 1 ? `About ${nar.fmtBytes(n.est_bytes ?? 0)} of audio — over the ${nar.fmtBytes(estimate?.piece_cap_bytes ?? 0)} per-blob cap, so it uploads as ${n.est_pieces} blobs (NKBIP-07 pieces) and plays back to back` : ''}
+									>{n.chars === 0 ? 'no text' : `${n.chars} chars · ${n.chunks} call${n.chunks === 1 ? '' : 's'} · ~${nar.fmtBytes(n.est_bytes ?? 0)}${(n.est_pieces ?? 0) > 1 ? ` · ${n.est_pieces} blobs` : ''}`}</span>
 								</li>
 							{/if}
 						{/each}
@@ -306,7 +308,7 @@
 			</div>
 
 			<div class="nm-cost" class:nm-cost--bad={underfunded}>
-				<span>{pickedCoords.length} section{pickedCoords.length === 1 ? '' : 's'} · {pickedChars} chars · {pickedChunks} calls</span>
+				<span>{pickedCoords.length} section{pickedCoords.length === 1 ? '' : 's'} · {pickedChars} chars · {pickedChunks} calls · ~{nar.fmtBytes(pickedChars * 400)}</span>
 				<span class="nm-sp"></span>
 				<span>≈ {usd(cost)}{balance !== null ? ` of ${usd(balance)} ppq balance` : ''}</span>
 				{#if underfunded}
@@ -482,6 +484,9 @@
 		color: var(--base5);
 		white-space: nowrap;
 		font-size: calc(var(--t-xs) - 2px);
+	}
+	.nm-row__meta--split {
+		color: var(--state-warn, #c90);
 	}
 	.nm-cost {
 		display: flex;

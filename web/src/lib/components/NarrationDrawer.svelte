@@ -60,8 +60,9 @@
 
 	/** Probe every candidate URL (BUD-01 servers answer HEAD with open CORS). */
 	async function checkSources(r: api.NarrationRecording) {
+		const all = (r.piece_urls?.length ? r.piece_urls : [r.urls]).flat();
 		await Promise.all(
-			r.urls.map(async (u) => {
+			all.map(async (u) => {
 				reach[u] = 'checking';
 				try {
 					const res = await fetch(u, { method: 'HEAD', mode: 'cors' });
@@ -86,14 +87,15 @@
 	}
 
 	async function mirror(r: api.NarrationRecording) {
-		const url = r.urls[0];
-		if (!url) return;
+		const firsts = (r.piece_urls?.length ? r.piece_urls : [r.urls]).map((u) => u[0]).filter(Boolean);
+		if (firsts.length === 0) return;
 		mirroring[r.id] = true;
 		try {
-			const res = await api.mirrorNarration({ url });
-			const ok = res.results.filter((x) => x.ok);
-			if (ok.length > 0) app.pushToast(`mirrored to ${ok.map((x) => x.server.replace(/^https?:\/\//, '')).join(', ')}`, 'success');
-			const bad = res.results.filter((x) => !x.ok);
+			const all = await Promise.all(firsts.map((url) => api.mirrorNarration({ url })));
+			const results = all.flatMap((x) => x.results);
+			const ok = results.filter((x) => x.ok);
+			if (ok.length > 0) app.pushToast(`mirrored ${firsts.length > 1 ? `${firsts.length} blobs ` : ''}to ${[...new Set(ok.map((x) => x.server.replace(/^https?:\/\//, '')))].join(', ')}`, 'success');
+			const bad = results.filter((x) => !x.ok);
 			if (bad.length > 0) app.pushToast(bad.map((x) => `${x.server}: ${x.error}`).join(' · '), 'error', 6000);
 		} catch (e) {
 			app.pushToast(e instanceof Error ? e.message : String(e), 'error', 6000);
@@ -107,14 +109,14 @@
 	}
 
 	async function mirrorTo(r: api.NarrationRecording, server: string) {
-		const url = r.urls[0];
-		if (!url) return;
+		const firsts = (r.piece_urls?.length ? r.piece_urls : [r.urls]).map((u) => u[0]).filter(Boolean);
+		if (firsts.length === 0) return;
 		mirroring[r.id] = true;
 		try {
-			const res = await api.mirrorNarration({ url, server });
-			const x = res.results[0];
-			if (x?.ok) app.pushToast(`mirrored to ${host(server)}`, 'success');
-			else app.pushToast(`${host(server)}: ${x?.error ?? 'failed'}`, 'error', 6000);
+			const all = await Promise.all(firsts.map((url) => api.mirrorNarration({ url, server })));
+			const bad = all.flatMap((x) => x.results).filter((x) => !x.ok);
+			if (bad.length === 0) app.pushToast(`mirrored to ${host(server)}`, 'success');
+			else app.pushToast(`${host(server)}: ${bad[0].error ?? 'failed'}`, 'error', 6000);
 		} catch (e) {
 			app.pushToast(e instanceof Error ? e.message : String(e), 'error', 6000);
 		} finally {
@@ -258,11 +260,15 @@
 							{#if openSources === r.id}
 								<div class="nd-src">
 									<div class="nd-src__head">
-										<span>blob <code title={r.pieces[0]?.sha256}>{r.pieces[0]?.sha256.slice(0, 12)}…</code>{#if r.size} · {(r.size / 1024).toFixed(0)} KiB{/if}</span>
+										<span>{r.pieces.length > 1 ? `${r.pieces.length} blobs` : 'blob'} <code title={r.pieces[0]?.sha256}>{r.pieces[0]?.sha256.slice(0, 12)}…</code>{#if r.size} · {nar.fmtBytes(r.size)}{/if}</span>
 										<span class="nd-sp"></span>
 										<button class="nd-link" onclick={() => checkSources(r)}>check</button>
 									</div>
-									{#each r.urls as u (u)}
+									{#each r.piece_urls?.length ? r.piece_urls : [r.urls] as urls, pi (pi)}
+									{#if r.pieces.length > 1}
+										<div class="nd-src__piece">piece {pi + 1}/{r.pieces.length} · <code title={r.pieces[pi]?.sha256}>{r.pieces[pi]?.sha256.slice(0, 10)}…</code>{#if r.pieces[pi]?.size} · {nar.fmtBytes(r.pieces[pi].size)}{/if}</div>
+									{/if}
+									{#each urls as u (u)}
 										<div class="nd-src__row">
 											<span class="nd-src__state" title={reach[u] === true ? 'served' : reach[u] === false ? 'not found here' : reach[u] === 'checking' ? 'checking' : 'unchecked'}>{reach[u] === true ? '✓' : reach[u] === false ? '✗' : reach[u] === 'checking' ? '…' : '·'}</span>
 											<a class="nd-src__url" href={u} target="_blank" rel="noopener" title={u}>{host(u)}</a>
@@ -271,6 +277,7 @@
 												<button class="nd-act nd-act--tiny" onclick={() => mirrorTo(r, u.replace(/\/[^/]*$/, ''))} disabled={mirroring[r.id]} title="Mirror the blob to this server">mirror here</button>
 											{/if}
 										</div>
+									{/each}
 									{/each}
 									{#if r.relays.length > 0}
 										<div class="nd-src__row nd-src__row--relays">event on: {r.relays.map((x) => x.replace(/^wss?:\/\//, '')).join(', ')}</div>
@@ -479,6 +486,14 @@
 		gap: 6px;
 		align-items: center;
 		min-width: 0;
+	}
+	.nd-src__piece {
+		color: var(--fg-muted);
+		margin-top: 4px;
+	}
+	.nd-src__piece code {
+		font-family: var(--font-mono);
+		color: var(--fg);
 	}
 	.nd-src__row--relays {
 		color: var(--fg-muted);

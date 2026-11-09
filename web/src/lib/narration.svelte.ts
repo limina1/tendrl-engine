@@ -15,8 +15,14 @@ export interface PlaylistItem {
 	coord: string;
 	title: string;
 	recording: api.NarrationRecording;
-	/** Which URL of `recording.urls` is in use (fallback cursor). */
+	/** Which `b` piece is playing (a long section may span several blobs). */
+	piece: number;
+	/** Which URL of that piece's candidates is in use (fallback cursor). */
 	urlIndex: number;
+}
+
+function pieceUrls(rec: api.NarrationRecording): string[][] {
+	return rec.piece_urls?.length ? rec.piece_urls : rec.urls.length ? [rec.urls] : [];
 }
 
 const recordingsByPub = $state<Record<string, api.NarrationDiscovery>>({});
@@ -74,6 +80,7 @@ export function choose(coord: string, recordingId: string) {
 	const rec = recordingsFor(coord).find((r) => r.id === recordingId);
 	if (item && rec) {
 		item.recording = rec;
+		item.piece = 0;
 		item.urlIndex = 0;
 	}
 }
@@ -120,7 +127,7 @@ export function playlistFor(pubkey: string, d_tag: string): PlaylistItem[] {
 	for (const n of d.nodes) {
 		if (n.is_index) continue;
 		const rec = activeRecording(n.coord);
-		if (rec && rec.urls.length > 0) out.push({ coord: n.coord, title: n.title, recording: rec, urlIndex: 0 });
+		if (rec && pieceUrls(rec).length > 0) out.push({ coord: n.coord, title: n.title, recording: rec, piece: 0, urlIndex: 0 });
 	}
 	return out;
 }
@@ -149,7 +156,7 @@ export function playRecording(coord: string, title: string, rec: api.NarrationRe
 	if (existing >= 0 && player.pubTitle === pubTitle) {
 		player.index = existing;
 	} else {
-		player.playlist = [{ coord, title, recording: rec, urlIndex: 0 }];
+		player.playlist = [{ coord, title, recording: rec, piece: 0, urlIndex: 0 }];
 		player.index = 0;
 		player.pubCoord = null;
 		player.pubTitle = pubTitle;
@@ -166,7 +173,13 @@ export function current(): PlaylistItem | null {
 export function currentUrl(): string | null {
 	const c = current();
 	if (!c) return null;
-	return c.recording.urls[c.urlIndex] ?? null;
+	return pieceUrls(c.recording)[c.piece]?.[c.urlIndex] ?? null;
+}
+
+/** Pieces of the current item: (index, count). */
+export function currentPiece(): { piece: number; pieces: number } {
+	const c = current();
+	return c ? { piece: c.piece, pieces: pieceUrls(c.recording).length } : { piece: 0, pieces: 0 };
 }
 
 export function toggle() {
@@ -178,9 +191,23 @@ export function pause() {
 	player.playing = false;
 }
 
+/** Advance: the next piece of the same section first, then the next section. */
 export function next(): boolean {
+	const c = current();
+	if (c && c.piece + 1 < pieceUrls(c.recording).length) {
+		c.piece += 1;
+		c.urlIndex = 0;
+		player.position = 0;
+		player.error = null;
+		return true;
+	}
 	if (player.index + 1 < player.playlist.length) {
 		player.index += 1;
+		const n = current();
+		if (n) {
+			n.piece = 0;
+			n.urlIndex = 0;
+		}
 		player.position = 0;
 		player.error = null;
 		return true;
@@ -190,8 +217,21 @@ export function next(): boolean {
 }
 
 export function prev() {
+	const c = current();
+	if (c && c.piece > 0) {
+		c.piece = 0;
+		c.urlIndex = 0;
+		player.position = 0;
+		player.error = null;
+		return;
+	}
 	if (player.index > 0) {
 		player.index -= 1;
+		const n = current();
+		if (n) {
+			n.piece = 0;
+			n.urlIndex = 0;
+		}
 		player.position = 0;
 		player.error = null;
 	}
@@ -201,7 +241,7 @@ export function prev() {
 export function failover(): 'retry' | 'next' | 'stop' {
 	const c = current();
 	if (!c) return 'stop';
-	if (c.urlIndex + 1 < c.recording.urls.length) {
+	if (c.urlIndex + 1 < (pieceUrls(c.recording)[c.piece]?.length ?? 0)) {
 		c.urlIndex += 1;
 		return 'retry';
 	}
@@ -236,6 +276,11 @@ export function fmtTime(s: number): string {
 	const r = Math.floor(s % 60);
 	const h = Math.floor(m / 60);
 	return h > 0 ? `${h}:${String(m % 60).padStart(2, '0')}:${String(r).padStart(2, '0')}` : `${m}:${String(r).padStart(2, '0')}`;
+}
+
+export function fmtBytes(b: number): string {
+	if (b < 1024 * 1024) return `${Math.max(1, Math.round(b / 1024))} KiB`;
+	return `${(b / (1024 * 1024)).toFixed(b < 10 * 1024 * 1024 ? 1 : 0)} MiB`;
 }
 
 export function matchLabel(m: api.NarrationVersionMatch): string {

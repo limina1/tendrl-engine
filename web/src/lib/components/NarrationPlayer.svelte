@@ -15,6 +15,7 @@
 	const item = $derived(nar.current());
 	const url = $derived(nar.currentUrl());
 	const narrator = $derived(item ? getAuthorDisplayName(item.recording.pubkey) : '');
+	const piece = $derived(nar.currentPiece());
 
 	// Drive the element from store state: src, play/pause, rate.
 	$effect(() => {
@@ -134,6 +135,7 @@
 				<div class="np-title" title={item.title}>
 					<span class="np-idx">{nar.player.index + 1}/{nar.player.playlist.length}</span>
 					{item.title}
+					{#if piece.pieces > 1}<span class="np-idx" title="This section spans several blobs"> · part {piece.piece + 1}/{piece.pieces}</span>{/if}
 				</div>
 				<div class="np-sub">
 					{#if nar.player.pubTitle}<span class="np-pub">{nar.player.pubTitle}</span> · {/if}
