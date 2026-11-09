@@ -1,6 +1,6 @@
 #+TITLE: Idea: audiobooks — TTS per section, Blossom storage, NKBIP-07 indexes
 #+TYPE: idea
-#+STATUS: plan (research done 2026-11-09, branch feat/audiobook-blossom open)
+#+STATUS: plan — building on feat/audiobook-blossom (decisions confirmed 2026-11-09)
 #+DATE: 2026-11-09
 
 * The ask
@@ -149,17 +149,35 @@ leaf 32176  d=<nanoid>  title="<section title>"
   engine-side]], publishing philosophy).
 - TTS defaults: model, voice, language; per-run override.
 
+* Decisions (confirmed 2026-11-09)
+
+- *Binding = all three of =A= / =E= / =K=.* =A= + =K= span every version
+  of a coordinate by every narrator; =E= pins the exact event whose text
+  was spoken. Recordings of another version are offered below exact
+  matches, never hidden.
+- *Transcript on by default.* The spoken text rides in =content=
+  (=transcript txt=). It is what lets a reader diff a recording of
+  another version against the text in front of them and decide whether
+  it is close enough to listen to — or narrate their own.
+- *Nested publications: one walk.* Discovery queries the root index,
+  traverses every nested index and leaf, and asks =#A= for each node;
+  each section lists its own recordings plus other-version ones.
+- *ppq output is MP3, period.* Probed with the live account: three
+  calls with no / =opus= / =wav= =response_format= all returned
+  =audio/mpeg= (MPEG-2 L3, 48 kbps, 24 kHz mono, bare frames, no ID3).
+  Joining = frame concatenation, pure Rust (=narration::join_mp3=).
+- Engine shape: =src/blossom.rs= (24242 auth, upload / mirror / head,
+  =blossom.json= server set, 10063 parse) + =src/narration.rs= (32176
+  parse / templates / ranking, spoken-text pass, chunker, MP3 join,
+  =NarrationEngine=, handlers under =/api/v1/narration/*=).
+
 * Open questions
 
-- Confirm with the NKBIP-07 author that =A=/=E=/=K= on a 32176 is the
-  blessed way to bind an index to the event it renders (vs a new tag).
-- Whether ppq honours =response_format= (opus/ogg would shrink blobs
-  ~3×) — probe once an account exists.
+- Take the =A=/=E=/=K= binding back to the NKBIP-07 author as a proposed
+  extension (it is tendrl's convention until then).
 - blossom.band quotas / per-pubkey limits for multi-MB audio.
-- Transcript in =content= on by default (search finds spoken text; doubles
-  relay bytes) or off.
-- Should a narration of a 30040 that nests other 30040s produce one tree
-  or one per sub-publication (reuse when a sub-book is already narrated)?
+- Mirroring: publish the mirrorer's own 32176 (same =A=/=E=, own
+  =blossom= hint) so others find the copy, or keep it a local win?
 
 * Related
 
