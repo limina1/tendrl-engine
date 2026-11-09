@@ -1,6 +1,13 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- Narration keeps playing with the screen off: a mediaPlayback
+         foreground service (MediaService) + a partial wake lock while playing;
+         POST_NOTIFICATIONS so Android 13+ shows the transport controls. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
 
     <!-- Android 11+ package visibility: without this, enumerating NIP-55
          signer apps (nostrsigner: scheme) silently returns nothing. -->
@@ -33,6 +40,11 @@
                 <category android:name="android.intent.category.LEANBACK_LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <service
+          android:name=".MediaService"
+          android:exported="false"
+          android:foregroundServiceType="mediaPlayback" />
 
         <provider
           android:name="androidx.core.content.FileProvider"

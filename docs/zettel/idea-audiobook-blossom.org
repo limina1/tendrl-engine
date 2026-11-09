@@ -204,20 +204,44 @@ leaf 32176  d=<nanoid>  title="<section title>"
   fresh descriptor (201). Cost $0.0093 on =deepgram_aura_2=.
   Recipe: =docs/commands.org= "Narration".
 
-* Android background playback (open — needs a native plugin)
+* Android background playback (built 2026-11-09, =feat/android-background-audio=)
 
-wry's =WryActivity.onPause()= calls =mWebView.onPause()= (wry 0.55.1,
-=src/android/kotlin/WryActivity.kt:130=), which suspends HTML5 media, so
-the WebView player stops the moment tendrl leaves the foreground. The
-Media Session API (metadata + play/pause/prev/next handlers, now set by
-=NarrationPlayer=) gives lock-screen controls where the WebView is alive
-but cannot keep audio running. The fix is a Kotlin plugin beside
-=Nip55Plugin.kt=: a foreground service holding an ExoPlayer/MediaPlayer +
-MediaSession, with the playlist handed over from JS (URLs, titles,
-narrator) and position/state events back; the web player becomes a
-remote control when =shell=mobile=. Battery/notification permissions
-(=FOREGROUND_SERVICE_MEDIA_PLAYBACK=, =POST_NOTIFICATIONS=) in the
-manifest. Estimated as its own slice.
+Symptom on the v0.17.0 APK: audio cut off when the screen went off or the
+app was switched away. Two mechanisms were at work: wry's generated
+=WryActivity.onPause()= calls =WebView.onPause()= (marks the page hidden),
+and without a foreground service Android parks a backgrounded app in the
+cached/frozen state, which stops decoding.
+
+Decision: *the WebView stays the player*. Moving playback into ExoPlayer
+would duplicate the playlist, the Blossom URL failover and the piece
+logic natively; instead the Kotlin side only keeps the existing player
+alive and gives the system its controls:
+
+- =MediaService.kt= — =mediaPlayback= foreground service with a platform
+  =MediaSession= (metadata, playback state, seek/skip actions) and a
+  =MediaStyle= notification; a partial wake lock while playing (capped at
+  six hours). It never touches audio.
+- =MediaPlugin.kt= (Tauri plugin =media=, Rust glue
+  =mobile/src-tauri/src/media.rs=): =setState= / =stop=; asks for
+  =POST_NOTIFICATIONS= once on Android 13+. =load()= captures the WebView.
+- =MediaBridge.kt= — shared flag =keepAwake=; relays transport buttons to
+  the page as a =tendrl:media= CustomEvent via =evaluateJavascript=, so no
+  Tauri event plumbing is needed.
+- =MainActivity.onPause()= — after wry's pause, =WebView.onResume()= while
+  =keepAwake= (Chromium's paused state is a single symmetric flag, so this
+  fully reverses it); =MediaBridge.settle()= applies the skipped pause once
+  playback stops. The generated =WryActivity.kt= is rewritten by wry's
+  build.rs on every build, so it is deliberately not patched.
+- Web: =web/src/lib/media-android.ts= (no-op off-device) +
+  =NarrationPlayer.svelte= mirrors track/play state/rate/duration into the
+  session (position untracked, refreshed on seek and every 20 s) and maps
+  play/pause/next/prev/stop/seek/±15 s back onto the store.
+
+Not verified on a device from this machine (no emulator, no tablet
+attached) — the check recipe is in =docs/commands.org= "Android
+background playback". Manifest: =FOREGROUND_SERVICE=,
+=FOREGROUND_SERVICE_MEDIA_PLAYBACK=, =POST_NOTIFICATIONS=, =WAKE_LOCK=,
+=<service android:foregroundServiceType="mediaPlayback">=.
 
 * Open questions
 
