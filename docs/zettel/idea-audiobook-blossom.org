@@ -181,6 +181,11 @@ leaf 32176  d=<nanoid>  title="<section title>"
 - Engine: =src/blossom.rs=, =src/narration.rs=, =ProviderRegistry::ppq_tts=
   / =ppq_audio_models= / =ppq_audio_voices=; routes =/api/v1/narration/
   {models,voices,servers,estimate,generate,for/:pk/:d,mirror}=.
+- Language: the modal's language dropdown is derived from the languages
+  the selected model's voices actually cover and filters the voice list;
+  on generation the engine stamps =lang= from the caller's choice, else
+  from the chosen voice's language in ppq's voice list, so the 32176
+  always says what language it is spoken in.
 - Voice preview: the modal plays ppq's canned clip per voice (free,
   =preview_url=) and =POST /narration/sample= speaks ≤300 chars of the
   user's own section text (TTS only, ≈ $0.001, nothing stored) so a voice

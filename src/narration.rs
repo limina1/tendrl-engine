@@ -204,6 +204,21 @@ pub fn parse_live_models(body: &Value) -> Vec<TtsModel> {
     out
 }
 
+/// The ISO 639-1 language of `voice_id` in a ppq `/v1/audio/voices` body
+/// (`data` / `voices` array of `{id, language, …}`), lowercased; `None`
+/// when the voice is unknown or lists no language.
+pub fn voice_language(body: &Value, voice_id: &str) -> Option<String> {
+    body.get("data")
+        .or_else(|| body.get("voices"))
+        .and_then(Value::as_array)?
+        .iter()
+        .find(|v| v.get("id").and_then(Value::as_str) == Some(voice_id))
+        .and_then(|v| v.get("language"))
+        .and_then(Value::as_str)
+        .map(|l| l.trim().to_lowercase())
+        .filter(|l| !l.is_empty())
+}
+
 // ---------------------------------------------------------------------------
 // Spoken text
 // ---------------------------------------------------------------------------
@@ -1749,10 +1764,21 @@ impl<'a> NarrationEngine<'a> {
             };
         }
         let addr = NAddr::new(KIND_PUBLICATION_INDEX, &req.pubkey, &req.d_tag);
+        // The event always records the language: the caller's choice, else
+        // the voice's own language from the provider's voice list.
+        let language = match (&req.language, &req.voice) {
+            (Some(l), _) if !l.trim().is_empty() => Some(l.trim().to_lowercase()),
+            (_, Some(v)) => providers
+                .ppq_audio_voices(None)
+                .await
+                .ok()
+                .and_then(|body| voice_language(&body, v)),
+            _ => None,
+        };
         let spec = VoiceSpec {
             model: req.model.clone(),
             voice: req.voice.clone(),
-            language: req.language.clone(),
+            language,
         };
         let servers_set = self.store().load();
         let server = match req
@@ -2593,6 +2619,19 @@ mod tests {
         assert_eq!(r.children, vec![("32176:me:x".to_string(), "Ch".to_string())]);
         assert_eq!(r.about_kind, Some(30040));
         assert!(r.transcript.is_none());
+    }
+
+    #[test]
+    fn voice_language_lookup() {
+        let body = json!({"object":"list","data":[
+            {"id":"aura-2-thalia-en","language":"en","name":"thalia"},
+            {"id":"aura-2-agathe-fr","language":"FR "},
+            {"id":"nolang","language":""}
+        ]});
+        assert_eq!(voice_language(&body, "aura-2-thalia-en").as_deref(), Some("en"));
+        assert_eq!(voice_language(&body, "aura-2-agathe-fr").as_deref(), Some("fr"));
+        assert_eq!(voice_language(&body, "nolang"), None);
+        assert_eq!(voice_language(&body, "missing"), None);
     }
 
     #[test]

@@ -17,9 +17,37 @@
 	let models = $state<api.TtsModel[]>([]);
 	let ppqConfigured = $state(true);
 	let model = $state('');
-	let voices = $state<api.TtsVoice[]>([]);
+	/** Every voice the selected model offers (all languages). */
+	let allVoices = $state<api.TtsVoice[]>([]);
 	let voice = $state('');
+	/** ISO 639-1 code, or '' = any language (provider picks). */
 	let language = $state('');
+
+	// Languages are whatever the model's voices actually cover; the voice
+	// list is that set filtered by the chosen language. Names via the
+	// browser's locale data, code as fallback.
+	const langNames = typeof Intl !== 'undefined' && 'DisplayNames' in Intl ? new Intl.DisplayNames(undefined, { type: 'language' }) : null;
+	function langName(code: string): string {
+		try {
+			return langNames?.of(code) ?? code;
+		} catch {
+			return code;
+		}
+	}
+	const languages = $derived.by(() => {
+		const counts = new Map<string, number>();
+		for (const v of allVoices) {
+			const c = (v.language ?? '').trim().toLowerCase();
+			if (!c) continue;
+			counts.set(c, (counts.get(c) ?? 0) + 1);
+		}
+		return [...counts.entries()]
+			.map(([code, n]) => ({ code, n, name: langName(code) }))
+			.sort((a, b) => (a.code === 'en' ? -1 : b.code === 'en' ? 1 : a.name.localeCompare(b.name)));
+	});
+	const voices = $derived(
+		language ? allVoices.filter((v) => (v.language ?? '').trim().toLowerCase() === language) : allVoices
+	);
 	let servers = $state<string[]>([]);
 	let server = $state('');
 	let transcript = $state(true);
@@ -118,14 +146,25 @@
 
 	async function loadVoices() {
 		try {
-			const r = await api.getNarrationVoices({ model, language: language || undefined });
-			voices = r.voices;
-			if (!voices.some((v) => v.id === voice)) {
-				voice = voices.find((v) => v.id === 'aura-2-thalia-en')?.id ?? voices[0]?.id ?? '';
-			}
+			const r = await api.getNarrationVoices({ model });
+			allVoices = r.voices;
 		} catch {
-			voices = [];
+			allVoices = [];
 		}
+		// A language the new model does not offer falls back to "any".
+		if (language && !languages.some((l) => l.code === language)) language = '';
+		ensureVoice();
+	}
+
+	/** Keep the picked voice inside the filtered list. */
+	function ensureVoice() {
+		if (voices.some((v) => v.id === voice)) return;
+		voice = voices.find((v) => v.id === 'aura-2-thalia-en')?.id ?? voices[0]?.id ?? '';
+	}
+
+	function onLanguageChange() {
+		stopPreview();
+		ensureVoice();
 	}
 
 	async function loadEstimate() {
@@ -305,14 +344,19 @@
 				</select>
 
 				<label class="nm-label" for="nm-lang">language</label>
-				<input id="nm-lang" class="nm-input" placeholder="auto (ISO 639-1, e.g. en, de, pt)" bind:value={language} onchange={() => void loadVoices()} disabled={running} />
+				<select id="nm-lang" class="nm-input" bind:value={language} onchange={onLanguageChange} disabled={running}>
+					<option value="">any — {allVoices.length} voice{allVoices.length === 1 ? '' : 's'}</option>
+					{#each languages as l (l.code)}
+						<option value={l.code}>{l.name} ({l.code}) — {l.n} voice{l.n === 1 ? '' : 's'}</option>
+					{/each}
+				</select>
 
 				<label class="nm-label" for="nm-voice">voice</label>
 				<div class="nm-voice">
 					<select id="nm-voice" class="nm-input" bind:value={voice} onchange={stopPreview} disabled={running}>
 						<option value="">provider default</option>
 						{#each voices as v (v.id)}
-							<option value={v.id}>{v.name ?? v.id}{v.language ? ` · ${v.language}` : ''}{v.gender ? ` · ${v.gender}` : ''}</option>
+							<option value={v.id}>{v.name ?? v.id}{!language && v.language ? ` · ${v.language}` : ''}{v.gender ? ` · ${v.gender}` : ''}{v.description ? ` — ${v.description.slice(0, 60)}` : ''}</option>
 						{/each}
 					</select>
 					<button
