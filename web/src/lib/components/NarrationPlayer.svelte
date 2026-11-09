@@ -5,7 +5,9 @@
 	// server (BUD-01, open CORS, range requests); the engine never proxies
 	// them. On a load error the store advances to the next candidate URL
 	// for the same blob, then to the next section.
+	import { untrack } from 'svelte';
 	import * as nar from '$lib/narration.svelte';
+	import * as amedia from '$lib/media-android';
 	import { shell } from '$lib/wm/shell.svelte';
 	import { getAuthorDisplayName } from '$lib/discussions/authors.svelte';
 
@@ -85,6 +87,80 @@
 		if ('mediaSession' in navigator) navigator.mediaSession.playbackState = nar.player.playing ? 'playing' : 'paused';
 	});
 
+	// Android host: mirror the player into the system media session so audio
+	// survives screen-off / app switch and the lock screen gets controls.
+	// Position is read untracked (it ticks every ~250 ms) and refreshed on
+	// seek + a slow timer; the session extrapolates in between.
+	function syncAndroid() {
+		if (!amedia.available()) return;
+		const it = nar.current();
+		if (!it) return;
+		void amedia.setState({
+			playing: nar.player.playing,
+			title: it.title,
+			subtitle: narrator || it.recording.pubkey.slice(0, 12),
+			album: nar.player.pubTitle ?? 'tendrl narration',
+			position: audio?.currentTime ?? 0,
+			duration: audio?.duration || it.recording.duration_secs || 0,
+			rate: nar.player.rate,
+			hasNext: nar.player.index + 1 < nar.player.playlist.length,
+			hasPrev: nar.player.index > 0
+		});
+	}
+	$effect(() => {
+		if (!amedia.available()) return;
+		// Dependencies: track + play state + rate + playlist shape + duration.
+		void item;
+		void nar.player.playing;
+		void nar.player.rate;
+		void nar.player.index;
+		void nar.player.playlist.length;
+		void nar.player.duration;
+		void narrator;
+		if (!item) {
+			void amedia.stop();
+			return;
+		}
+		untrack(syncAndroid);
+	});
+	$effect(() => {
+		if (!amedia.available() || !nar.player.playing) return;
+		const t = setInterval(() => untrack(syncAndroid), 20_000);
+		return () => clearInterval(t);
+	});
+	$effect(() => {
+		if (!amedia.available()) return;
+		return amedia.onAction((action, position) => {
+			switch (action) {
+				case 'play':
+					nar.player.playing = true;
+					break;
+				case 'pause':
+					nar.player.playing = false;
+					break;
+				case 'next':
+					void nar.next();
+					break;
+				case 'prev':
+					nar.prev();
+					break;
+				case 'stop':
+					nar.stop();
+					break;
+				case 'seek':
+					if (audio && position !== undefined && Number.isFinite(position)) audio.currentTime = position;
+					break;
+				case 'forward':
+					if (audio) audio.currentTime = Math.min(audio.duration || Infinity, audio.currentTime + 15);
+					break;
+				case 'rewind':
+					if (audio) audio.currentTime = Math.max(0, audio.currentTime - 15);
+					break;
+			}
+			untrack(syncAndroid);
+		});
+	});
+
 	function onError() {
 		const r = nar.failover();
 		if (r === 'retry' && audio) {
@@ -118,6 +194,7 @@
 			onerror={onError}
 			ontimeupdate={() => (nar.player.position = audio?.currentTime ?? 0)}
 			ondurationchange={() => (nar.player.duration = audio?.duration ?? 0)}
+			onseeked={() => syncAndroid()}
 			onplay={() => (nar.player.playing = true)}
 			onpause={() => {
 				// Only a user-initiated pause should flip the store; the

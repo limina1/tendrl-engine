@@ -405,7 +405,9 @@ stored `whats-up` — no need to hand-normalize; quote values containing spaces.
 - `mobile/src-tauri/` — Tauri 2 Android host (app id `io.github.limina1.tendrl`):
   engine in-process on a token-gated loopback port (stable 41347 — the WebView
   origin keys the SPA's persisted storage), WebView at `?shell=mobile`, in-app
-  NIP-55 (Amber) Kotlin plugin. Independent crate, NOT in the root package;
+  NIP-55 (Amber) Kotlin plugin, and a `media` plugin (foreground service +
+  MediaSession so narration keeps playing with the screen off; the WebView
+  stays the player). Independent crate, NOT in the root package;
   build commands + Android toolchain env in `docs/commands.org` ("Android build").
   The engine crate stays platform-agnostic: mobile builds use
   `--no-default-features --features embed-assets` (features gate

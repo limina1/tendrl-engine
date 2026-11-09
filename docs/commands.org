@@ -2360,3 +2360,32 @@ cost + expected size vs. balance); *recordings N* → drawer (ranked
 recordings, ⋮ event viewer, sources with HEAD check, mirror, narrate §);
 ▶ on a section title plays it (player strip bottom-left). Settings ›
 Narration holds the Blossom server list.
+
+** Android background playback (=media= plugin, v0.17.1)
+
+The WebView's =<audio>= stays the player; =MediaPlugin.kt= /
+=MediaService.kt= / =MediaBridge.kt= (beside =Nip55Plugin.kt=) add a
+=mediaPlayback= foreground service + MediaSession + notification, and
+=MainActivity.onPause()= re-resumes the WebView while a playlist is loaded
+(wry's generated =WryActivity.onPause()= pauses it; that file is rewritten
+by wry's build.rs on every build, so it is not patched). The SPA mirrors
+state through =plugin:media|set_state= / =stop= (=web/src/lib/media-android.ts=,
+wired in =NarrationPlayer.svelte=); system buttons come back as a
+=tendrl:media= CustomEvent. No emulator on this machine — verify on the
+tablet:
+
+#+begin_src bash
+scripts/build-android.sh && adb install -r target/android/tendrl-<ver>-arm64.apk
+adb logcat -c; adb logcat -s tendrl ActivityManager:I AndroidRuntime:E | grep -i 'media\|tendrl' &
+# in the app: open a narrated publication → ▶ on a section
+adb shell dumpsys activity services io.github.limina1.tendrl | grep -A3 MediaService   # running, foregroundServiceType=mediaPlayback
+adb shell dumpsys media_session | grep -A6 'tendrl-narration'                            # state=PLAYING, active
+adb shell dumpsys power | grep 'tendrl:narration'                                        # PARTIAL_WAKE_LOCK held while playing
+adb shell input keyevent KEYCODE_SLEEP; sleep 20; adb shell dumpsys media_session | grep -A6 tendrl-narration   # still PLAYING
+adb shell input keyevent KEYCODE_MEDIA_PAUSE; adb shell input keyevent KEYCODE_MEDIA_PLAY  # buttons reach the page
+adb shell input keyevent KEYCODE_WAKEUP
+#+end_src
+
+Android 13+ asks for notification permission the first time ▶ is pressed;
+declined, the audio still runs in the background but there is no
+lock-screen card. =×= on the player strip stops the service.
