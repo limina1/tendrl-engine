@@ -1,3 +1,19 @@
+## v0.17.0 — 2026-11-09
+
+- feat(narration): playback-speed multiplier on the voice preview (shared with the player)
+- feat(narration): language dropdown from the model's voices; lang stamped from the voice when unset
+- feat(narration): hear a voice before narrating — provider clip + a paid sample of your own text
+- feat(narration): split long sections into NKBIP-07 pieces; BUD-06 preflight; narrate from the tools row
+- feat(narration): inspect recordings — event viewer, sources, root row, per-section narrate, Media Session
+- feat(narration): publications read aloud — ppq TTS → Blossom → kind-32176 trees
+- docs(zettel): audiobook — confirmed A/E/K binding, transcript default, nested walk, MP3-only probe
+- docs(zettel): idea-audiobook-blossom — research + proposed workflow for TTS narration on Blossom via NKBIP-07
+- docs: zero-config quick start for testers; start.sh runs on defaults without config.toml
+- fix(walkthrough): chained cards keep their slot; overlay shows the first clickable queued card
+- fix(walkthrough): first-run walk is mode-agnostic and never dies silently (F1–F3)
+- docs(zettel): walkthrough & onboarding fix map — workflow breaks, popups, terminology, explainability, seven fix sets
+- feat(emacs): nostrdown markup prettify shows resolved labels; event buffers get kind-default formats and `m` re-render
+
 ## v0.16.0 — 2026-11-03
 
 - feat(web): Edit in the event menu reopens a replaceable event in the composer
