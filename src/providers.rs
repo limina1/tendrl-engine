@@ -1106,6 +1106,88 @@ impl ProviderRegistry {
         Ok(json!({ "provider": "ppq", "models": models }))
     }
 
+    /// ppq text-to-speech: `POST /v1/audio/speech` (OpenAI wire shape;
+    /// `language` is ppq's extra). Returns the audio bytes — always MP3 as
+    /// probed 2026-11-09 (`response_format` is ignored upstream), the
+    /// `Content-Type` comes back with them. Spends from the ppq balance.
+    pub async fn ppq_tts(
+        &self,
+        model: &str,
+        voice: Option<&str>,
+        language: Option<&str>,
+        input: &str,
+    ) -> Result<Vec<u8>> {
+        let key = self
+            .snapshot()
+            .ppq
+            .map(|a| a.api_key)
+            .ok_or_else(|| EngineError::NotFound("no ppq account".into()))?;
+        let mut body = json!({ "model": model, "input": input });
+        if let Some(v) = voice.filter(|v| !v.is_empty()) {
+            body["voice"] = json!(v);
+        }
+        if let Some(l) = language.filter(|l| !l.is_empty()) {
+            body["language"] = json!(l);
+        }
+        let url = format!("{PPQ_BASE}/v1/audio/speech");
+        let resp = self
+            .http
+            .post(&url)
+            .timeout(Duration::from_secs(180))
+            .header("Authorization", format!("Bearer {key}"))
+            .json(&body)
+            .send()
+            .await
+            .map_err(|e| EngineError::Relay(format!("{url}: {e}")))?;
+        let status = resp.status().as_u16();
+        let ctype = resp
+            .headers()
+            .get("content-type")
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("")
+            .to_string();
+        let bytes = resp
+            .bytes()
+            .await
+            .map_err(|e| EngineError::Relay(format!("{url}: body: {e}")))?;
+        if !(200..300).contains(&status) || ctype.starts_with("application/json") || ctype.starts_with("text/") {
+            let text = String::from_utf8_lossy(&bytes).to_string();
+            let value = serde_json::from_str(&text).unwrap_or_else(|_| json!({ "raw": text }));
+            let status = if (200..300).contains(&status) { 502 } else { status };
+            return Err(Self::fail("ppq tts", status, &value));
+        }
+        if bytes.is_empty() {
+            return Err(EngineError::Relay("ppq tts: empty audio".into()));
+        }
+        Ok(bytes.to_vec())
+    }
+
+    /// `GET /v1/audio/models` — TTS (and STT) models with per-1k-char
+    /// pricing. Public (no key needed).
+    pub async fn ppq_audio_models(&self) -> Result<Value> {
+        let (status, body) = self
+            .call(reqwest::Method::GET, &format!("{PPQ_BASE}/v1/audio/models"), &[], None)
+            .await?;
+        if !(200..300).contains(&status) {
+            return Err(Self::fail("ppq audio models", status, &body));
+        }
+        Ok(body)
+    }
+
+    /// `GET /v1/audio/voices[?language=xx]` — voices across providers. Public.
+    pub async fn ppq_audio_voices(&self, language: Option<&str>) -> Result<Value> {
+        let mut url = format!("{PPQ_BASE}/v1/audio/voices");
+        if let Some(l) = language.filter(|l| !l.is_empty()) {
+            url.push_str("?language=");
+            url.push_str(l);
+        }
+        let (status, body) = self.call(reqwest::Method::GET, &url, &[], None).await?;
+        if !(200..300).contains(&status) {
+            return Err(Self::fail("ppq audio voices", status, &body));
+        }
+        Ok(body)
+    }
+
     /// `POST /topup/create/btc-lightning` → a bolt11 the user pays. Min 100 sats.
     pub async fn ppq_create_invoice(&self, amount_sats: u64) -> Result<Value> {
         if amount_sats < 100 {

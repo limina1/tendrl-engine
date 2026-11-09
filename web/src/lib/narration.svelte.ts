@@ -1,0 +1,288 @@
+// Narration — recordings discovered per publication + the one global
+// player. Module-level $state (no context): buffer renderers may not use
+// Svelte lifecycle/context APIs (see project_wm_buffer_render_constraints),
+// and the player outlives any buffer — audio keeps playing across buffer
+// switches, like a music app.
+//
+// Engine owns discovery + ranking (`GET /narration/for`): this store only
+// caches the result per publication coordinate and holds playback view
+// state (playlist, index, playing, position). Recording choice per node is
+// view state too — the first ranked recording unless the user picked one.
+import * as api from '$lib/api';
+
+export interface PlaylistItem {
+	/** Node coordinate (30041:pk:d) this item narrates. */
+	coord: string;
+	title: string;
+	recording: api.NarrationRecording;
+	/** Which `b` piece is playing (a long section may span several blobs). */
+	piece: number;
+	/** Which URL of that piece's candidates is in use (fallback cursor). */
+	urlIndex: number;
+}
+
+function pieceUrls(rec: api.NarrationRecording): string[][] {
+	return rec.piece_urls?.length ? rec.piece_urls : rec.urls.length ? [rec.urls] : [];
+}
+
+const recordingsByPub = $state<Record<string, api.NarrationDiscovery>>({});
+const loadingByPub = $state<Record<string, boolean>>({});
+/** User-picked recording id per node coordinate (else the top-ranked). */
+const chosen = $state<Record<string, string>>({});
+
+const player = $state({
+	playlist: [] as PlaylistItem[],
+	index: -1,
+	playing: false,
+	position: 0,
+	duration: 0,
+	/** Publication coordinate the playlist came from — the strip's title link. */
+	pubCoord: null as string | null,
+	pubTitle: null as string | null,
+	error: null as string | null,
+	/** Set by the player component; drives seek/pause from outside. */
+	rate: 1
+});
+
+export function pubKey(pubkey: string, d_tag: string): string {
+	return `30040:${pubkey}:${d_tag}`;
+}
+
+export function discoveryFor(pubkey: string, d_tag: string): api.NarrationDiscovery | null {
+	return recordingsByPub[pubKey(pubkey, d_tag)] ?? null;
+}
+
+export function isLoading(pubkey: string, d_tag: string): boolean {
+	return loadingByPub[pubKey(pubkey, d_tag)] ?? false;
+}
+
+/** Recordings for one node coordinate, from whichever publication has it cached. */
+export function recordingsFor(coord: string): api.NarrationRecording[] {
+	for (const d of Object.values(recordingsByPub)) {
+		const n = d.nodes.find((x) => x.coord === coord);
+		if (n) return n.recordings;
+	}
+	return [];
+}
+
+/** The recording that plays for `coord`: the user's pick, else the top rank. */
+export function activeRecording(coord: string): api.NarrationRecording | null {
+	const list = recordingsFor(coord);
+	if (list.length === 0) return null;
+	const id = chosen[coord];
+	return (id && list.find((r) => r.id === id)) || list[0];
+}
+
+export function choose(coord: string, recordingId: string) {
+	chosen[coord] = recordingId;
+	// Swap it into the live playlist too, if that node is queued.
+	const item = player.playlist.find((p) => p.coord === coord);
+	const rec = recordingsFor(coord).find((r) => r.id === recordingId);
+	if (item && rec) {
+		item.recording = rec;
+		item.piece = 0;
+		item.urlIndex = 0;
+	}
+}
+
+/** Total narrated nodes / recordings across the cached tree of a publication. */
+export function summary(pubkey: string, d_tag: string): { sections: number; narrated: number; recordings: number } {
+	const d = discoveryFor(pubkey, d_tag);
+	if (!d) return { sections: 0, narrated: 0, recordings: 0 };
+	const leaves = d.nodes.filter((n) => !n.is_index);
+	return {
+		sections: leaves.length,
+		narrated: leaves.filter((n) => n.recordings.length > 0).length,
+		// Section recordings only — the root's own 32176 is a container, not
+		// something to listen to on its own.
+		recordings: leaves.reduce((a, n) => a + n.recordings.length, 0)
+	};
+}
+
+export async function refresh(
+	pubkey: string,
+	d_tag: string,
+	policy: 'local_only' | 'local_first' | 'fetch_always' = 'local_only'
+): Promise<api.NarrationDiscovery | null> {
+	const key = pubKey(pubkey, d_tag);
+	loadingByPub[key] = true;
+	try {
+		const d = await api.getNarrations(pubkey, d_tag, policy);
+		recordingsByPub[key] = d;
+		return d;
+	} catch (e) {
+		console.warn('[narration] discovery failed', e);
+		return null;
+	} finally {
+		loadingByPub[key] = false;
+	}
+}
+
+/** Build the play-all list for a publication from its cached discovery:
+ *  every leaf with a recording, in tree order. */
+export function playlistFor(pubkey: string, d_tag: string): PlaylistItem[] {
+	const d = discoveryFor(pubkey, d_tag);
+	if (!d) return [];
+	const out: PlaylistItem[] = [];
+	for (const n of d.nodes) {
+		if (n.is_index) continue;
+		const rec = activeRecording(n.coord);
+		if (rec && pieceUrls(rec).length > 0) out.push({ coord: n.coord, title: n.title, recording: rec, piece: 0, urlIndex: 0 });
+	}
+	return out;
+}
+
+/** Start playing: the whole publication from `startCoord` (or its first
+ *  narrated section). */
+export function playPublication(pubkey: string, d_tag: string, pubTitle: string | null, startCoord?: string) {
+	const list = playlistFor(pubkey, d_tag);
+	if (list.length === 0) return false;
+	let idx = startCoord ? list.findIndex((p) => p.coord === startCoord) : 0;
+	if (idx < 0) idx = 0;
+	player.playlist = list;
+	player.index = idx;
+	player.pubCoord = pubKey(pubkey, d_tag);
+	player.pubTitle = pubTitle;
+	player.error = null;
+	player.position = 0;
+	player.playing = true;
+	return true;
+}
+
+/** Play one specific recording for a node (from the recordings panel). */
+export function playRecording(coord: string, title: string, rec: api.NarrationRecording, pubTitle: string | null) {
+	choose(coord, rec.id);
+	const existing = player.playlist.findIndex((p) => p.coord === coord);
+	if (existing >= 0 && player.pubTitle === pubTitle) {
+		player.index = existing;
+	} else {
+		player.playlist = [{ coord, title, recording: rec, piece: 0, urlIndex: 0 }];
+		player.index = 0;
+		player.pubCoord = null;
+		player.pubTitle = pubTitle;
+	}
+	player.error = null;
+	player.position = 0;
+	player.playing = true;
+}
+
+export function current(): PlaylistItem | null {
+	return player.playlist[player.index] ?? null;
+}
+
+export function currentUrl(): string | null {
+	const c = current();
+	if (!c) return null;
+	return pieceUrls(c.recording)[c.piece]?.[c.urlIndex] ?? null;
+}
+
+/** Pieces of the current item: (index, count). */
+export function currentPiece(): { piece: number; pieces: number } {
+	const c = current();
+	return c ? { piece: c.piece, pieces: pieceUrls(c.recording).length } : { piece: 0, pieces: 0 };
+}
+
+export function toggle() {
+	if (player.index < 0) return;
+	player.playing = !player.playing;
+}
+
+export function pause() {
+	player.playing = false;
+}
+
+/** Advance: the next piece of the same section first, then the next section. */
+export function next(): boolean {
+	const c = current();
+	if (c && c.piece + 1 < pieceUrls(c.recording).length) {
+		c.piece += 1;
+		c.urlIndex = 0;
+		player.position = 0;
+		player.error = null;
+		return true;
+	}
+	if (player.index + 1 < player.playlist.length) {
+		player.index += 1;
+		const n = current();
+		if (n) {
+			n.piece = 0;
+			n.urlIndex = 0;
+		}
+		player.position = 0;
+		player.error = null;
+		return true;
+	}
+	player.playing = false;
+	return false;
+}
+
+export function prev() {
+	const c = current();
+	if (c && c.piece > 0) {
+		c.piece = 0;
+		c.urlIndex = 0;
+		player.position = 0;
+		player.error = null;
+		return;
+	}
+	if (player.index > 0) {
+		player.index -= 1;
+		const n = current();
+		if (n) {
+			n.piece = 0;
+			n.urlIndex = 0;
+		}
+		player.position = 0;
+		player.error = null;
+	}
+}
+
+/** The current URL failed: try the next candidate server, else skip ahead. */
+export function failover(): 'retry' | 'next' | 'stop' {
+	const c = current();
+	if (!c) return 'stop';
+	if (c.urlIndex + 1 < (pieceUrls(c.recording)[c.piece]?.length ?? 0)) {
+		c.urlIndex += 1;
+		return 'retry';
+	}
+	player.error = `no server answered for "${c.title}"`;
+	return next() ? 'next' : 'stop';
+}
+
+export function stop() {
+	player.playing = false;
+	player.playlist = [];
+	player.index = -1;
+	player.position = 0;
+	player.duration = 0;
+	player.pubCoord = null;
+	player.pubTitle = null;
+	player.error = null;
+}
+
+export function isPlayingCoord(coord: string): boolean {
+	return player.playing && current()?.coord === coord;
+}
+
+export function setRate(rate: number) {
+	player.rate = rate;
+}
+
+export { player };
+
+export function fmtTime(s: number): string {
+	if (!Number.isFinite(s) || s < 0) return '0:00';
+	const m = Math.floor(s / 60);
+	const r = Math.floor(s % 60);
+	const h = Math.floor(m / 60);
+	return h > 0 ? `${h}:${String(m % 60).padStart(2, '0')}:${String(r).padStart(2, '0')}` : `${m}:${String(r).padStart(2, '0')}`;
+}
+
+export function fmtBytes(b: number): string {
+	if (b < 1024 * 1024) return `${Math.max(1, Math.round(b / 1024))} KiB`;
+	return `${(b / (1024 * 1024)).toFixed(b < 10 * 1024 * 1024 ? 1 : 0)} MiB`;
+}
+
+export function matchLabel(m: api.NarrationVersionMatch): string {
+	return m === 'exact' ? 'this version' : m === 'other_version' ? 'other version' : 'unpinned';
+}

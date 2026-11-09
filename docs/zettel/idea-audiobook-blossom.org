@@ -1,0 +1,236 @@
+#+TITLE: Idea: audiobooks — TTS per section, Blossom storage, NKBIP-07 indexes
+#+TYPE: idea
+#+STATUS: built on feat/audiobook-blossom — engine + web, live-verified 2026-11-09 (unmerged)
+#+DATE: 2026-11-09
+
+* The ask
+
+Read a publication aloud. Generate narration per section with ppq.ai's TTS,
+store the audio on Blossom, publish an event tree that maps each recording
+to the section (and version) it narrates, and let any reader of the book
+discover, play, and mirror those recordings.
+
+* Research (what the specs actually give us)
+
+** ppq.ai TTS (=POST https://api.ppq.ai/v1/audio/speech=, Bearer key)
+OpenAI-compatible body: =model=, =input=, optional =voice=, optional
+=language= (ISO 639-1; 422 on voice/language mismatch). Output is an audio
+body — the docs only ever show =.mp3=; =response_format= is undocumented.
+=GET /v1/audio/models= (no auth) returns per-model pricing; =GET
+/v1/audio/voices?language=en= (no auth) the voices.
+
+| model                 | api price / 1k chars | input cap per call |
+|-----------------------+----------------------+--------------------|
+| =deepgram_aura_2=     | $0.0158              | 2000 chars         |
+| =eleven_flash_v2_5=   | $0.0422              | 5000 chars         |
+| =eleven_multilingual_v2= | $0.1899           | 5000 chars         |
+| =tinfoil-voxtral-tts= | $0.0042 (min $0.0021 per 1200-char chunk) | 1200 chars |
+
+Consequence: every section must be *chunked at sentence boundaries* into
+≤cap pieces, one call each, then joined. The existing =ProviderRegistry=
+(=src/providers.rs=) already holds the ppq key, balance, and the
+=needs_funding= ceiling gate — TTS is a second spend path on the same
+account, not a new provider. (No =providers.json= exists in the local data
+dir today: the account has to be created/funded in the agent-services
+modal before any generation runs.)
+
+** Blossom (hzrd149/blossom, BUD-01…12)
+- BUD-01 =GET /<sha256>.ext= with range requests + CORS =*= → the browser
+  can stream straight from the server; no engine proxy for playback.
+- BUD-02 =PUT /upload= (raw bytes, =Content-Type=, optional =X-SHA-256=) →
+  blob descriptor ={url, sha256, size, type, uploaded}=; BUD-06 =HEAD
+  /upload= preflight. BUD-08 may add a =nip94= tag array.
+- BUD-11 auth: a signed **kind 24242** event, =t= verb (=upload= / =get= /
+  =delete= / =list= / =media=), =expiration=, one or more =x= (sha256),
+  optional =server=, sent as =Authorization: Nostr <base64url>=. Upload and
+  mirror *require* =x=, so the hash is known before signing.
+- BUD-04 =PUT /mirror= with body ={"url": …}= and the *same* upload token →
+  the server pulls and verifies against =x=.
+- BUD-03 kind 10063 =["server", url]…= = a user's server list, ordered;
+  clients extract the hash from a dead URL and retry the author's servers.
+- BUD-10 =blossom:<sha>.<ext>?xs=&as=&sz== URI.
+- BUD-07 402 + =X-Lightning= / =X-Cashu= for paid servers.
+- blossom.band is live and answers =HEAD /upload= with 401 "authorization
+  required" — open to any signed pubkey. Limits (its site, 2026-11-09):
+  a hard cap of **100 MiB per upload, 20 MiB for free uploads**, no limit
+  on the number of uploads or retention. At 48 kbps that is ≈ 58 min of
+  narration per free blob, ≈ 4.8 h paid — so the generator splits a
+  longer section into several ordered =b= pieces (≤ 20 MiB each,
+  =DEFAULT_PIECE_BYTES=), runs a BUD-06 =HEAD /upload= preflight per
+  blob, and the player plays a leaf's pieces back to back.
+
+** NKBIP-07 — Hierarchical Blossom Piece Indexes (the referenced note)
+{{ref:30817:fd208ee8c8f283780a9552896e4823cc9dc6bfd442063889577106940fd927c1:nkbip-07|NKBIP-07}}
+by Silberengel: **kind 32176**, parameterized replaceable, the NKBIP-01
+shape applied to blobs. =d= + =title= required; =a= tags are *child 32176
+indexes only*; =b= tags are ordered piece hashes =["b", sha256, bytes]=;
+=x= = full-file digest, =size=, =type= (=media=), =blossom= server hints,
+=image=, =t=, =T=/=N= slugs; =content= may hold a transcript with
+=transcript= ∈ {txt, vtt, srt, json}. ≤1000 =a=, ≤1000 =b= per event.
+Assembly: local =b= first, then each =a= child, recursively.
+
+What it does *not* define: a tag that says "this index narrates / is a
+rendition of Nostr event X". That is the gap this feature fills (below),
+and it should go back to the NKBIP-07 author as a proposed extension.
+
+* Data model (proposal)
+
+One 32176 tree per narration, mirroring the 30040 tree:
+
+#+begin_example
+root 32176  d=<nanoid>  title="<book title> (audio, <voice>)"
+  A  30040:pk:d              ← the publication (live coordinate)
+  E  <30040 event id>        ← the exact index version narrated
+  K  30040
+  blossom https://blossom.band
+  type media · m audio/mpeg · voice · model · lang
+  a → leaf 32176 per section, in TOC order (label = section title)
+
+leaf 32176  d=<nanoid>  title="<section title>"
+  A  30041:pk:d              ← the section coordinate
+  E  <30041 event id>        ← the version whose text was spoken
+  K  30041
+  b  <sha256 of the joined mp3>  <bytes>
+  x  <same sha256> · size · duration · m audio/mpeg
+  blossom https://blossom.band
+  content = spoken plain text (transcript txt)   [optional, default on?]
+#+end_example
+
+- =A=/=E=/=K= are the NIP-22 / NKBIP-01-insertions scope letters already
+  used in this codebase for "the event this is about"; they are
+  single-letter so =#A= / =#E= are relay-indexable (nostrdb packs 64-hex
+  tag values as ids, so =#E= works locally too — see =git.rs=). They do
+  not collide with NKBIP-07's =a= (children) or =e= (unused).
+- Discovery for step 2 is therefore one filter per tree node:
+  =kinds:[32176], #A:[coord]= → every narration by anyone, any version.
+  Ranking: =E= equals the loaded event id (exact text) → same =A= with a
+  different =E= (another version, marked stale) → by created_at.
+- One chapter = one joined blob (one =b=). The ≤cap TTS chunks are a
+  generation detail; we do *not* publish them as separate pieces, so a
+  section plays from a single =<audio src>=. "Play the whole book" is
+  sequential leaf playback from the root, not a second concatenated blob.
+- Joining MP3s: ppq returns MP3 (format unselectable so far). Pure-Rust
+  frame concatenation (strip ID3v2 + the Xing/Info frame off chunks 2..n,
+  same model/voice/bitrate throughout) is portable to Android; ffmpeg is
+  not a runtime dependency we can assume.
+- Spoken text comes from the section's content after stripping its =m=
+  markup and nostrdown tokens (engine-side: tokenizer exists; markup→text
+  pass is new).
+
+* Workflow
+
+1. *Generate* (author, costs money): reader → tools → "Narrate". Engine
+   walks the 30040 tree, builds spoken text per section, shows a cost
+   estimate (chars × model price) behind the same ceiling gate as chat
+   turns, then per section: chunk → N calls → join → sha256 → sign 24242
+   =upload= (user's active signer; a =BlossomSigner= beside =AuthSigner=,
+   kind 24242 only) → =PUT /upload= → leaf 32176 template → sign →
+   ingest (local-until-broadcast) → root 32176 last. Progress over SSE
+   like the publication stream. Resumable: a leaf whose =E= + voice
+   already exists locally is skipped.
+2. *Pull* (any reader): when the publication tree streams, the engine
+   also queries =#A= for the root and each section (LocalFirst; relay
+   backfill Confirm-gated) and ships the ranked recordings per node — a
+   new =PubLoadEvent::Audio= (or a sibling endpoint) so the browser never
+   ranks versions itself.
+3. *Mirror*: a recording's menu → "Mirror to my server": engine signs a
+   24242 =upload= token with that =x= and =PUT /mirror {url}= to a server
+   from the user's Blossom set. Open: whether to also publish the user's
+   own 32176 (same =A=/=E=, own =blossom= hint) so others find the copy,
+   or leave it as a local-availability win (BUD-03 says readers retry
+   the *uploader's* 10063 list, which the mirrorer is not on).
+4. *Play*: events first, bytes on demand. Per-section ▶ in the reader,
+   ▶ on the root for sequential play; one =<audio>= element fed the leaf
+   URL list; URL = =blossom= hint + =/<sha>.mp3=, fallback across the
+   user's and the author's (10063) server lists by hash per BUD-03.
+   Playback position is view state (frontend).
+
+* Settings / stores
+
+- A local Blossom server set (=<data_dir>/blossom.json=, same pattern as
+  =relays.json=): upload targets, mirror target. Seed from the user's own
+  kind 10063 as a *suggestion*, never auto-publish one
+  ([[file:decision-engine-owns-provider-credentials.org][credentials stay
+  engine-side]], publishing philosophy).
+- TTS defaults: model, voice, language; per-run override.
+
+* Decisions (confirmed 2026-11-09)
+
+- *Binding = all three of =A= / =E= / =K=.* =A= + =K= span every version
+  of a coordinate by every narrator; =E= pins the exact event whose text
+  was spoken. Recordings of another version are offered below exact
+  matches, never hidden.
+- *Transcript on by default.* The spoken text rides in =content=
+  (=transcript txt=). It is what lets a reader diff a recording of
+  another version against the text in front of them and decide whether
+  it is close enough to listen to — or narrate their own.
+- *Nested publications: one walk.* Discovery queries the root index,
+  traverses every nested index and leaf, and asks =#A= for each node;
+  each section lists its own recordings plus other-version ones.
+- *ppq output is MP3, period.* Probed with the live account: three
+  calls with no / =opus= / =wav= =response_format= all returned
+  =audio/mpeg= (MPEG-2 L3, 48 kbps, 24 kHz mono, bare frames, no ID3).
+  Joining = frame concatenation, pure Rust (=narration::join_mp3=).
+- Engine shape: =src/blossom.rs= (24242 auth, upload / mirror / head,
+  =blossom.json= server set, 10063 parse) + =src/narration.rs= (32176
+  parse / templates / ranking, spoken-text pass, chunker, MP3 join,
+  =NarrationEngine=, handlers under =/api/v1/narration/*=).
+
+* Built (2026-11-09, verified on an isolated engine)
+
+- Engine: =src/blossom.rs=, =src/narration.rs=, =ProviderRegistry::ppq_tts=
+  / =ppq_audio_models= / =ppq_audio_voices=; routes =/api/v1/narration/
+  {models,voices,servers,estimate,generate,for/:pk/:d,mirror}=.
+- Language: the modal's language dropdown is derived from the languages
+  the selected model's voices actually cover and filters the voice list;
+  on generation the engine stamps =lang= from the caller's choice, else
+  from the chosen voice's language in ppq's voice list, so the 32176
+  always says what language it is spoken in.
+- Voice preview: the modal plays ppq's canned clip per voice (free,
+  =preview_url=) and =POST /narration/sample= speaks ≤300 chars of the
+  user's own section text (TTS only, ≈ $0.001, nothing stored) so a voice
+  is judged on the actual prose before a book is spent on.
+- Web: =narration.svelte.ts= (recordings cache + the one player),
+  =NarrationPlayer= (bottom-left strip above the modeline), =NarrateModal=
+  (model / voice / language / server, per-section ticks, cost vs. ppq
+  balance, SSE progress), =NarrationDrawer= in the reader (ranked
+  recordings per section, play / use / mirror / transcript with a
+  sentence diff against the current text / narrate), ▶ on each narrated
+  section title + a toolbar *▶ listen*, Settings › Narration (Blossom
+  server list, 10063 suggestions).
+- Live run: a 2-section fixture → 2 leaves + root signed, blobs on
+  blossom.band (HEAD 200, =audio/mpeg=, range), re-run skipped both
+  sections and reused the root, mirror to blossom.primal.net returned a
+  fresh descriptor (201). Cost $0.0093 on =deepgram_aura_2=.
+  Recipe: =docs/commands.org= "Narration".
+
+* Android background playback (open — needs a native plugin)
+
+wry's =WryActivity.onPause()= calls =mWebView.onPause()= (wry 0.55.1,
+=src/android/kotlin/WryActivity.kt:130=), which suspends HTML5 media, so
+the WebView player stops the moment tendrl leaves the foreground. The
+Media Session API (metadata + play/pause/prev/next handlers, now set by
+=NarrationPlayer=) gives lock-screen controls where the WebView is alive
+but cannot keep audio running. The fix is a Kotlin plugin beside
+=Nip55Plugin.kt=: a foreground service holding an ExoPlayer/MediaPlayer +
+MediaSession, with the playlist handed over from JS (URLs, titles,
+narrator) and position/state events back; the web player becomes a
+remote control when =shell=mobile=. Battery/notification permissions
+(=FOREGROUND_SERVICE_MEDIA_PLAYBACK=, =POST_NOTIFICATIONS=) in the
+manifest. Estimated as its own slice.
+
+* Open questions
+
+- Take the =A=/=E=/=K= binding back to the NKBIP-07 author as a proposed
+  extension (it is tendrl's convention until then).
+- Mirroring: publish the mirrorer's own 32176 (same =A=/=E=, own
+  =blossom= hint) so others find the copy, or keep it a local win?
+
+* Related
+
+- [[file:index.org][Index]]
+- [[file:feat-reader.org][Reader]] — where ▶ lives
+- [[file:feat-agent-services.org][Agent services]] — the ppq account that pays
+- [[file:feat-publishing.org][Publishing]] — sign-is-the-snapshot, local-until-broadcast
+- [[file:idea-version-semantics.org][Version semantics]] — exact-version vs live pointer is the =E= / =A= split here
+- [[file:decision-nip42-auth-as-user.org][NIP-42 auth as the user]] — the single-kind signer pattern 24242 copies

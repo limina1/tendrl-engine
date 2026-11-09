@@ -302,6 +302,36 @@ sections and embeds new events on a 60-second interval when embeddings are enabl
   run-in-place, chevron unpacks PIPE stages and `in` chains), dual wand on
   the search panel (`+🪄` saves the typed query, `🪄` opens the form-driven
   spell builder incl. pipeline mode and chain-to-a-spell projections).
+- **`blossom.rs`**: Blossom blob storage, pure above the client — BUD-11
+  kind-24242 auth template + `Authorization: Nostr <b64>` header, BUD-02
+  `PUT /upload` / BUD-04 `PUT /mirror` / BUD-01 `HEAD`, blob descriptor,
+  BUD-03 kind-10063 server-list parse, `BlossomStore` at
+  `<data_dir>/blossom.json` (ordered: first = upload target, rest = mirror
+  targets; the user's 10063 is read as a *suggestion*, never auto-published).
+  The 24242 is signed as the **user** through the `SigningController`, like
+  NIP-42 AUTH: short-lived, scoped to the blob hash, never stored.
+- **`narration.rs`**: publications read aloud — kind **32176** NKBIP-07
+  "Blossom piece index" trees mirroring the 30040 tree: one leaf per section
+  (one `b` piece = the joined chapter MP3) under one root (`a` children in
+  TOC order). Binding to the narrated node is tendrl's proposed NKBIP-07
+  extension and needs all three letters: `A` (coordinate) + `K` (kind) span
+  every version by every narrator, `E` pins the exact event whose text was
+  spoken; `content` carries the spoken text (`transcript txt`, default on)
+  so another version's recording can be diffed against the current text.
+  Pure: `spoken_text` (markup + nostrdown → prose, by `m` mimetype),
+  `chunk_text` (sentence-boundary chunks ≤ the model's cap), `join_mp3`
+  (frame concat; strips ID3 + Xing), `rank` (exact → other version →
+  unpinned, newest replaceable wins). `NarrationEngine`: `plan` / `discover`
+  (`#A` per tree node, LocalFirst, relay round Confirm-gated) / `generate`
+  (ppq TTS via `ProviderRegistry::ppq_tts` → Blossom → sign+ingest per
+  section → root → optional broadcast; SSE `GenEvent`s; skips sections
+  already narrated for the same `E` + voice) / `mirror`. API under
+  `/api/v1/narration/*` (`models`, `voices`, `servers`, `estimate`,
+  `generate` SSE, `for/:pubkey/:d_tag`, `mirror`). ppq returns MP3 only
+  (`response_format` ignored, probed 2026-11-09). Web: `narration.svelte.ts`
+  store (one global player, recordings cache), `NarrationPlayer` strip,
+  `NarrateModal`, reader `NarrationDrawer` + per-section ▶, Settings ›
+  Narration. Design: `docs/zettel/idea-audiobook-blossom.org`.
 - **`chat.rs`**: Pure state logic for LLM chat fragments, edit mode, context
   injection, message serialization (no IO)
 - **`llm.rs`**: Async `LLMProvider` trait — `NoopProvider` (testing) and
@@ -420,4 +450,5 @@ stored `whats-up` — no need to hand-normalize; quote values containing spaces.
   10007 (NIP-51/65 lists), 30002 (relay sets), 30023 (long-form), 30040 (publication
   index), 30041 (publication section), 30045 (bookshelf), 30817/30818 (wiki),
   9802 (highlight), 30617/30618 (git repository + state), 1621 (git issue),
-  1630–1633 (git status).
+  1630–1633 (git status), 32176 (NKBIP-07 narration / Blossom piece index),
+  24242 (Blossom auth, never stored), 10063 (Blossom server list, read only).

@@ -20,6 +20,54 @@
 	import { trigger as triggerTip, completeTip } from '$lib/wm/discovery.svelte';
 	import { discovery, rearmDiscovery, rearmFeatureTours, setWalkthroughEnabled } from '$lib/wm/discovery.svelte';
 	import * as api from '$lib/api';
+
+	// --- Narration: the Blossom server set (upload target first, mirrors
+	// after) — <data_dir>/blossom.json, engine-owned; the user's kind 10063
+	// is offered as suggestions, never auto-adopted or auto-published.
+	let narServers = $state<string[]>([]);
+	let narSuggested = $state<string[]>([]);
+	let narLoaded = $state(false);
+	async function loadNarServers() {
+		try {
+			const r = await api.getNarrationServers();
+			narServers = r.servers;
+			narSuggested = r.suggested.filter((u) => !r.servers.includes(u));
+		} catch {
+			// Older engine without the route: block stays empty.
+		} finally {
+			narLoaded = true;
+		}
+	}
+	async function saveNarServers(next: string[]) {
+		try {
+			const r = await api.setNarrationServers(next);
+			narServers = r.servers;
+			narSuggested = narSuggested.filter((u) => !r.servers.includes(u));
+		} catch (e) {
+			app.pushToast(e instanceof Error ? e.message : String(e), 'error');
+		}
+	}
+	async function addNarServer(preset?: string) {
+		const v =
+			preset ??
+			(await promptText({
+				title: 'Blossom server',
+				placeholder: 'blossom.band',
+				hint: 'A BUD-01/02 server. The first in the list receives narration uploads; the others are mirror targets.',
+				confirmLabel: 'Add'
+			}));
+		if (!v) return;
+		await saveNarServers([...narServers, v]);
+	}
+	function removeNarServer(url: string) {
+		void saveNarServers(narServers.filter((u) => u !== url));
+	}
+	function promoteNarServer(url: string) {
+		void saveNarServers([url, ...narServers.filter((u) => u !== url)]);
+	}
+	$effect(() => {
+		if (!narLoaded) void loadNarServers();
+	});
 	import { serviceRows } from '$lib/services';
 	import { entryDrafts } from '$lib/wm/entry-drafts';
 	import {
@@ -1591,6 +1639,42 @@
 				are off by default and broadcast signed events when enabled.
 			</p>
 		{/if}
+		</div>
+	</details>
+
+	<!-- Narration: TTS recordings of publications stored on Blossom and
+	     bound to sections by kind-32176 events. Generation runs on the ppq.ai
+	     agent service (above); this block owns where the audio is stored. -->
+	<details class="settings-group">
+		<summary class="settings-group-title">Narration</summary>
+		<div class="settings-group-body">
+			<div class="settings-subtitle">Blossom servers</div>
+			{#each narServers as url, i (url)}
+				<div class="settings-row">
+					<span class="settings-label">
+						{url.replace(/^https?:\/\//, '')}
+						<span class="ai-tool-cat">{i === 0 ? 'uploads go here' : 'mirror target'}</span>
+					</span>
+					{#if i > 0}
+						<button class="settings-action" onclick={() => promoteNarServer(url)} title="Make this the upload target">↑ first</button>
+					{/if}
+					<button class="settings-action settings-action--danger" onclick={() => removeNarServer(url)} title="Remove">×</button>
+				</div>
+			{/each}
+			<div class="settings-row">
+				<button class="settings-action" onclick={() => addNarServer()}>+ add a server</button>
+				{#each narSuggested as url (url)}
+					<button class="settings-action" onclick={() => addNarServer(url)} title="From your kind-10063 server list">+ {url.replace(/^https?:\/\//, '')}</button>
+				{/each}
+			</div>
+			<p class="settings-hint">
+				Narrating a publication speaks each section with ppq.ai TTS, uploads the audio to the
+				first server (signed as you, BUD-11), and publishes one kind-32176 event per section
+				bound to the exact section version. "Mirror" on a recording copies its blob to the
+				other servers. Sections longer than the per-blob cap (20 MiB ≈ 58 min — blossom.band's free
+				limit; 100 MiB on its paid plans) upload as several ordered pieces. This list is local — your
+				kind-10063 list is only read as suggestions.
+			</p>
 		</div>
 	</details>
 

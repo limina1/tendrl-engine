@@ -22,6 +22,8 @@
 	import HighlightComposerModal from '$lib/components/HighlightComposerModal.svelte';
 	import EventComposerModal from '$lib/components/EventComposerModal.svelte';
 	import AgentServicesModal from '$lib/components/AgentServicesModal.svelte';
+	import NarrateModal from '$lib/components/NarrateModal.svelte';
+	import NarrationPlayer from '$lib/components/NarrationPlayer.svelte';
 	// fetch-events self-starts the SSE subscription at module scope; we
 	// only need confirmState here to render the modal.
 	import { confirmState } from '$lib/network/fetch-events.svelte';
@@ -231,6 +233,14 @@
 {#if app.agentServicesModal}
 	<AgentServicesModal />
 {/if}
+
+{#if app.narrateModal}
+	<NarrateModal />
+{/if}
+
+<!-- The one narration player: renders only while a playlist is loaded,
+     survives buffer switches. -->
+<NarrationPlayer />
 
 <ComparePublishModal />
 

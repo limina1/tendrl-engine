@@ -82,6 +82,15 @@ export type EventComposerDraft = {
  *  content — publishing it is the replacement. */
 export type EventComposerPrefill = { kind: number; content: string; tags: string[][] };
 
+/** Narrate-a-publication modal (NarrateModal in +layout). `only` preselects
+ *  section coordinates (e.g. "narrate this section myself"). */
+export type NarrateModalState = {
+	pubkey: string;
+	d_tag: string;
+	title: string | null;
+	only?: string[];
+};
+
 export type AgentServicesModalState = {
 	view: 'signup' | 'manage' | 'fund';
 	focus?: api.ProviderKind;
@@ -524,6 +533,8 @@ function _createAppState() {
 	// by `agentServicesModal` (one modal hosts signup, funding, management).
 	let providersState: api.ProvidersState | null = $state(null);
 	let agentServicesModal: AgentServicesModalState | null = $state(null);
+	// Narration (TTS → Blossom → kind 32176): the narrate modal's open payload.
+	let narrateModal: NarrateModalState | null = $state(null);
 	/** A user turn the engine refused for lack of balance — resent from the
 	 *  modal once the service is funded or switched. */
 	let pendingAgentMessage: string | null = $state(null);
@@ -5298,6 +5309,8 @@ function _createAppState() {
 		get providersState() { return providersState; },
 		get agentServicesModal() { return agentServicesModal; },
 		set agentServicesModal(v: AgentServicesModalState | null) { agentServicesModal = v; },
+		get narrateModal() { return narrateModal; },
+		set narrateModal(v: NarrateModalState | null) { narrateModal = v; },
 		get pendingAgentMessage() { return pendingAgentMessage; },
 		set pendingAgentMessage(v: string | null) { pendingAgentMessage = v; },
 		refreshProviders,

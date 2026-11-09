@@ -468,6 +468,22 @@ pub async fn start(opts: ServeOptions) -> anyhow::Result<RunningServer> {
         .route("/api/v1/chat/load", put(api::chat_load_fragments))
         // Paid model services: accounts, balances, funding, model choice.
         .route("/api/v1/providers", get(crate::providers::handlers::state))
+        // Narration: TTS → Blossom → kind-32176 (NKBIP-07) trees bound to a
+        // publication; discovery + mirroring for readers.
+        .route("/api/v1/narration/models", get(crate::narration::handlers::models))
+        .route("/api/v1/narration/voices", get(crate::narration::handlers::voices))
+        .route(
+            "/api/v1/narration/servers",
+            get(crate::narration::handlers::servers_get).post(crate::narration::handlers::servers_set),
+        )
+        .route("/api/v1/narration/estimate", post(crate::narration::handlers::estimate))
+        .route("/api/v1/narration/generate", post(crate::narration::handlers::generate))
+        .route("/api/v1/narration/sample", post(crate::narration::handlers::sample))
+        .route(
+            "/api/v1/narration/for/:pubkey/:d_tag",
+            get(crate::narration::handlers::discover),
+        )
+        .route("/api/v1/narration/mirror", post(crate::narration::handlers::mirror))
         .route("/api/v1/providers/select", post(crate::providers::handlers::select))
         .route("/api/v1/providers/ceiling", post(crate::providers::handlers::ceiling))
         .route("/api/v1/providers/self-test", post(crate::providers::handlers::self_test))
