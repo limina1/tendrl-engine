@@ -478,6 +478,7 @@ pub async fn start(opts: ServeOptions) -> anyhow::Result<RunningServer> {
         )
         .route("/api/v1/narration/estimate", post(crate::narration::handlers::estimate))
         .route("/api/v1/narration/generate", post(crate::narration::handlers::generate))
+        .route("/api/v1/narration/sample", post(crate::narration::handlers::sample))
         .route(
             "/api/v1/narration/for/:pubkey/:d_tag",
             get(crate::narration::handlers::discover),

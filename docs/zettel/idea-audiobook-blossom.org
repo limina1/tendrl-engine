@@ -181,6 +181,10 @@ leaf 32176  d=<nanoid>  title="<section title>"
 - Engine: =src/blossom.rs=, =src/narration.rs=, =ProviderRegistry::ppq_tts=
   / =ppq_audio_models= / =ppq_audio_voices=; routes =/api/v1/narration/
   {models,voices,servers,estimate,generate,for/:pk/:d,mirror}=.
+- Voice preview: the modal plays ppq's canned clip per voice (free,
+  =preview_url=) and =POST /narration/sample= speaks ≤300 chars of the
+  user's own section text (TTS only, ≈ $0.001, nothing stored) so a voice
+  is judged on the actual prose before a book is spent on.
 - Web: =narration.svelte.ts= (recordings cache + the one player),
   =NarrationPlayer= (bottom-left strip above the modeline), =NarrateModal=
   (model / voice / language / server, per-section ticks, cost vs. ppq

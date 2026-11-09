@@ -3188,6 +3188,34 @@ export function mirrorNarration(req: { url: string; server?: string }): Promise<
 	return fetchJson(`${NARRATION}/mirror`, { method: 'POST', body: JSON.stringify(req) });
 }
 
+/** Speak a short text with a voice (TTS only — no upload, no event; a
+ *  fraction of a cent). Resolves to an object URL for an <audio> element;
+ *  the caller revokes it. */
+export async function sampleNarration(req: {
+	model: string;
+	voice?: string;
+	language?: string;
+	text: string;
+}): Promise<string> {
+	const res = await fetch(`${NARRATION}/sample`, {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify(req)
+	});
+	if (!res.ok) {
+		const text = await res.text().catch(() => '');
+		let msg = text;
+		try {
+			msg = (JSON.parse(text) as { error?: { message?: string } | string }).error as string;
+			if (typeof msg === 'object' && msg) msg = (msg as { message?: string }).message ?? text;
+		} catch {
+			// plain text
+		}
+		throw new Error(msg || `${res.status}`);
+	}
+	return URL.createObjectURL(await res.blob());
+}
+
 /** POST SSE: run a narration, calling `onEvent` per engine event. Resolves
  *  when the stream ends (after `done` or a fatal `error`). */
 export async function streamNarration(

@@ -2338,6 +2338,7 @@ printf 'timeout_ms = 8000\ninitial_relays = ["wss://theforest.nostr1.com"]\n[emb
 curl -s $B/narration/models | jq '.models[].id'           # live ppq prices merged over the built-in caps
 curl -s $B/narration/servers                               # {"servers":["https://blossom.band"],"suggested":[]}
 curl -s -X POST $B/narration/estimate -d '{"pubkey":"'$PK'","d_tag":"'$D'","model":"deepgram_aura_2"}' | jq '{sections,total_chars,total_chunks,estimate_usd,balance_usd}'
+curl -s -X POST $B/narration/sample -H 'content-type: application/json' -d '{"model":"deepgram_aura_2","voice":"aura-2-thalia-en","text":"A few sentences of my own prose."}' -o sample.mp3 -w '%{http_code} %{content_type}\n'   # TTS only, ≈ $0.001, nothing stored
 curl -sN -X POST $B/narration/generate -H 'content-type: application/json' \
   -d '{"pubkey":"'$PK'","d_tag":"'$D'","model":"deepgram_aura_2","voice":"aura-2-thalia-en","broadcast":false}'
 #   SSE: plan → section_start → chunk… → uploaded {sha256,url} → signed {narration} → done {leaves,spent_usd}
@@ -2352,7 +2353,10 @@ coordinate), =E= (exact section event id), =K 30041=, one =b=, =blossom=,
 =A=/=E=/=K= → the 30040 and =a= children in TOC order. Re-running skips
 sections already narrated for the same =E= + voice (=force= re-does them).
 
-GUI: open the publication → tools (=T=) → *recordings N* → drawer; ▶ on a
-section title plays it (player strip bottom-left); *narrate* opens the
-modal (model, voice, per-section ticks, cost vs. balance). Settings ›
+GUI: open the publication → tools (=T=) → *narrate* opens the modal
+(model, voice with ▶ = the provider's free sample clip and *hear my text*
+= a paid ≈$0.001 sample of the first ticked section, per-section ticks,
+cost + expected size vs. balance); *recordings N* → drawer (ranked
+recordings, ⋮ event viewer, sources with HEAD check, mirror, narrate §);
+▶ on a section title plays it (player strip bottom-left). Settings ›
 Narration holds the Blossom server list.

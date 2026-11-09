@@ -2276,6 +2276,58 @@ pub mod handlers {
     }
 
     #[derive(Deserialize)]
+    pub struct SampleReq {
+        #[serde(default = "default_model")]
+        pub model: String,
+        #[serde(default)]
+        pub voice: Option<String>,
+        #[serde(default)]
+        pub language: Option<String>,
+        /// Text to speak; trimmed to `SAMPLE_MAX_CHARS`. When empty, a
+        /// fixed sentence.
+        #[serde(default)]
+        pub text: String,
+    }
+
+    /// Longest sample spoken by `POST /narration/sample` — a few sentences,
+    /// enough to judge a voice on the user's own prose, a fraction of a cent.
+    pub const SAMPLE_MAX_CHARS: usize = 300;
+
+    /// `POST /api/v1/narration/sample` — speak a short text with the chosen
+    /// voice and return the MP3 bytes. TTS only: nothing is uploaded, no
+    /// event is signed. Spends from the ppq balance.
+    pub async fn sample(
+        State(st): State<ChatAppState>,
+        Json(req): Json<SampleReq>,
+    ) -> std::result::Result<axum::response::Response, EngineError> {
+        if st.providers.snapshot().ppq.is_none() {
+            return Err(EngineError::BadRequest("no ppq.ai account — set one up under agent services first".into()));
+        }
+        let text = spoken_text(&req.text, None);
+        let mut text: String = text.chars().take(SAMPLE_MAX_CHARS).collect();
+        if let Some(cut) = text.rfind(['.', '!', '?']) {
+            if cut > SAMPLE_MAX_CHARS / 2 {
+                text.truncate(cut + 1);
+            }
+        }
+        if text.trim().is_empty() {
+            text = "This is how this voice reads your publication.".into();
+        }
+        let bytes = st
+            .providers
+            .ppq_tts(&req.model, req.voice.as_deref(), req.language.as_deref(), &text)
+            .await?;
+        Ok((
+            [
+                (axum::http::header::CONTENT_TYPE, AUDIO_MIME.to_string()),
+                (axum::http::header::CACHE_CONTROL, "no-store".to_string()),
+            ],
+            bytes,
+        )
+            .into_response())
+    }
+
+    #[derive(Deserialize)]
     pub struct ForQuery {
         pub policy: Option<String>,
     }

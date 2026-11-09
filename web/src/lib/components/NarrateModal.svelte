@@ -31,6 +31,60 @@
 	/** Section coordinates ticked for narration (empty set = all). */
 	let picked = $state<Record<string, boolean>>({});
 
+	// Hearing a voice before spending on a whole book: ppq's canned clip per
+	// voice (free, `preview_url`) and a paid sample of the user's own text.
+	let previewAudio: HTMLAudioElement | undefined = $state();
+	let previewing = $state<'clip' | 'sample' | null>(null);
+	let previewErr = $state<string | null>(null);
+	let sampleUrl: string | null = null;
+	const selectedVoice = $derived(voices.find((v) => v.id === voice) ?? null);
+	const sampleText = $derived.by(() => {
+		const first = sectionNodes.find((n) => picked[n.coord] !== false) ?? sectionNodes[0];
+		return first?.preview ?? '';
+	});
+	const sampleCost = $derived.by(() => {
+		const m = models.find((x) => x.id === model);
+		return m ? Math.max((300 / 1000) * m.price_per_1k, m.min_per_request ?? 0) : 0;
+	});
+
+	function stopPreview() {
+		previewAudio?.pause();
+		previewing = null;
+		if (sampleUrl) {
+			URL.revokeObjectURL(sampleUrl);
+			sampleUrl = null;
+		}
+	}
+	function playUrl(url: string, kind: 'clip' | 'sample') {
+		if (!previewAudio) return;
+		previewAudio.src = url;
+		previewing = kind;
+		previewAudio.play().catch((e) => {
+			previewErr = e instanceof Error ? e.message : String(e);
+			previewing = null;
+		});
+	}
+	function playClip() {
+		previewErr = null;
+		if (previewing === 'clip') return stopPreview();
+		stopPreview();
+		if (selectedVoice?.preview_url) playUrl(selectedVoice.preview_url, 'clip');
+	}
+	async function playSample() {
+		previewErr = null;
+		if (previewing === 'sample') return stopPreview();
+		stopPreview();
+		previewing = 'sample';
+		try {
+			sampleUrl = await api.sampleNarration({ model, voice: voice || undefined, language: language || undefined, text: sampleText });
+			playUrl(sampleUrl, 'sample');
+			void app.refreshProviders();
+		} catch (e) {
+			previewErr = e instanceof Error ? e.message : String(e);
+			previewing = null;
+		}
+	}
+
 	let running = $state(false);
 	let log = $state<{ kind: 'info' | 'ok' | 'warn' | 'err'; text: string }[]>([]);
 	let progress = $state<{ section: number; sections: number; chunk: number; chunks: number } | null>(null);
@@ -122,6 +176,7 @@
 
 	function close() {
 		if (running) return;
+		stopPreview();
 		app.narrateModal = null;
 	}
 
@@ -253,12 +308,36 @@
 				<input id="nm-lang" class="nm-input" placeholder="auto (ISO 639-1, e.g. en, de, pt)" bind:value={language} onchange={() => void loadVoices()} disabled={running} />
 
 				<label class="nm-label" for="nm-voice">voice</label>
-				<select id="nm-voice" class="nm-input" bind:value={voice} disabled={running}>
-					<option value="">provider default</option>
-					{#each voices as v (v.id)}
-						<option value={v.id}>{v.name ?? v.id}{v.language ? ` · ${v.language}` : ''}{v.gender ? ` · ${v.gender}` : ''}</option>
-					{/each}
-				</select>
+				<div class="nm-voice">
+					<select id="nm-voice" class="nm-input" bind:value={voice} onchange={stopPreview} disabled={running}>
+						<option value="">provider default</option>
+						{#each voices as v (v.id)}
+							<option value={v.id}>{v.name ?? v.id}{v.language ? ` · ${v.language}` : ''}{v.gender ? ` · ${v.gender}` : ''}</option>
+						{/each}
+					</select>
+					<button
+						class="nm-btn nm-btn--icon"
+						onclick={playClip}
+						disabled={running || !selectedVoice?.preview_url}
+						title={selectedVoice?.preview_url ? "Play the provider's sample clip for this voice (free)" : 'No sample clip for this voice'}
+						aria-label="Play voice sample"
+					>{previewing === 'clip' ? '⏹' : '▶'}</button>
+					<button
+						class="nm-btn nm-btn--icon"
+						onclick={playSample}
+						disabled={running || !ppqConfigured || !sampleText}
+						title={sampleText ? `Hear this voice read the opening of "${(sectionNodes.find((n) => picked[n.coord] !== false) ?? sectionNodes[0])?.title ?? 'the first section'}" (≈ ${usd(sampleCost)}, nothing is uploaded or published)` : 'Load a section first'}
+					>{previewing === 'sample' ? '⏹' : 'hear my text'}</button>
+				</div>
+				{#if selectedVoice?.description}
+					<span></span>
+					<div class="nm-detail">{selectedVoice.description}</div>
+				{/if}
+				{#if previewErr}
+					<span></span>
+					<div class="nm-detail nm-detail--bad">{previewErr}</div>
+				{/if}
+				<audio bind:this={previewAudio} onended={() => (previewing = null)} onerror={() => { if (previewing) { previewErr = 'could not play the sample'; previewing = null; } }}></audio>
 
 				<label class="nm-label" for="nm-server">upload to</label>
 				<select id="nm-server" class="nm-input" bind:value={server} disabled={running}>
@@ -422,6 +501,19 @@
 		padding: 4px 8px;
 		min-width: 0;
 		width: 100%;
+	}
+	.nm-voice {
+		display: flex;
+		gap: 4px;
+		align-items: center;
+		min-width: 0;
+	}
+	.nm-voice .nm-input {
+		flex: 1 1 auto;
+	}
+	.nm-btn--icon {
+		white-space: nowrap;
+		padding: 3px 7px;
 	}
 	.nm-opts {
 		display: flex;
