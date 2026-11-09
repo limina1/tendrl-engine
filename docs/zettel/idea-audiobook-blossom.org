@@ -1,6 +1,6 @@
 #+TITLE: Idea: audiobooks — TTS per section, Blossom storage, NKBIP-07 indexes
 #+TYPE: idea
-#+STATUS: plan — building on feat/audiobook-blossom (decisions confirmed 2026-11-09)
+#+STATUS: built on feat/audiobook-blossom — engine + web, live-verified 2026-11-09 (unmerged)
 #+DATE: 2026-11-09
 
 * The ask
@@ -170,6 +170,25 @@ leaf 32176  d=<nanoid>  title="<section title>"
   =blossom.json= server set, 10063 parse) + =src/narration.rs= (32176
   parse / templates / ranking, spoken-text pass, chunker, MP3 join,
   =NarrationEngine=, handlers under =/api/v1/narration/*=).
+
+* Built (2026-11-09, verified on an isolated engine)
+
+- Engine: =src/blossom.rs=, =src/narration.rs=, =ProviderRegistry::ppq_tts=
+  / =ppq_audio_models= / =ppq_audio_voices=; routes =/api/v1/narration/
+  {models,voices,servers,estimate,generate,for/:pk/:d,mirror}=.
+- Web: =narration.svelte.ts= (recordings cache + the one player),
+  =NarrationPlayer= (bottom-left strip above the modeline), =NarrateModal=
+  (model / voice / language / server, per-section ticks, cost vs. ppq
+  balance, SSE progress), =NarrationDrawer= in the reader (ranked
+  recordings per section, play / use / mirror / transcript with a
+  sentence diff against the current text / narrate), ▶ on each narrated
+  section title + a toolbar *▶ listen*, Settings › Narration (Blossom
+  server list, 10063 suggestions).
+- Live run: a 2-section fixture → 2 leaves + root signed, blobs on
+  blossom.band (HEAD 200, =audio/mpeg=, range), re-run skipped both
+  sections and reused the root, mirror to blossom.primal.net returned a
+  fresh descriptor (201). Cost $0.0093 on =deepgram_aura_2=.
+  Recipe: =docs/commands.org= "Narration".
 
 * Open questions
 

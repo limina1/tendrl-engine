@@ -36,6 +36,8 @@
 	import HighlightCapture from '$lib/components/HighlightCapture.svelte';
 	import ReadingControls from '$lib/components/ReadingControls.svelte';
 	import HighlightList from '$lib/components/HighlightList.svelte';
+	import NarrationDrawer from '$lib/components/NarrationDrawer.svelte';
+	import * as nar from '$lib/narration.svelte';
 	import HighlightsDrawer, {
 		type DrawerHighlight
 	} from '$lib/components/HighlightsDrawer.svelte';
@@ -638,6 +640,20 @@
 	// that's what makes click-to-scroll work for publication-level
 	// highlights that don't carry a section addr themselves.
 	let drawerOpen = $state(false);
+	// Recordings drawer (kind-32176 narrations bound to this tree).
+	let narrationOpen = $state(false);
+	const narrationSummary = $derived(
+		parsedAddr?.kind === 30040 ? nar.summary(parsedAddr.pubkey, parsedAddr.dTag) : { sections: 0, narrated: 0, recordings: 0 }
+	);
+	function goToSectionCoord(coord: string) {
+		const idx = sectionIndexForAddr(coord);
+		if (idx < 0) return;
+		if (viewMode === 'continuous') {
+			continuousView?.scrollToSection(idx);
+		} else {
+			currentSection = idx;
+		}
+	}
 
 	// Summary drawer — a publication/article/wiki `summary` tag renders
 	// under the title, open by default, closable from the title-row chip.
@@ -1192,6 +1208,9 @@
 					sections: pristineSections,
 					loadedDepth: treeDepth
 				});
+				// Recordings ride along with the book: local store only here;
+				// "fetch from relays" and the drawer's ⟳ reach relays.
+				if (parsedAddr?.kind === 30040) void nar.refresh(parsedAddr.pubkey, parsedAddr.dTag, 'local_only');
 			}
 		};
 
@@ -1835,6 +1854,8 @@
 		try {
 			const resp = await api.backfillPublication(parsedAddr.pubkey, parsedAddr.dTag);
 			if (resp.fetched > 0) runLoader();
+			// Pulling the book pulls its recordings (own Confirm intent).
+			void nar.refresh(parsedAddr.pubkey, parsedAddr.dTag, 'fetch_always');
 		} catch (e) {
 			console.warn('[ReaderBuffer] backfill failed', e);
 		} finally {
@@ -2162,6 +2183,17 @@
 			</span>
 		{/if}
 		<span class="sp"></span>
+		{#if parsedAddr?.kind === 30040 && narrationSummary.narrated > 0}
+			<button
+				class="tb-icon"
+				class:active={narrationOpen}
+				onclick={() => {
+					if (parsedAddr && !nar.playPublication(parsedAddr.pubkey, parsedAddr.dTag, publication?.title ?? null)) narrationOpen = true;
+				}}
+				title="Listen — play this publication's narration ({narrationSummary.narrated} of {narrationSummary.sections} sections recorded)"
+				aria-label="Listen to the narration"
+			>▶ listen</button>
+		{/if}
 		{#if parsedAddr?.kind === 30040 && rootLoaded && hasGraph}
 			<!-- Only nested publications have a tree to tune; a single-level
 			     one loads in one shot and shows no button. -->
@@ -2272,6 +2304,15 @@
 						disabled={!publication}
 						title="Highlights drawer — grouped by author, click to scroll"
 					>highlights {discussionLoading ? '…' : totalDiscussion.highlights}</button>
+					{#if parsedAddr?.kind === 30040}
+						<button
+							class:active={narrationOpen}
+							onclick={() => (narrationOpen = !narrationOpen)}
+							aria-expanded={narrationOpen}
+							disabled={!publication}
+							title="Recordings — narrations of this publication (play, mirror, narrate)"
+						>recordings {narrationSummary.recordings}</button>
+					{/if}
 					{#if publication?.summary}
 						<button
 							class:active={summaryOpen}
@@ -2638,6 +2679,16 @@
 				{/if}
 			{/each}
 		</nav>
+	{/if}
+	{#if parsedAddr?.kind === 30040}
+		<NarrationDrawer
+			pubkey={parsedAddr.pubkey}
+			d_tag={parsedAddr.dTag}
+			pubTitle={publication?.title ?? null}
+			open={narrationOpen}
+			onclose={() => (narrationOpen = false)}
+			onnavigate={goToSectionCoord}
+		/>
 	{/if}
 	<HighlightsDrawer
 		highlights={drawerHighlights}

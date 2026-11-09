@@ -51,6 +51,7 @@
 //! ```
 
 pub mod api;
+pub mod blossom;
 pub mod bookshelf;
 pub mod bunker;
 pub mod chat;
@@ -68,6 +69,7 @@ pub mod git;
 pub mod identity;
 pub mod llm;
 pub mod mimetype;
+pub mod narration;
 pub mod providers;
 pub mod network;
 pub mod nip11;

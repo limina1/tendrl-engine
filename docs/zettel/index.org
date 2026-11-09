@@ -187,6 +187,7 @@ path: [[file:conventions.org][conventions]].
 - [[file:idea-feeds-as-indexes.org][Feeds as 30040 indexes]] — algorithm output as artifact
 - [[file:idea-event-badges.org][Event badges]] — annotation follows the identifier, + relay provenance
 - [[file:idea-spells.org][Spells (kind 777)]] — portable, composable saved queries; pipelines, spellbooks
+- [[file:idea-audiobook-blossom.org][Audiobooks on Blossom]] — ppq TTS per section → Blossom → kind-32176 (NKBIP-07) trees bound by A/E/K; built on =feat/audiobook-blossom= 2026-11-09
 
 ** Substrate & network
 - [[file:idea-web-tools.org][Web tools]] — =web_search= / =fetch_url= for the assistant; backend decision (SearXNG / Brave / ppq plugin)

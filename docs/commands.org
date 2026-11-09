@@ -2321,3 +2321,37 @@ the persisted progress), =Input.dispatchMouseEvent= for clicks on Svelte
 handlers, =Page.captureScreenshot= to look. The feed pull from the default
 relays takes ~45 s to settle; nothing renders until then. Mobile shell:
 =--window-size=390,844= and =?shell=mobile=.
+
+* Narration — TTS → Blossom → kind 32176 (branch =feat/audiobook-blossom=)
+
+Engine-only smoke test on an isolated instance (never :3030). Spends real
+ppq credit (≈ $0.016 per 1000 chars on =deepgram_aura_2=) and uploads to
+blossom.band as the logged-in identity. Relay: theforest only.
+
+#+begin_src bash
+S=/tmp/tendrl-narr; mkdir -p $S/data; B=http://127.0.0.1:3131/api/v1
+cp ~/.local/share/nostr-engine/nostrdb/providers.json $S/data/   # the funded ppq account (0600)
+printf 'timeout_ms = 8000\ninitial_relays = ["wss://theforest.nostr1.com"]\n[embedding]\nenabled = false\n[database]\ndata_dir = "%s/data"\n' $S > $S/config.toml
+./target/debug/tendrl-engine -c $S/config.toml --port 3131 &
+# log a throwaway identity in (engine source) — see "Identity" recipes; then:
+curl -s $B/narration/models | jq '.models[].id'           # live ppq prices merged over the built-in caps
+curl -s $B/narration/servers                               # {"servers":["https://blossom.band"],"suggested":[]}
+curl -s -X POST $B/narration/estimate -d '{"pubkey":"'$PK'","d_tag":"'$D'","model":"deepgram_aura_2"}' | jq '{sections,total_chars,total_chunks,estimate_usd,balance_usd}'
+curl -sN -X POST $B/narration/generate -H 'content-type: application/json' \
+  -d '{"pubkey":"'$PK'","d_tag":"'$D'","model":"deepgram_aura_2","voice":"aura-2-thalia-en","broadcast":false}'
+#   SSE: plan → section_start → chunk… → uploaded {sha256,url} → signed {narration} → done {leaves,spent_usd}
+curl -s "$B/narration/for/$PK/$D?policy=local_only" | jq '.nodes[] | {title, n: (.recordings|length), m: .recordings[0].version_match}'
+curl -sI "$(curl -s "$B/narration/for/$PK/$D" | jq -r '.nodes[1].recordings[0].urls[0]')" | head -3   # 200 audio/mpeg from blossom.band
+curl -s -X POST $B/narration/mirror -d '{"url":"https://blossom.band/<sha>.mp3","server":"https://other.server"}'
+#+end_src
+
+Check the events: =k:32176= in the search panel; a leaf has =A= (section
+coordinate), =E= (exact section event id), =K 30041=, one =b=, =blossom=,
+=voice=/=model=, =transcript txt= + the spoken text as content. The root has
+=A=/=E=/=K= → the 30040 and =a= children in TOC order. Re-running skips
+sections already narrated for the same =E= + voice (=force= re-does them).
+
+GUI: open the publication → tools (=T=) → *recordings N* → drawer; ▶ on a
+section title plays it (player strip bottom-left); *narrate* opens the
+modal (model, voice, per-section ticks, cost vs. balance). Settings ›
+Narration holds the Blossom server list.

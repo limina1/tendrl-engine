@@ -3015,3 +3015,217 @@ export function routstrTopup(cashu_token: string): Promise<{ ok: boolean; balanc
 export function routstrRefund(): Promise<{ token: string | null; sats?: number }> {
 	return fetchJson(`${PROVIDERS}/routstr/refund`, { method: 'POST' });
 }
+
+// ---------------------------------------------------------------------------
+// Narration — TTS → Blossom → kind-32176 (NKBIP-07) recordings bound to a
+// publication's nodes by A/E/K. Engine: src/narration.rs, src/blossom.rs.
+// ---------------------------------------------------------------------------
+
+const NARRATION = '/api/v1/narration';
+
+export interface TtsModel {
+	id: string;
+	provider: string;
+	price_per_1k: number;
+	min_per_request?: number;
+	char_cap: number;
+}
+
+export interface TtsVoice {
+	id: string;
+	name?: string;
+	provider?: string;
+	model_id?: string;
+	language?: string;
+	description?: string | null;
+	gender?: string;
+	preview_url?: string;
+}
+
+export type NarrationVersionMatch = 'exact' | 'other_version' | 'unpinned';
+
+/** A kind-32176 event ranked against one tree node (engine `Recording`). */
+export interface NarrationRecording {
+	id: string;
+	pubkey: string;
+	created_at: number;
+	d_tag: string;
+	title: string;
+	about?: string;
+	about_event?: string;
+	about_kind?: number;
+	pieces: { sha256: string; size: number }[];
+	children: [string, string][];
+	full_hash?: string;
+	size?: number;
+	duration_secs?: number;
+	mime?: string | null;
+	servers: string[];
+	voice?: string;
+	model?: string;
+	lang?: string;
+	transcript?: string;
+	transcript_format: string;
+	relays: string[];
+	version_match: NarrationVersionMatch;
+	urls: string[];
+	mine: boolean;
+}
+
+export interface NarrationNode {
+	coord: string;
+	event_id?: string;
+	title: string;
+	depth: number;
+	is_index: boolean;
+	/** Current spoken text of a section — compared against transcripts. */
+	spoken?: string;
+	recordings: NarrationRecording[];
+}
+
+export interface NarrationDiscovery {
+	nodes: NarrationNode[];
+	servers: string[];
+	fetched_from: string[];
+}
+
+export interface NarrationPlanNode {
+	coord: string;
+	event_id?: string | null;
+	title: string;
+	depth: number;
+	is_index: boolean;
+	chars: number;
+	chunks: number;
+	preview?: string | null;
+}
+
+export interface NarrationEstimate {
+	model: TtsModel;
+	nodes: NarrationPlanNode[];
+	sections: number;
+	total_chars: number;
+	total_chunks: number;
+	estimate_usd: number;
+	balance_usd: number | null;
+	server: string | null;
+}
+
+export interface NarrateRequest {
+	pubkey: string;
+	d_tag: string;
+	model: string;
+	voice?: string;
+	language?: string;
+	force?: boolean;
+	broadcast?: boolean;
+	transcript?: boolean;
+	server?: string;
+	only?: string[];
+}
+
+export type NarrationGenEvent =
+	| { type: 'plan'; nodes: NarrationPlanNode[]; total_chars: number; total_chunks: number; estimate_usd: number; server: string }
+	| { type: 'section_start'; index: number; total: number; coord: string; title: string; chunks: number }
+	| { type: 'chunk'; index: number; total: number; section: number }
+	| { type: 'skipped'; coord: string; reason: string; existing: string }
+	| { type: 'uploaded'; coord: string; sha256: string; url: string; size: number; duration_secs: number | null }
+	| { type: 'signed'; coord: string; narration: string; event_id: string }
+	| { type: 'broadcast'; successful: number; total: number }
+	| { type: 'done'; root: string | null; leaves: number; spent_usd: number | null; balance_usd: number | null }
+	| { type: 'error'; message: string; coord: string | null };
+
+export function getNarrationModels(): Promise<{
+	models: TtsModel[];
+	default: string;
+	default_voice: string;
+	ppq_configured: boolean;
+}> {
+	return fetchJson(`${NARRATION}/models`);
+}
+
+export function getNarrationVoices(opts: { language?: string; model?: string } = {}): Promise<{ voices: TtsVoice[] }> {
+	const q = new URLSearchParams();
+	if (opts.language) q.set('language', opts.language);
+	if (opts.model) q.set('model', opts.model);
+	const qs = q.toString();
+	return fetchJson(`${NARRATION}/voices${qs ? `?${qs}` : ''}`);
+}
+
+export function getNarrationServers(): Promise<{ servers: string[]; suggested: string[]; path: string }> {
+	return fetchJson(`${NARRATION}/servers`);
+}
+
+export function setNarrationServers(servers: string[]): Promise<{ servers: string[] }> {
+	return fetchJson(`${NARRATION}/servers`, { method: 'POST', body: JSON.stringify({ servers }) });
+}
+
+export function estimateNarration(req: { pubkey: string; d_tag: string; model: string; only?: string[] }): Promise<NarrationEstimate> {
+	return fetchJson(`${NARRATION}/estimate`, { method: 'POST', body: JSON.stringify(req) });
+}
+
+/** Recordings per node of the publication tree, ranked (exact version
+ *  first). `local_first` reaches relays only when nothing is local;
+ *  `fetch_always` always asks (Confirm-gated). */
+export function getNarrations(
+	pubkey: string,
+	d_tag: string,
+	policy: 'local_only' | 'local_first' | 'fetch_always' = 'local_only'
+): Promise<NarrationDiscovery> {
+	return fetchJson(`${NARRATION}/for/${pubkey}/${encodeURIComponent(d_tag)}?policy=${policy}`);
+}
+
+export function mirrorNarration(req: { url: string; server?: string }): Promise<{
+	results: { server: string; ok: boolean; descriptor?: unknown; error?: string }[];
+}> {
+	return fetchJson(`${NARRATION}/mirror`, { method: 'POST', body: JSON.stringify(req) });
+}
+
+/** POST SSE: run a narration, calling `onEvent` per engine event. Resolves
+ *  when the stream ends (after `done` or a fatal `error`). */
+export async function streamNarration(
+	req: NarrateRequest,
+	onEvent: (ev: NarrationGenEvent) => void,
+	signal?: AbortSignal
+): Promise<void> {
+	const res = await fetch(`${NARRATION}/generate`, {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify(req),
+		signal
+	});
+	if (!res.ok || !res.body) {
+		const text = await res.text().catch(() => '');
+		let msg = text;
+		try {
+			msg = (JSON.parse(text) as { error?: string }).error ?? text;
+		} catch {
+			// plain text
+		}
+		throw new Error(msg || `${res.status}`);
+	}
+	const reader = res.body.getReader();
+	const decoder = new TextDecoder();
+	let buf = '';
+	for (;;) {
+		const { done, value } = await reader.read();
+		if (done) break;
+		buf += decoder.decode(value, { stream: true });
+		let sep: number;
+		while ((sep = buf.indexOf('\n\n')) !== -1) {
+			const frame = buf.slice(0, sep);
+			buf = buf.slice(sep + 2);
+			for (const line of frame.split('\n')) {
+				const t = line.trim();
+				if (!t.startsWith('data:')) continue;
+				const payload = t.slice(5).trim();
+				if (!payload) continue;
+				try {
+					onEvent(JSON.parse(payload) as NarrationGenEvent);
+				} catch (e) {
+					console.error('[narration] bad SSE frame', e, payload);
+				}
+			}
+		}
+	}
+}

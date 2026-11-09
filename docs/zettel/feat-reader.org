@@ -86,6 +86,14 @@ never happen in the browser.
   [[file:idea-rendering-layers.org][Rendering layers]];
   [[file:decision-mimetype-tag.org][the m-tag decision]].
 
+- Narration (2026-11-09, =feat/audiobook-blossom=): a publication's
+  kind-32176 recordings ride along with the tree — discovered locally
+  when the stream finishes, from relays with *fetch from relays* or the
+  drawer's ⟳. Tools › *recordings N* opens =NarrationDrawer=; ▶ on a
+  section title and *▶ listen* in the strip feed the global
+  =NarrationPlayer=; *narrate* opens =NarrateModal= (ppq TTS → Blossom).
+  Design + decisions: [[file:idea-audiobook-blossom.org][audiobooks on Blossom]].
+
 * Gaps / open edges
 - Nested-publication packed cards, drill-in with breadcrumbs, and parent
   navigation are Phase 3 roadmap (=docs/wm-shell.md=).
