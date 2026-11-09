@@ -75,6 +75,16 @@
 		return m ? Math.max((300 / 1000) * m.price_per_1k, m.min_per_request ?? 0) : 0;
 	});
 
+	// Preview speed = the player's rate (one listening preference): what you
+	// hear here is how the book plays back afterwards. TTS has no speed
+	// knob upstream; this is playback-side.
+	const RATES = [0.8, 1, 1.25, 1.5, 1.75, 2];
+	let rate = $state(nar.player.rate);
+	function onRateChange() {
+		nar.setRate(rate);
+		if (previewAudio) previewAudio.playbackRate = rate;
+	}
+
 	function stopPreview() {
 		previewAudio?.pause();
 		previewing = null;
@@ -86,6 +96,7 @@
 	function playUrl(url: string, kind: 'clip' | 'sample') {
 		if (!previewAudio) return;
 		previewAudio.src = url;
+		previewAudio.playbackRate = rate;
 		previewing = kind;
 		previewAudio.play().catch((e) => {
 			previewErr = e instanceof Error ? e.message : String(e);
@@ -372,6 +383,11 @@
 						disabled={running || !ppqConfigured || !sampleText}
 						title={sampleText ? `Hear this voice read the opening of "${(sectionNodes.find((n) => picked[n.coord] !== false) ?? sectionNodes[0])?.title ?? 'the first section'}" (≈ ${usd(sampleCost)}, nothing is uploaded or published)` : 'Load a section first'}
 					>{previewing === 'sample' ? '⏹' : 'hear my text'}</button>
+					<select class="nm-input nm-rate" bind:value={rate} onchange={onRateChange} disabled={running} title="Playback speed for the preview and the player" aria-label="Playback speed">
+						{#each RATES as r (r)}
+							<option value={r}>{r}×</option>
+						{/each}
+					</select>
 				</div>
 				{#if selectedVoice?.description}
 					<span></span>
@@ -558,6 +574,10 @@
 	.nm-btn--icon {
 		white-space: nowrap;
 		padding: 3px 7px;
+	}
+	.nm-voice .nm-rate {
+		flex: 0 0 auto;
+		width: auto;
 	}
 	.nm-opts {
 		display: flex;
