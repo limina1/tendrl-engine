@@ -190,6 +190,21 @@ leaf 32176  d=<nanoid>  title="<section title>"
   fresh descriptor (201). Cost $0.0093 on =deepgram_aura_2=.
   Recipe: =docs/commands.org= "Narration".
 
+* Android background playback (open — needs a native plugin)
+
+wry's =WryActivity.onPause()= calls =mWebView.onPause()= (wry 0.55.1,
+=src/android/kotlin/WryActivity.kt:130=), which suspends HTML5 media, so
+the WebView player stops the moment tendrl leaves the foreground. The
+Media Session API (metadata + play/pause/prev/next handlers, now set by
+=NarrationPlayer=) gives lock-screen controls where the WebView is alive
+but cannot keep audio running. The fix is a Kotlin plugin beside
+=Nip55Plugin.kt=: a foreground service holding an ExoPlayer/MediaPlayer +
+MediaSession, with the playlist handed over from JS (URLs, titles,
+narrator) and position/state events back; the web player becomes a
+remote control when =shell=mobile=. Battery/notification permissions
+(=FOREGROUND_SERVICE_MEDIA_PLAYBACK=, =POST_NOTIFICATIONS=) in the
+manifest. Estimated as its own slice.
+
 * Open questions
 
 - Take the =A=/=E=/=K= binding back to the NKBIP-07 author as a proposed

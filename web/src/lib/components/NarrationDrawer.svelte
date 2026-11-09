@@ -38,7 +38,40 @@
 	const servers = $derived(discovery?.servers ?? []);
 
 	let openTranscript = $state<string | null>(null);
+	let openSources = $state<string | null>(null);
 	let mirroring = $state<Record<string, boolean>>({});
+	/** HEAD results per URL: true = served, false = failed, undefined = unchecked. */
+	let reach = $state<Record<string, boolean | 'checking'>>({});
+	const rootNode = $derived((discovery?.nodes ?? []).find((n) => n.is_index && n.depth === 0) ?? null);
+
+	function host(u: string): string {
+		try {
+			return new URL(u).host;
+		} catch {
+			return u;
+		}
+	}
+
+	/** Open the kind-32176 event itself in the structured event viewer —
+	 *  the same inspector highlights and comments get. */
+	function inspect(r: api.NarrationRecording) {
+		void app.openAddressableInModal({ kind: 32176, pubkey: r.pubkey, d_tag: r.d_tag });
+	}
+
+	/** Probe every candidate URL (BUD-01 servers answer HEAD with open CORS). */
+	async function checkSources(r: api.NarrationRecording) {
+		await Promise.all(
+			r.urls.map(async (u) => {
+				reach[u] = 'checking';
+				try {
+					const res = await fetch(u, { method: 'HEAD', mode: 'cors' });
+					reach[u] = res.ok;
+				} catch {
+					reach[u] = false;
+				}
+			})
+		);
+	}
 
 	async function pull() {
 		await nar.refresh(pubkey, d_tag, 'fetch_always');
@@ -71,6 +104,22 @@
 
 	function narrate(coord?: string) {
 		app.narrateModal = { pubkey, d_tag, title: pubTitle, only: coord ? [coord] : undefined };
+	}
+
+	async function mirrorTo(r: api.NarrationRecording, server: string) {
+		const url = r.urls[0];
+		if (!url) return;
+		mirroring[r.id] = true;
+		try {
+			const res = await api.mirrorNarration({ url, server });
+			const x = res.results[0];
+			if (x?.ok) app.pushToast(`mirrored to ${host(server)}`, 'success');
+			else app.pushToast(`${host(server)}: ${x?.error ?? 'failed'}`, 'error', 6000);
+		} catch (e) {
+			app.pushToast(e instanceof Error ? e.message : String(e), 'error', 6000);
+		} finally {
+			mirroring[r.id] = false;
+		}
 	}
 
 	/** Sentence-level LCS diff: transcript (a) vs current spoken text (b). */
@@ -137,11 +186,43 @@
 				<button class="nd-link" onclick={pull}>Pull from relays</button>{#if canSign} or <button class="nd-link" onclick={() => narrate()}>narrate it</button>{/if}.
 			</div>
 		{:else}
+			{#if rootNode && rootNode.recordings.length > 0}
+				<!-- The root 32176s: one per narrator+voice, each a TOC of leaf
+				     coordinates. Inspect shows the a-children, A/E/K and blossom hints. -->
+				<section class="nd-sec nd-sec--root">
+					<div class="nd-sec__title nd-sec__title--static">index narrations</div>
+					{#each rootNode.recordings as r (r.id)}
+						<div class="nd-rec">
+							<span class="nd-play nd-play--ghost" aria-hidden="true">≡</span>
+							<div class="nd-rec__main">
+								<div class="nd-rec__line">
+									<span class="nd-who" title={r.pubkey}>{r.mine ? 'you' : getAuthorDisplayName(r.pubkey)}</span>
+									{#if r.voice}<span class="nd-dim">· {r.voice}</span>{/if}
+									<span class="nd-dim">· {r.children.length} section{r.children.length === 1 ? '' : 's'}</span>
+									{#if r.duration_secs}<span class="nd-dim">· {nar.fmtTime(r.duration_secs)}</span>{/if}
+								</div>
+								<div class="nd-rec__line">
+									<span class="nd-pill nd-pill--{r.version_match}">{nar.matchLabel(r.version_match)}</span>
+									{#if r.relays.length === 0}<span class="nd-pill">local</span>{:else}<span class="nd-pill" title={r.relays.join('\n')}>{r.relays.length} relay{r.relays.length === 1 ? '' : 's'}</span>{/if}
+								</div>
+							</div>
+							<div class="nd-rec__acts">
+								<button class="nd-act" onclick={() => inspect(r)} title="Open the kind-32176 index event">⋮</button>
+							</div>
+						</div>
+					{/each}
+				</section>
+			{/if}
 			{#each nodes as n (n.coord)}
 				<section class="nd-sec" style="--d:{Math.max(0, n.depth - 1)}">
-					<button class="nd-sec__title" onclick={() => onnavigate(n.coord)} title="Go to this section">{n.title}</button>
+					<div class="nd-sec__head">
+						<button class="nd-sec__title" onclick={() => onnavigate(n.coord)} title="Go to this section">{n.title}</button>
+						{#if canSign}
+							<button class="nd-act nd-act--tiny" onclick={() => narrate(n.coord)} title="Narrate only this section (opens the narrate modal with it preselected)">narrate §</button>
+						{/if}
+					</div>
 					{#if n.recordings.length === 0}
-						<div class="nd-none">no recording{#if canSign} · <button class="nd-link" onclick={() => narrate(n.coord)}>narrate</button>{/if}</div>
+						<div class="nd-none">no recording yet</div>
 					{:else}
 						{#each n.recordings as r (r.id)}
 							{@const active = nar.activeRecording(n.coord)?.id === r.id}
@@ -156,8 +237,8 @@
 									</div>
 									<div class="nd-rec__line">
 										<span class="nd-pill nd-pill--{r.version_match}" title={r.version_match === 'exact' ? 'Recorded from the text you are reading' : r.version_match === 'other_version' ? 'Recorded from another version of this section' : 'Not pinned to a version'}>{nar.matchLabel(r.version_match)}</span>
-										{#if r.relays.length === 0}<span class="nd-pill">local</span>{/if}
-										{#if r.servers.length > 0}<span class="nd-dim" title={r.servers.join('\n')}>{r.servers[0].replace(/^https?:\/\//, '')}{r.servers.length > 1 ? ` +${r.servers.length - 1}` : ''}</span>{/if}
+										{#if r.relays.length === 0}<span class="nd-pill" title="Signed here, not yet on any relay">local</span>{:else}<span class="nd-pill" title={r.relays.join('\n')}>{r.relays.length} relay{r.relays.length === 1 ? '' : 's'}</span>{/if}
+										<button class="nd-link nd-link--dim" class:active={openSources === r.id} onclick={() => (openSources = openSources === r.id ? null : r.id)} title="Where the audio can be fetched from">{r.urls.length} source{r.urls.length === 1 ? '' : 's'}</button>
 									</div>
 								</div>
 								<div class="nd-rec__acts">
@@ -171,8 +252,31 @@
 										<button class="nd-act" onclick={() => nar.choose(n.coord, r.id)} title="Use this recording for this section">use</button>
 									{/if}
 									<button class="nd-act" onclick={() => playAllFrom(n)} title="Play the book from here">▶▶</button>
+									<button class="nd-act" onclick={() => inspect(r)} title="Open the kind-32176 event (tags, A/E/K binding, blossom hints, raw JSON)">⋮</button>
 								</div>
 							</div>
+							{#if openSources === r.id}
+								<div class="nd-src">
+									<div class="nd-src__head">
+										<span>blob <code title={r.pieces[0]?.sha256}>{r.pieces[0]?.sha256.slice(0, 12)}…</code>{#if r.size} · {(r.size / 1024).toFixed(0)} KiB{/if}</span>
+										<span class="nd-sp"></span>
+										<button class="nd-link" onclick={() => checkSources(r)}>check</button>
+									</div>
+									{#each r.urls as u (u)}
+										<div class="nd-src__row">
+											<span class="nd-src__state" title={reach[u] === true ? 'served' : reach[u] === false ? 'not found here' : reach[u] === 'checking' ? 'checking' : 'unchecked'}>{reach[u] === true ? '✓' : reach[u] === false ? '✗' : reach[u] === 'checking' ? '…' : '·'}</span>
+											<a class="nd-src__url" href={u} target="_blank" rel="noopener" title={u}>{host(u)}</a>
+											{#if r.servers.some((s) => host(s) === host(u))}<span class="nd-dim">hint</span>{:else}<span class="nd-dim">your set</span>{/if}
+											{#if canSign && !r.servers.some((s) => host(s) === host(u))}
+												<button class="nd-act nd-act--tiny" onclick={() => mirrorTo(r, u.replace(/\/[^/]*$/, ''))} disabled={mirroring[r.id]} title="Mirror the blob to this server">mirror here</button>
+											{/if}
+										</div>
+									{/each}
+									{#if r.relays.length > 0}
+										<div class="nd-src__row nd-src__row--relays">event on: {r.relays.map((x) => x.replace(/^wss?:\/\//, '')).join(', ')}</div>
+									{/if}
+								</div>
+							{/if}
 							{#if openTranscript === r.id && r.transcript}
 								{@const ops = r.version_match === 'exact' || !n.spoken ? null : diff(r.transcript, n.spoken)}
 								<div class="nd-tr">
@@ -308,6 +412,92 @@
 		white-space: nowrap;
 	}
 	.nd-sec__title:hover {
+		text-decoration: underline;
+	}
+	.nd-sec__head {
+		display: flex;
+		align-items: center;
+		gap: 6px;
+	}
+	.nd-sec__head .nd-sec__title {
+		flex: 1 1 auto;
+		width: auto;
+	}
+	.nd-sec__title--static {
+		cursor: default;
+		color: var(--fg-muted);
+		text-transform: uppercase;
+		letter-spacing: 0.06em;
+		font-size: calc(var(--t-xs) - 2px);
+	}
+	.nd-sec__title--static:hover {
+		text-decoration: none;
+	}
+	.nd-sec--root {
+		background: var(--bg-surface);
+	}
+	.nd-act--tiny {
+		font-size: calc(var(--t-xs) - 2px);
+		padding: 0 4px;
+	}
+	.nd-play--ghost {
+		border-color: transparent;
+		color: var(--fg-muted);
+		cursor: default;
+	}
+	.nd-link--dim {
+		color: var(--fg-muted);
+		text-decoration: none;
+		font-size: calc(var(--t-xs) - 1px);
+	}
+	.nd-link--dim:hover,
+	.nd-link--dim.active {
+		color: var(--fg);
+		text-decoration: underline;
+	}
+	.nd-src {
+		margin: 2px 0 6px 28px;
+		padding: 6px 8px;
+		background: var(--bg-surface);
+		border: 1px solid var(--panel-border);
+		border-radius: var(--r-sm);
+		font-size: calc(var(--t-xs) - 1px);
+	}
+	.nd-src__head {
+		display: flex;
+		gap: 6px;
+		align-items: center;
+		color: var(--fg-muted);
+		margin-bottom: 4px;
+	}
+	.nd-src__head code {
+		font-family: var(--font-mono);
+		color: var(--fg);
+	}
+	.nd-src__row {
+		display: flex;
+		gap: 6px;
+		align-items: center;
+		min-width: 0;
+	}
+	.nd-src__row--relays {
+		color: var(--fg-muted);
+		margin-top: 4px;
+		white-space: normal;
+	}
+	.nd-src__state {
+		width: 1em;
+		text-align: center;
+		color: var(--fg-muted);
+	}
+	.nd-src__url {
+		color: var(--fg);
+		text-decoration: none;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+	.nd-src__url:hover {
 		text-decoration: underline;
 	}
 	.nd-rec {

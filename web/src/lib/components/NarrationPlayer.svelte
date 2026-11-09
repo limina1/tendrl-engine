@@ -46,6 +46,44 @@
 		if (audio) audio.playbackRate = nar.player.rate;
 	});
 
+	// Media Session: lock-screen / notification controls + metadata where
+	// the platform offers them (desktop browsers, Android WebView).
+	$effect(() => {
+		if (!('mediaSession' in navigator)) return;
+		const ms = navigator.mediaSession;
+		if (!item) {
+			ms.metadata = null;
+			return;
+		}
+		ms.metadata = new MediaMetadata({
+			title: item.title,
+			artist: narrator || item.recording.pubkey.slice(0, 12),
+			album: nar.player.pubTitle ?? 'tendrl narration'
+		});
+		ms.setActionHandler('play', () => (nar.player.playing = true));
+		ms.setActionHandler('pause', () => (nar.player.playing = false));
+		ms.setActionHandler('previoustrack', () => nar.prev());
+		ms.setActionHandler('nexttrack', () => void nar.next());
+		ms.setActionHandler('seekbackward', (d) => {
+			if (audio) audio.currentTime = Math.max(0, audio.currentTime - (d.seekOffset ?? 15));
+		});
+		ms.setActionHandler('seekforward', (d) => {
+			if (audio) audio.currentTime = Math.min(audio.duration || Infinity, audio.currentTime + (d.seekOffset ?? 15));
+		});
+		return () => {
+			for (const a of ['play', 'pause', 'previoustrack', 'nexttrack', 'seekbackward', 'seekforward'] as MediaSessionAction[]) {
+				try {
+					ms.setActionHandler(a, null);
+				} catch {
+					// unsupported action on this platform
+				}
+			}
+		};
+	});
+	$effect(() => {
+		if ('mediaSession' in navigator) navigator.mediaSession.playbackState = nar.player.playing ? 'playing' : 'paused';
+	});
+
 	function onError() {
 		const r = nar.failover();
 		if (r === 'retry' && audio) {
