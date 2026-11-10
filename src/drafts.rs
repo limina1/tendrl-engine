@@ -73,10 +73,44 @@ pub struct DraftComposeState {
 }
 
 /// Serializable tag entry
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct DraftTagEntry {
     pub name: String,
     pub value: String,
+    /// Values after the first (multi-value tags) — see `TagEntry::extra`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub extra: Vec<String>,
+    /// Emit verbatim — see `TagEntry::verbatim`.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub verbatim: bool,
+}
+
+impl From<&crate::publication::compose::TagEntry> for DraftTagEntry {
+    fn from(t: &crate::publication::compose::TagEntry) -> Self {
+        DraftTagEntry {
+            name: t.name.clone(),
+            value: t.value.clone(),
+            extra: t.extra.clone(),
+            verbatim: t.verbatim,
+        }
+    }
+}
+
+impl From<&DraftTagEntry> for crate::publication::compose::TagEntry {
+    fn from(t: &DraftTagEntry) -> Self {
+        crate::publication::compose::TagEntry {
+            name: t.name.clone(),
+            value: t.value.clone(),
+            extra: t.extra.clone(),
+            verbatim: t.verbatim,
+        }
+    }
+}
+
+impl From<&crate::publication::compose::WireTag> for DraftTagEntry {
+    fn from(w: &crate::publication::compose::WireTag) -> Self {
+        DraftTagEntry::from(&crate::publication::compose::TagEntry::from(w))
+    }
 }
 
 /// Serializable section compose state
@@ -170,10 +204,7 @@ impl DraftStore {
             tags: compose
                 .tags
                 .iter()
-                .map(|t| DraftTagEntry {
-                    name: t.name.clone(),
-                    value: t.value.clone(),
-                })
+                .map(DraftTagEntry::from)
                 .collect(),
             sections: compose
                 .sections
@@ -188,10 +219,7 @@ impl DraftStore {
                     tags: s
                         .tags
                         .iter()
-                        .map(|t| DraftTagEntry {
-                            name: t.name.clone(),
-                            value: t.value.clone(),
-                        })
+                        .map(DraftTagEntry::from)
                         .collect(),
                 })
                 .collect(),
@@ -399,10 +427,7 @@ impl From<&DraftComposeState> for ComposeState {
         compose.tags = draft
             .tags
             .iter()
-            .map(|t| TagEntry {
-                name: t.name.clone(),
-                value: t.value.clone(),
-            })
+            .map(TagEntry::from)
             .collect();
         compose.sections = draft
             .sections
@@ -416,10 +441,7 @@ impl From<&DraftComposeState> for ComposeState {
                 tags: s
                     .tags
                     .iter()
-                    .map(|t| TagEntry {
-                        name: t.name.clone(),
-                        value: t.value.clone(),
-                    })
+                    .map(TagEntry::from)
                     .collect(),
                 ..Default::default()
             })
@@ -655,6 +677,7 @@ mod tests {
         compose.tags.push(TagEntry {
             name: "tags".to_string(),
             value: "rust, nostr".to_string(),
+            ..Default::default()
         });
         compose.sections.push(SC {
             title: "Chapter 1".to_string(),
@@ -810,6 +833,7 @@ mod tests {
                 .map(|(n, v)| DraftTagEntry {
                     name: n.to_string(),
                     value: v.to_string(),
+                    ..Default::default()
                 })
                 .collect(),
             sections: sections
@@ -880,11 +904,13 @@ mod tests {
         from.sections[0].tags = vec![DraftTagEntry {
             name: "author".into(),
             value: "alice".into(),
+            ..Default::default()
         }];
         let mut to = dcs("P", &[("S", "body", 2)], &[]);
         to.sections[0].tags = vec![DraftTagEntry {
             name: "author".into(),
             value: "bob".into(),
+            ..Default::default()
         }];
         let diff = diff_draft_versions(&from, &to);
         let s = &diff.sections[0];

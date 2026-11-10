@@ -5643,7 +5643,7 @@ pub struct DraftSectionRequest {
     #[serde(default)]
     pub content: String,
     #[serde(default)]
-    pub tags: Vec<(String, String)>,
+    pub tags: Vec<crate::publication::compose::WireTag>,
     /// Heading depth (2 = top-level; 3+ nests at publish time). Default 2.
     #[serde(default)]
     pub level: Option<u8>,
@@ -5665,7 +5665,7 @@ pub struct SaveDraftRequest {
     #[serde(default)]
     pub format: Option<String>,
     #[serde(default)]
-    pub tags: Vec<(String, String)>,
+    pub tags: Vec<crate::publication::compose::WireTag>,
     #[serde(default)]
     pub sections: Vec<DraftSectionRequest>,
     /// Existing publication d-tag to preserve addressable identity on resume.
@@ -5686,7 +5686,7 @@ fn compose_from_draft_request(req: SaveDraftRequest) -> ComposeState {
     compose.tags = req
         .tags
         .into_iter()
-        .map(|(name, value)| crate::publication::compose::TagEntry { name, value })
+        .map(crate::publication::compose::TagEntry::from)
         .collect();
     compose.sections = req
         .sections
@@ -5704,7 +5704,7 @@ fn compose_from_draft_request(req: SaveDraftRequest) -> ComposeState {
             tags: s
                 .tags
                 .into_iter()
-                .map(|(name, value)| crate::publication::compose::TagEntry { name, value })
+                .map(crate::publication::compose::TagEntry::from)
                 .collect(),
             ..Default::default()
         })
@@ -5822,10 +5822,7 @@ fn request_to_draft_compose(req: &SaveDraftRequest) -> crate::drafts::DraftCompo
         tags: req
             .tags
             .iter()
-            .map(|(n, v)| DraftTagEntry {
-                name: n.clone(),
-                value: v.clone(),
-            })
+            .map(DraftTagEntry::from)
             .collect(),
         sections: req
             .sections
@@ -5836,10 +5833,7 @@ fn request_to_draft_compose(req: &SaveDraftRequest) -> crate::drafts::DraftCompo
                 tags: s
                     .tags
                     .iter()
-                    .map(|(n, v)| DraftTagEntry {
-                        name: n.clone(),
-                        value: v.clone(),
-                    })
+                    .map(DraftTagEntry::from)
                     .collect(),
                 level: s.level.unwrap_or(2),
                 d_tag: s.d_tag.clone(),
@@ -5874,13 +5868,23 @@ fn publication_to_draft_compose(
                         if STRUCTURAL.contains(&name) {
                             return None;
                         }
-                        Some(DraftTagEntry {
-                            name: name.to_string(),
-                            value: arr
-                                .get(1)
-                                .and_then(|v| v.as_str())
-                                .unwrap_or("")
-                                .to_string(),
+                        let values: Vec<String> = arr
+                            .iter()
+                            .skip(1)
+                            .filter_map(|v| v.as_str().map(str::to_string))
+                            .collect();
+                        // A multi-value tag keeps every value (verbatim);
+                        // a pair stays a plain pair.
+                        Some(if values.len() > 1 {
+                            DraftTagEntry::from(&crate::publication::compose::TagEntry::verbatim(
+                                name, values,
+                            ))
+                        } else {
+                            DraftTagEntry {
+                                name: name.to_string(),
+                                value: values.into_iter().next().unwrap_or_default(),
+                                ..Default::default()
+                            }
                         })
                     })
                     .collect()
@@ -6018,7 +6022,7 @@ pub struct PublishRequest {
     #[serde(default)]
     pub format: Option<String>,
     #[serde(default)]
-    pub tags: Vec<(String, String)>,
+    pub tags: Vec<crate::publication::compose::WireTag>,
     #[serde(default)]
     pub sections: Vec<PublishSectionRequest>,
     /// Emit a single *atomic* event of this kind (NIP-23 `30023`, NIP-54
@@ -6123,7 +6127,7 @@ pub struct PublishSectionRequest {
     #[serde(default)]
     pub format: Option<String>,
     #[serde(default)]
-    pub tags: Vec<(String, String)>,
+    pub tags: Vec<crate::publication::compose::WireTag>,
     /// Heading depth (2 = top-level `==` section, 3+ = nested). Drives the
     /// nested 30040/30041 emitter; absent/`2` keeps the flat graph.
     #[serde(default)]
@@ -6418,10 +6422,7 @@ pub async fn publish_handler(
         let tags: Vec<TagEntry> = req
             .tags
             .iter()
-            .map(|(n, v)| TagEntry {
-                name: n.clone(),
-                value: v.clone(),
-            })
+            .map(TagEntry::from)
             .collect();
         let content = req.content.unwrap_or_default();
         let mut tags = tags;
@@ -6448,11 +6449,8 @@ pub async fn publish_handler(
     // Map request to ComposeState
     let mut compose = ComposeState::new();
     compose.title = req.title;
-    for (name, value) in &req.tags {
-        compose.tags.push(TagEntry {
-            name: name.clone(),
-            value: value.clone(),
-        });
+    for t in &req.tags {
+        compose.tags.push(TagEntry::from(t));
     }
     compose.sections = req
         .sections
@@ -6471,10 +6469,7 @@ pub async fn publish_handler(
             sc.tags = s
                 .tags
                 .iter()
-                .map(|(n, v)| TagEntry {
-                    name: n.clone(),
-                    value: v.clone(),
-                })
+                .map(TagEntry::from)
                 .collect();
             sc
         })
@@ -6582,10 +6577,7 @@ pub async fn publish_preview_handler(
         let tags: Vec<TagEntry> = req
             .tags
             .iter()
-            .map(|(n, v)| TagEntry {
-                name: n.clone(),
-                value: v.clone(),
-            })
+            .map(TagEntry::from)
             .collect();
         let content = req.content.clone().unwrap_or_default();
         let mut tags = tags;
@@ -6612,11 +6604,8 @@ pub async fn publish_preview_handler(
 
     let mut compose = ComposeState::new();
     compose.title = req.title;
-    for (name, value) in &req.tags {
-        compose.tags.push(TagEntry {
-            name: name.clone(),
-            value: value.clone(),
-        });
+    for t in &req.tags {
+        compose.tags.push(TagEntry::from(t));
     }
     compose.sections = req
         .sections
@@ -6635,10 +6624,7 @@ pub async fn publish_preview_handler(
             sc.tags = s
                 .tags
                 .iter()
-                .map(|(n, v)| TagEntry {
-                    name: n.clone(),
-                    value: v.clone(),
-                })
+                .map(TagEntry::from)
                 .collect();
             sc
         })
@@ -6720,7 +6706,7 @@ pub struct PublishBlockEntry {
     #[serde(default)]
     pub format: Option<String>,
     #[serde(default)]
-    pub tags: Vec<(String, String)>,
+    pub tags: Vec<crate::publication::compose::WireTag>,
     /// Reuse this 30041 d-tag instead of minting a fresh nanoid — set when
     /// re-publishing so the section replaces rather than forks. Ignored for
     /// imported blocks (they emit no event).
@@ -6737,7 +6723,7 @@ pub struct PublishBlocksRequest {
     #[serde(default)]
     pub format: Option<String>,
     #[serde(default)]
-    pub tags: Vec<(String, String)>,
+    pub tags: Vec<crate::publication::compose::WireTag>,
     /// Reuse this index d-tag instead of minting a fresh nanoid — set when
     /// re-publishing an existing publication.
     #[serde(default)]
@@ -6763,7 +6749,7 @@ pub struct PublishBlocksRequest {
 fn compose_block_state_from_request(
     title: String,
     format: Option<String>,
-    tags: Vec<(String, String)>,
+    tags: Vec<crate::publication::compose::WireTag>,
     d_tag: Option<String>,
     blocks: Vec<PublishBlockEntry>,
     source_publication_addr: Option<NAddrPayload>,
@@ -6774,8 +6760,8 @@ fn compose_block_state_from_request(
     state.title = title;
     state.format = format;
     state.d_tag = d_tag;
-    for (name, value) in tags {
-        state.tags.push(TagEntry { name, value });
+    for t in tags {
+        state.tags.push(TagEntry::from(t));
     }
     state.source_publication_addr = source_publication_addr.map(|n| n.into_naddr());
     state.source_publication_event_id = source_publication_event_id;
@@ -6811,7 +6797,7 @@ fn compose_block_state_from_request(
             tags: entry
                 .tags
                 .into_iter()
-                .map(|(name, value)| TagEntry { name, value })
+                .map(TagEntry::from)
                 .collect(),
             collapsed: false,
             d_tag: entry.d_tag,

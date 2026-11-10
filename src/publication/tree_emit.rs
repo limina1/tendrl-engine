@@ -651,6 +651,7 @@ mod tests {
         compose.tags.push(TagEntry {
             name: "author".into(),
             value: "Jane Austen".into(),
+            ..Default::default()
         });
         let pub_d = compose.publication_d_tag();
         let pubkey = "feedface".repeat(8);
