@@ -297,7 +297,8 @@ sections and embeds new events on a 60-second interval when embeddings are enabl
   throttled listens, optimistic mirror), reader resume, feed *history* tab.
 - **`attached.rs`**: what hangs off a document — NIP-22 comments, NIP-84
   highlights, kind-32176 narration indexes and leaves, the containing
-  30040 — bucketed per target (`classify`, pure). `GET /api/v1/attached?
+  30040, an index's own sections in TOC order — bucketed per target
+  (`classify`, pure). `GET /api/v1/attached?
   coord=|id=&policy=`: `local_first` runs the **provenance round**
   (`Engine::provenance_for` = the index's + its sections' relay
   provenance; `Engine::provenance_round` → `NetworkActivity::
@@ -373,7 +374,9 @@ sections and embeds new events on a 60-second interval when embeddings are enabl
   (`#A` per tree node, LocalFirst, relay round Confirm-gated) / `generate`
   (ppq TTS via `ProviderRegistry::ppq_tts` → Blossom → sign+ingest per
   section → root → optional broadcast; SSE `GenEvent`s; skips sections
-  already narrated for the same `E` + voice) / `mirror`. API under
+  already narrated for the same `E` + voice; the root always covers the
+  sections that have a recording by this narrator + voice, from any
+  run, and a later run replaces it under the same `d`) / `mirror`. API under
   `/api/v1/narration/*` (`models`, `voices`, `servers`, `estimate`,
   `generate` SSE, `for/:pubkey/:d_tag`, `node/:kind/:pubkey/:d_tag` —
   one document on its own, `event/:pubkey/:d_tag` — a 32176 opened as

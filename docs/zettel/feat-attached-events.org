@@ -31,6 +31,7 @@ buckets:
 | =narration_index=  | kind-32176 roots (an =a=-children TOC) bound to the publication |
 | =narration_leaves= | kind-32176 leaves (one =b= blob each) bound to the target — for a 30040, to any section it lists |
 | =index=            | 30040s containing a section / narrated by a recording (empty when the target is one) |
+| =sections=         | an index's own children — sections and nested indexes — in TOC order (newest local version each) |
 
 =classify= is pure (bucket a bag of events against a =TargetShape=);
 replaceables collapse to the newest version per coordinate. The handler
@@ -61,8 +62,9 @@ Under the header, for every document kind (30040 / 30041 / 30023 /
    publication (the header already says so);
 2. publisher · *published* date and time;
 3. one chip per bucket, coloured: comments *orange*, highlights
-   *yellow*, narration index *green*, 30040 index *blue*, audio leaves
-   *purple*, each with its count. One event → the chip opens its menu;
+   *yellow*, narration index *green*, 30040 index *blue*, sections
+   *teal* (an index's own children, reading order — the way down; the
+   blue chip is the way up), audio leaves *purple*, each with its count. One event → the chip opens its menu;
    several → the chip unfolds a list of rows (author · label · date), a
    row opens the menu. A chip with nothing is dimmed, never hidden;
 4. ⟳ runs the widening round; "via N relays" shows what the provenance
@@ -115,6 +117,20 @@ reader; a root narrating a non-local publication → audio view with two
 playable chapters. Provenance round in Confirm mode: a publication
 fetched from theforest → =provenance= / =fetched_from= = theforest, no
 intent, 0.6 s. Recipe: =docs/commands.org= "Attached events".
+
+* The root rule changed with it (2026-11-09)
+
+A kind-32176 *root* used to be minted only when every section with text
+had a recording — so a deliberate partial narration (skip the TOC, skip
+the introduction) left leaves with no index, which is what the user hit
+on "Mysticism and Logic" (5 leaves, no root). Now the root always covers
+the sections that *have* a recording by this narrator and voice,
+whatever run made them, in reading order; a later run that adds
+sections replaces the same root (same =d=), and a run that adds nothing
+says "root already covers these N sections". The publication's
+coordinates say what each leaf attaches to, so nothing has to match
+one-to-one. Re-running narrate on an old partial book with the same
+voice mints its root at no cost.
 
 * Open
 

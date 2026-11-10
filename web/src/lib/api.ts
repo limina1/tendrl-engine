@@ -3275,6 +3275,8 @@ export interface AttachedResponse {
 	narration_leaves: AttachedEvent[];
 	/** 30040 indexes containing the target (empty when it is one). */
 	index: AttachedEvent[];
+	/** An index's own children (sections, nested indexes) in TOC order. */
+	sections: AttachedEvent[];
 	provenance: string[];
 	fetched_from: string[];
 }

@@ -1324,9 +1324,13 @@ pub fn root_template(
     spec: &VoiceSpec,
     total_secs: f64,
     relay_hint: Option<&str>,
+    d_tag: Option<&str>,
 ) -> EventTemplate {
+    // Reusing an earlier root's `d` replaces it (addressable): a later run
+    // that narrates more sections grows the same index instead of minting
+    // a second one.
     let mut tags: Vec<Vec<String>> = vec![
-        vec!["d".into(), mint_d_tag()],
+        vec!["d".into(), d_tag.map(str::to_string).unwrap_or_else(mint_d_tag)],
         vec!["title".into(), title.to_string()],
     ];
     tags.extend(binding_tags(about, about_event, relay_hint));
@@ -2331,37 +2335,50 @@ impl<'a> NarrationEngine<'a> {
             }
         }
 
-        // Root: one per narrated publication, children in reading order.
-        // Only when every section was narrated (partial runs leave leaves
-        // discoverable by `#A` and can be completed by a later run).
+        // Root: one per narrated publication and voice, children in reading
+        // order — the sections that HAVE a recording, whether from this run
+        // or an earlier one. A partial narration (the user skips a TOC or an
+        // introduction on purpose) still gets its index; the publication's
+        // coordinates say what each leaf attaches to, so nothing has to
+        // match one-to-one. A later run that adds sections replaces the
+        // same root (same `d`) rather than minting a second one.
         let mut root_coord = None;
         let root_node = nodes.iter().find(|n| n.is_index && n.depth == 0);
-        let all_done = nodes
+        for node in nodes.iter().filter(|n| !n.is_index && n.chars > 0) {
+            if leaf_coords.contains_key(&node.coord) {
+                continue;
+            }
+            if let Some(existing) = self
+                .existing_narration(me, &node.coord, node.event_id.as_deref(), &spec, false)
+                .await
+            {
+                total_secs += existing.duration_secs.unwrap_or(0.0);
+                leaf_coords.insert(node.coord.clone(), (existing.coordinate(), node.title.clone()));
+            }
+        }
+        let children: Vec<(String, String)> = nodes
             .iter()
-            .filter(|n| !n.is_index && n.chars > 0)
-            .all(|n| leaf_coords.contains_key(&n.coord));
-        if let (Some(root), true, Some(root_event)) = (root_node, all_done, root_node.and_then(|n| n.event_id.clone())) {
-            // Nothing new this run and a root already binds this index
-            // version with this voice → reuse it rather than mint another.
-            if leaves == 0 && !req.force {
-                if let Some(existing) = self.existing_narration(me, &root.coord, Some(&root_event), &spec, true).await {
+            .filter(|n| !n.is_index)
+            .filter_map(|n| leaf_coords.get(&n.coord).cloned())
+            .collect();
+        let mut root_d: Option<String> = None;
+        if let (Some(root), Some(root_event), false) = (root_node, root_node.and_then(|n| n.event_id.clone()), children.is_empty()) {
+            if let Some(existing) = self.existing_narration(me, &root.coord, Some(&root_event), &spec, true).await {
+                if existing.children.iter().map(|(c, _)| c).eq(children.iter().map(|(c, _)| c)) && !req.force {
                     emit!(GenEvent::Skipped {
                         coord: root.coord.clone(),
-                        reason: "root already exists for this version and voice".into(),
+                        reason: format!("root already covers these {} section(s) for this version and voice", children.len()),
                         existing: existing.coordinate(),
                     });
                     root_coord = Some(existing.coordinate());
+                } else {
+                    root_d = Some(existing.d_tag.clone());
                 }
             }
         }
-        if let (Some(root), true, Some(root_event), None) =
-            (root_node, all_done, root_node.and_then(|n| n.event_id.clone()), root_coord.as_ref())
+        if let (Some(root), Some(root_event), false, None) =
+            (root_node, root_node.and_then(|n| n.event_id.clone()), children.is_empty(), root_coord.as_ref())
         {
-            let children: Vec<(String, String)> = nodes
-                .iter()
-                .filter(|n| !n.is_index)
-                .filter_map(|n| leaf_coords.get(&n.coord).cloned())
-                .collect();
             let template = root_template(
                 &root.addr,
                 &root_event,
@@ -2371,6 +2388,7 @@ impl<'a> NarrationEngine<'a> {
                 &spec,
                 total_secs,
                 relay_hint.as_deref(),
+                root_d.as_deref(),
             );
             match self.sign_and_ingest(signing, template, me).await {
                 Ok(signed) => {
@@ -3006,7 +3024,10 @@ mod tests {
         assert_eq!(n.piece_urls(&["https://m".into()]).len(), 2);
         assert_eq!(n.piece_urls(&["https://m".into()])[1][1], format!("https://m/{}.mp3", "e".repeat(64)));
 
-        let root = root_template(&NAddr::new(30040, "pk", "book"), "ROOT", "Book", &[("32176:me:x".into(), "Ch".into())], &[], &spec, 100.0, None);
+        let root = root_template(&NAddr::new(30040, "pk", "book"), "ROOT", "Book", &[("32176:me:x".into(), "Ch".into())], &[], &spec, 100.0, None, None);
+        assert_ne!(root.tags[0][1], "keep-me");
+        let again = root_template(&NAddr::new(30040, "pk", "book"), "ROOT", "Book", &[], &[], &spec, 1.0, None, Some("keep-me"));
+        assert_eq!(again.tags[0], vec!["d".to_string(), "keep-me".to_string()]);
         let r = Narration::from_event(&json!({"kind":32176,"id":"","pubkey":"me","created_at":1,"content":"","tags":root.tags})).unwrap();
         assert_eq!(r.children, vec![("32176:me:x".to_string(), "Ch".to_string())]);
         assert_eq!(r.about_kind, Some(30040));

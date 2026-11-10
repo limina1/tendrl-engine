@@ -2417,7 +2417,7 @@ Engine on an isolated instance (never :3030); the narration fixture above
 
 #+begin_src bash
 B=http://127.0.0.1:3131/api/v1
-curl -s "$B/attached?coord=30040:$PK:narr-book&policy=local_only" | jq '{comments:(.comments|length), highlights:(.highlights|length), narration_index:(.narration_index|length), narration_leaves:(.narration_leaves|length), index:(.index|length), publication:.publication.id[:8]}'
+curl -s "$B/attached?coord=30040:$PK:narr-book&policy=local_only" | jq '{comments:(.comments|length), highlights:(.highlights|length), narration_index:(.narration_index|length), narration_leaves:(.narration_leaves|length), index:(.index|length), sections:[.sections[].tags[]|select(.[0]=="title")|.[1]], publication:.publication.id[:8]}'
 curl -s "$B/attached?coord=30041:$PK:narr-s2&policy=local_only" | jq '.publication.tags[]|select(.[0]=="title")'   # the containing index = the menu's publication row
 curl -s "$B/attached?id=<comment or highlight id>&policy=local_only" | jq '.publication.id, (.index|length)'
 curl -s "$B/narration/node/30023/$PK/<d>?policy=local_only" | jq '.nodes[0] | {title, n:(.recordings|length)}'   # one document on its own
@@ -2430,6 +2430,12 @@ curl -s -X POST $B/network/mode -H 'content-type: application/json' -d '{"mode":
 time curl -s "$B/attached?coord=30040:<pk>:<d>&policy=local_first" | jq '{provenance, fetched_from}'   # ["wss://theforest.nostr1.com"] twice, < 1 s, no modal
 #+end_src
 
+Partial narration → root (the old rule needed every section): with a
+voice that already has a leaf on one section, =generate= with =only= =
+the other section → =signed= leaf, =signed= root listing BOTH, =done
+{leaves:1}=; rerun with =only= = the first → =skipped … root already
+covers these 2 section(s)=, =leaves:0=, spent 0.
+
 A 32176 root narrating a publication that is NOT local (the audio view):
 sign one with a throwaway key whose =a= children are existing leaves —
 =nak event -k 32176 -d ghost-root -t "A=30040:<pk>:ghost-book" -t K=30040 -t "a=32176:<pk>:<leaf d>;;Chapter one" … --sec <hex> < /dev/null=
@@ -2439,7 +2445,9 @@ GUI (headless as in "Narration"; the browser caches the bundle — reload
 with a query string after =pnpm -C web build=): open the publication →
 each chapter shows the strip (▶ · you · voice · 0:18 · *recordings*);
 *§ menu* → PUBLICATION INDEX row + publisher/date + chips *comments 0 ·
-highlights 0 · narration index 2 · 30040 index 1 · audio 1*; *audio* →
+highlights 0 · narration index 2 · 30040 index 1 · audio 1*; the
+publication's own menu (toolbar *M*) shows *sections 2* (teal, TOC
+order) instead of the blue index chip; *audio* →
 the leaf's menu (breadcrumb ‹); *narration index* → a two-row list → a
 root's menu. Me-chip → profile → *Narrations (n)* / *Audio (n)* tabs; a
 root whose publication is local → the reader; the ghost root → the AUDIO

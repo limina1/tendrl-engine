@@ -52,6 +52,9 @@ pub struct Attached {
     /// 30040 indexes containing a section / narrated by a recording. Empty
     /// when the target is itself the index (the publication row covers it).
     pub index: Vec<Value>,
+    /// An index's own children — sections and nested indexes — in TOC
+    /// order (newest local version each; children not local are skipped).
+    pub sections: Vec<Value>,
     /// Relays the provenance round asked (empty = none known / not run).
     pub provenance: Vec<String>,
     pub fetched_from: Vec<String>,
@@ -223,10 +226,33 @@ pub fn classify(shape: &TargetShape, events: Vec<Value>) -> Attached {
                 }
                 if own.as_deref().map(|c| pubs.contains(&c)).unwrap_or(false) {
                     out.index.push(ev);
+                } else if shape.kind == KIND_PUBLICATION_INDEX
+                    && own.as_deref().map(|c| secs.contains(&c)).unwrap_or(false)
+                {
+                    out.sections.push(ev);
+                }
+            }
+            KIND_PUBLICATION_SECTION => {
+                if shape.kind == KIND_PUBLICATION_INDEX
+                    && coord_of(&ev)
+                        .as_deref()
+                        .map(|c| secs.contains(&c))
+                        .unwrap_or(false)
+                {
+                    out.sections.push(ev);
                 }
             }
             _ => {}
         }
+    }
+    // Children in the index's own order, not newest-first.
+    if shape.kind == KIND_PUBLICATION_INDEX {
+        let pos = |e: &Value| {
+            coord_of(e)
+                .and_then(|c| shape.sections.iter().position(|s| *s == c))
+                .unwrap_or(usize::MAX)
+        };
+        out.sections.sort_by_key(pos);
     }
     out
 }
@@ -262,6 +288,18 @@ pub fn filters_for(shape: &TargetShape) -> Vec<Value> {
             }
         } else {
             out.push(json!({"kinds": [KIND_NARRATION], "#A": chunk, "limit": 200}));
+        }
+    }
+    if shape.kind == KIND_PUBLICATION_INDEX {
+        // The index's own children, by coordinate, one filter per (kind, author).
+        let mut groups: BTreeMap<(u64, String), Vec<String>> = BTreeMap::new();
+        for c in &shape.sections {
+            if let Some(a) = NAddr::from_a_tag(c) {
+                groups.entry((a.kind, a.pubkey)).or_default().push(a.d_tag);
+            }
+        }
+        for ((kind, pk), ds) in groups {
+            out.push(json!({"kinds": [kind], "authors": [pk], "#d": ds, "limit": ds.len() * 3}));
         }
     }
     if !shape.publications.is_empty() {
@@ -659,6 +697,35 @@ mod tests {
     }
 
     #[test]
+    fn index_target_lists_its_sections_in_toc_order() {
+        let shape = TargetShape {
+            coord: Some("30040:aa:book".into()),
+            kind: 30040,
+            sections: vec![
+                "30041:aa:one".into(),
+                "30040:aa:part".into(),
+                "30041:aa:two".into(),
+            ],
+            publications: vec![],
+        };
+        let events = vec![
+            ev(30041, PK, Some("two"), vec![], 5),
+            ev(30041, PK, Some("one"), vec![], 1),
+            ev(30041, PK, Some("one"), vec![], 2),
+            ev(30040, PK, Some("part"), vec![], 3),
+            ev(30041, PK, Some("stray"), vec![], 9),
+        ];
+        let out = classify(&shape, events);
+        let ds: Vec<String> = out
+            .sections
+            .iter()
+            .filter_map(|e| first_tag(e, "d"))
+            .collect();
+        assert_eq!(ds, vec!["one", "part", "two"]);
+        assert_eq!(created_at(&out.sections[0]), 2, "newest version of `one`");
+    }
+
+    #[test]
     fn section_target_sees_parent_and_roots() {
         let shape = TargetShape {
             coord: Some("30041:aa:one".into()),
@@ -779,7 +846,11 @@ mod tests {
             sections: vec!["30041:aa:one".into()],
             publications: vec![],
         });
-        assert_eq!(f.len(), 5);
+        assert_eq!(
+            f.len(),
+            6,
+            "4 target filters + leaves on sections + the sections themselves"
+        );
         let f = filters_for(&TargetShape {
             coord: Some("32176:bb:root".into()),
             kind: 32176,

@@ -221,12 +221,13 @@
 	// document came from), ⟳ runs the gated widening round. A chip with one
 	// event opens that event's menu in place (breadcrumb back); with
 	// several it unfolds a list.
-	type AttGroup = 'comments' | 'highlights' | 'narration_index' | 'index' | 'narration_leaves';
+	type AttGroup = 'comments' | 'highlights' | 'narration_index' | 'index' | 'sections' | 'narration_leaves';
 	const ATT_CHIPS: { key: AttGroup; label: string; color: string; title: string }[] = [
 		{ key: 'comments', label: 'comments', color: '#e8872b', title: 'NIP-22 comments on this event' },
 		{ key: 'highlights', label: 'highlights', color: '#d4b400', title: 'NIP-84 highlights of this event' },
 		{ key: 'narration_index', label: 'narration index', color: '#3cab5a', title: 'Kind-32176 narration indexes (Blossom piece-index roots) bound to the publication' },
 		{ key: 'index', label: '30040 index', color: '#3b82f6', title: 'The publication index this event belongs to' },
+		{ key: 'sections', label: 'sections', color: '#2bb5a8', title: "This index's own sections and nested indexes, in reading order" },
 		{ key: 'narration_leaves', label: 'audio', color: '#9b5de5', title: 'Kind-32176 narration leaves — one Blossom audio blob each' }
 	];
 	const ATTACHED_KINDS = new Set([30040, 30041, 30023, 30818, 30817, 32176, 1111, 9802]);
@@ -1007,7 +1008,7 @@
 				<div class="evm__att-chips">
 					{#each ATT_CHIPS as c (c.key)}
 						{@const count = attached?.[c.key]?.length ?? 0}
-						{#if !(c.key === 'index' && (n.kind === 30040 || count === 0))}
+						{#if !(c.key === 'index' && (n.kind === 30040 || count === 0)) && !(c.key === 'sections' && n.kind !== 30040)}
 							<button
 								class="evm__att-chip"
 								class:evm__att-chip--open={attachedOpen === c.key}
