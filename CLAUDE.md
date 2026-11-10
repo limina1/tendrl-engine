@@ -389,6 +389,20 @@ sections and embeds new events on a 60-second interval when embeddings are enabl
   store (one global player, recordings cache), `NarrationPlayer` strip,
   `NarrateModal`, reader `NarrationDrawer` + per-section ▶, Settings ›
   Narration. Design: `docs/zettel/idea-audiobook-blossom.org`.
+- **`transcript.rs`**: transcript review for narration, pure. `review(spoken,
+  title)` flags what a section should not read as-is — skip (footnote
+  sections / bodies, stray `[n]`, number-dense lists) or review (citations,
+  capitals, other scripts, variables / logic notation, URLs, leftover
+  markup, 150+ word run-ons) — with byte + UTF-16 offsets, a `suggest`ed
+  spoken form, and whole-section advice (Index, Contents, footnote leaves).
+  `TranscriptOverride` (`edits` against the engine's spoken text, or a
+  hand-edited `text`, pinned to the reviewed `event_id`) is resolved here
+  (`apply_edits`); `narration::apply_transcripts` applies it to a plan, so
+  `estimate` / `generate` (`transcripts`) narrate and store the reviewed
+  text, and a section changed since review is reported, never mis-spliced.
+  `POST /api/v1/narration/review` = apply + re-check. Web: the narrate
+  modal's step 2 (`TranscriptReview.svelte`, decisions as view state in
+  `narration-review.ts`).
 - **`chat.rs`**: Pure state logic for LLM chat fragments, edit mode, context
   injection, message serialization (no IO)
 - **`llm.rs`**: Async `LLMProvider` trait — `NoopProvider` (testing) and
