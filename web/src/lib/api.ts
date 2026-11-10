@@ -3264,3 +3264,47 @@ export async function streamNarration(
 		}
 	}
 }
+
+// Reading / listening history — the engine's local "where was I" per
+// publication (`<data_dir>/history.json`; never an event).
+export interface ReadPlace {
+	coord: string;
+	event_id?: string;
+	title?: string | null;
+}
+export interface ListenPlace {
+	coord: string;
+	title?: string | null;
+	recording_id: string;
+	piece: number;
+	position_secs: number;
+	duration_secs: number;
+}
+export interface HistoryEntry {
+	/** `30040:pubkey:d` */
+	coord: string;
+	title?: string | null;
+	author: string;
+	section?: ReadPlace;
+	audio?: ListenPlace;
+	updated_at: number;
+}
+export interface HistoryUpdate {
+	coord: string;
+	title?: string | null;
+	author?: string;
+	section?: ReadPlace;
+	audio?: ListenPlace;
+	clear_section?: boolean;
+	clear_audio?: boolean;
+}
+export function getHistory() {
+	return fetchJson<{ entries: HistoryEntry[]; path: string }>('/api/v1/history');
+}
+export function updateHistory(up: HistoryUpdate) {
+	return fetchJson<{ entry: HistoryEntry }>('/api/v1/history', { method: 'POST', body: JSON.stringify(up) });
+}
+/** `coord: '*'` clears everything. */
+export function removeHistory(coord: string) {
+	return fetchJson<{ removed: boolean }>('/api/v1/history/remove', { method: 'POST', body: JSON.stringify({ coord }) });
+}

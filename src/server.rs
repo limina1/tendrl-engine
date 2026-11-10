@@ -484,6 +484,12 @@ pub async fn start(opts: ServeOptions) -> anyhow::Result<RunningServer> {
             get(crate::narration::handlers::discover),
         )
         .route("/api/v1/narration/mirror", post(crate::narration::handlers::mirror))
+        // Reading / listening history: local "where was I" per publication.
+        .route(
+            "/api/v1/history",
+            get(crate::history::handlers::list).post(crate::history::handlers::update),
+        )
+        .route("/api/v1/history/remove", post(crate::history::handlers::remove))
         .route("/api/v1/providers/select", post(crate::providers::handlers::select))
         .route("/api/v1/providers/ceiling", post(crate::providers::handlers::ceiling))
         .route("/api/v1/providers/self-test", post(crate::providers::handlers::self_test))

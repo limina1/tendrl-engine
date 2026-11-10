@@ -93,6 +93,19 @@ never happen in the browser.
   section title and *▶ listen* in the strip feed the global
   =NarrationPlayer=; *narrate* opens =NarrateModal= (ppq TTS → Blossom).
   Design + decisions: [[file:idea-audiobook-blossom.org][audiobooks on Blossom]].
+- Reading / listening history (2026-11-09, =feat/listening-history=): the
+  engine keeps one line per document in =<data_dir>/history.json=
+  (=src/history.rs=, =/api/v1/history=; local, never an event). Tracked:
+  publication indexes (30040) with the section last shown, and the atomic
+  documents (30023 articles, 30818 wikis); a 30041 is recorded only
+  *inside* its publication — opened on its own it leaves no entry. The
+  player writes the listening place (section, recording, piece, position)
+  every few seconds and on pause/stop; a finished book clears it. A fresh
+  open of a publication jumps to the remembered section; *▶ listen*
+  resumes at the remembered position on the same recording; the feed's
+  *history* tab lists entries (📖 / 🎧) with *▶ listen* and *×*. The
+  narration playback rate persists in the browser (=tendrl.narration.rate=)
+  and survives section/piece changes (=load()= resets it otherwise).
 
 * Gaps / open edges
 - Nested-publication packed cards, drill-in with breadcrumbs, and parent

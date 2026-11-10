@@ -261,6 +261,13 @@ sections and embeds new events on a 60-second interval when embeddings are enabl
   (ingest, optional broadcast, local-until-broadcast on the coordinate).
   Web: feed bookshelf mode, `EventViewModal` Shelve action, profile
   Bookshelves tab.
+- **`history.rs`**: reading / listening history — `<data_dir>/history.json`,
+  one entry per document coordinate (30040 with the last section shown,
+  30023, 30818; a 30041 only inside its publication), plus the narration
+  place (section, recording id, piece, position). Local state only, never
+  an event. API: `GET/POST /api/v1/history`, `POST /history/remove`
+  (`coord:"*"` clears). Web: `history.svelte.ts` (debounced reads,
+  throttled listens, optimistic mirror), reader resume, feed *history* tab.
 - **`git.rs`**: NIP-34 git (`nips/34.md`) — kind-30617 repository
   announcements (name/description, multi-valued `web`/`clone`/`relays`/
   `maintainers`, `r … euc`, `u` fork pointer, `t`), kind-30618 state

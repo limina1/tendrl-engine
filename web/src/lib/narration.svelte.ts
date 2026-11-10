@@ -9,6 +9,7 @@
 // state (playlist, index, playing, position). Recording choice per node is
 // view state too — the first ranked recording unless the user picked one.
 import * as api from '$lib/api';
+import * as history from '$lib/history.svelte';
 
 export interface PlaylistItem {
 	/** Node coordinate (30041:pk:d) this item narrates. */
@@ -30,6 +31,17 @@ const loadingByPub = $state<Record<string, boolean>>({});
 /** User-picked recording id per node coordinate (else the top-ranked). */
 const chosen = $state<Record<string, string>>({});
 
+// Declared before `player`: its initializer reads the persisted rate.
+const RATE_KEY = 'tendrl.narration.rate';
+function loadRate(): number {
+	try {
+		const v = Number(localStorage.getItem(RATE_KEY));
+		return v > 0 && v <= 4 ? v : 1;
+	} catch {
+		return 1;
+	}
+}
+
 const player = $state({
 	playlist: [] as PlaylistItem[],
 	index: -1,
@@ -41,8 +53,11 @@ const player = $state({
 	pubTitle: null as string | null,
 	error: null as string | null,
 	/** Set by the player component; drives seek/pause from outside. */
-	rate: 1
+	rate: loadRate(),
+	/** Seconds to seek to once the current item's metadata loads (resume). */
+	pendingSeek: null as number | null
 });
+
 
 export function pubKey(pubkey: string, d_tag: string): string {
 	return `30040:${pubkey}:${d_tag}`;
@@ -134,19 +149,42 @@ export function playlistFor(pubkey: string, d_tag: string): PlaylistItem[] {
 
 /** Start playing: the whole publication from `startCoord` (or its first
  *  narrated section). */
-export function playPublication(pubkey: string, d_tag: string, pubTitle: string | null, startCoord?: string) {
+export function playPublication(
+	pubkey: string,
+	d_tag: string,
+	pubTitle: string | null,
+	startCoord?: string,
+	start?: { piece?: number; position?: number }
+) {
 	const list = playlistFor(pubkey, d_tag);
 	if (list.length === 0) return false;
 	let idx = startCoord ? list.findIndex((p) => p.coord === startCoord) : 0;
 	if (idx < 0) idx = 0;
+	const item = list[idx];
+	const pieces = pieceUrls(item.recording).length;
+	item.piece = start?.piece !== undefined && start.piece < pieces ? start.piece : 0;
 	player.playlist = list;
 	player.index = idx;
 	player.pubCoord = pubKey(pubkey, d_tag);
 	player.pubTitle = pubTitle;
 	player.error = null;
-	player.position = 0;
+	player.position = start?.position ?? 0;
+	player.pendingSeek = start?.position && start.position > 1 ? start.position : null;
 	player.playing = true;
 	return true;
+}
+
+/** Continue where the listener left off (history), else from the start.
+ *  The remembered recording is re-chosen when it is still among the
+ *  section's recordings, so the position lands on the same audio. */
+export function resumeOrPlay(pubkey: string, d_tag: string, pubTitle: string | null) {
+	const h = history.entryFor(pubKey(pubkey, d_tag));
+	const a = h?.audio;
+	if (a) {
+		if (recordingsFor(a.coord).some((r) => r.id === a.recording_id)) choose(a.coord, a.recording_id);
+		if (playPublication(pubkey, d_tag, pubTitle ?? h?.title ?? null, a.coord, { piece: a.piece, position: a.position_secs })) return true;
+	}
+	return playPublication(pubkey, d_tag, pubTitle);
 }
 
 /** Play one specific recording for a node (from the recordings panel). */
@@ -251,6 +289,7 @@ export function failover(): 'retry' | 'next' | 'stop' {
 
 export function stop() {
 	player.playing = false;
+	player.pendingSeek = null;
 	player.playlist = [];
 	player.index = -1;
 	player.position = 0;
@@ -266,6 +305,11 @@ export function isPlayingCoord(coord: string): boolean {
 
 export function setRate(rate: number) {
 	player.rate = rate;
+	try {
+		localStorage.setItem(RATE_KEY, String(rate));
+	} catch {
+		// private mode / blocked storage: the rate still holds for the session
+	}
 }
 
 export { player };
