@@ -600,6 +600,8 @@ function _createAppState() {
 	let composeEdit: ComposeEdit | null = $state(null);
 	// The review step a Sign opens for a ComposeEdit (EditReviewModal).
 	let editReview: api.SectionEditRequest[] | null = $state(null);
+	// The merge-requests modal (M-x tendrl-merge-requests / event menu).
+	let mergeRequests: { targets?: string[] } | null = $state(null);
 	let eventDraft: EventComposerDraft | null = $state(null);
 
 	// Republish diff prompt: set when Publish detects a same-title
@@ -5698,6 +5700,8 @@ function _createAppState() {
 		get composeNotes() { return composeNotes; },
 		get composeEdit() { return composeEdit; },
 		set composeEdit(v: ComposeEdit | null) { composeEdit = v; },
+		get mergeRequests() { return mergeRequests; },
+		set mergeRequests(v: { targets?: string[] } | null) { mergeRequests = v; },
 		get editReview() { return editReview; },
 		set editReview(v: api.SectionEditRequest[] | null) { editReview = v; },
 		set composeNotes(v: boolean) { composeNotes = v; },

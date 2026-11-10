@@ -563,6 +563,15 @@
 		}
 	}
 
+	function onMergeRequestsAction() {
+		const self = `${n.kind}:${n.pubkey}:${dTag}`;
+		// A publication's requests include the ones on its sections.
+		const children =
+			n.kind === 30040 ? n.tags.filter((t) => t[0] === 'a' && t[1]).map((t) => t[1]) : [];
+		onclose();
+		app.mergeRequests = { targets: [self, ...children] };
+	}
+
 	async function onEditAction() {
 		if (!canEdit || editLoading) return;
 		if (composerEdit) return onComposerEdit();
@@ -723,6 +732,9 @@
 			} else if (k === 'e' && canEdit) {
 				e.preventDefault();
 				void onEditAction();
+			} else if (k === 'm' && isOwnEvent && COMPOSER_KINDS.has(n.kind) && dTag) {
+				e.preventDefault();
+				onMergeRequestsAction();
 			}
 			return;
 		}
@@ -1249,6 +1261,16 @@
 					>
 						<span class="evm__key">e</span>
 						<span class="evm__action-label">{editLoading ? 'Loading…' : editLabel}</span>
+					</button>
+				{/if}
+				{#if isOwnEvent && COMPOSER_KINDS.has(n.kind) && dTag}
+					<button
+						class="evm__action"
+						onclick={onMergeRequestsAction}
+						title="Merge requests (kind 818) proposed for this event — review, merge or decline"
+					>
+						<span class="evm__key">m</span>
+						<span class="evm__action-label">Merge requests</span>
 					</button>
 				{/if}
 				{#if isOwnEvent}

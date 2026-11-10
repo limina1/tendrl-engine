@@ -770,6 +770,11 @@
 			closeMinibuffer();
 			return;
 		}
+		if (cmd.id === 'tendrl-merge-requests') {
+			app.mergeRequests = {};
+			closeMinibuffer();
+			return;
+		}
 		if (cmd.id === 'tendrl-compose-event') {
 			app.eventComposer = {};
 			closeMinibuffer();
