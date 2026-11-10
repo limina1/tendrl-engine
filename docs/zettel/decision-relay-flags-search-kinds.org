@@ -1,0 +1,79 @@
+#+TITLE: Decision: One Relay List, Five Flags — Search Kinds Join the Read Set
+#+TYPE: decision
+#+STATUS: current
+#+DATE: 2026-11-09
+
+* The decision
+
+A relay is one row with five flags: *auth, read, write, search,
+broadcast*. There is no indexer class, no default/fallback tier and no
+=exclusive= flag.
+
+One rule picks the relays for every fetch:
+
+#+begin_quote
+a fetch for kinds K asks the *read relays* plus *the search relays
+serving K*.
+#+end_quote
+
+A search relay's *search kinds* say what it serves. None listed = any
+kind. A filter that names no kind (an id lookup, an =#e= thread) reaches
+only the unrestricted search relays. Read relays are always asked. It is
+a union — listing a kind never takes a relay away from anything.
+
+* Why
+
+- The old model had three ways to say "also ask this relay": the
+  =search= class, the =indexer= class and per-relay resolve kinds, each
+  with its own tiers and an =exclusive= switch. Nobody could predict
+  which relays a given fetch would touch.
+- An indexer is not a different thing. purplepag.es is a relay that is
+  worth asking for kind 0 and relay lists and nothing else — a search
+  relay with kinds =0, 3, 10002, 10007, 10088, 30002=.
+- Exclusive claims
+  ([[file:idea-relay-kind-routing.org][kind-scoped routing]], rule 2)
+  made adding a kind to one relay silently *remove* that kind from the
+  read set. A union can only widen, so the modal's proposed list is
+  explainable row by row.
+- The working style is to stay local to a few relays and add as needed.
+  Proposals no longer start from every configured relay (publish relays
+  used to be proposed for fetches).
+
+* Consequences / how
+
+- =relays.json=: =search= is a flat list; =search_kinds= (was
+  =resolve_kinds=, read as an alias) is URL → kinds. Kinds are kept on
+  file when the search flag is off, and ignored.
+- Generation-2 migration (=RelaySets::apply_default_upgrades=,
+  =seed_version= 2): =search.default= ∪ =search.fallback= → =search=;
+  =indexer.*= → search relays with =relay_store::INDEXER_KINDS=; every
+  relay that carried resolve kinds gets the search flag; parked relays
+  have their recorded roles renamed the same way. =exclusive= is
+  dropped.
+- Engine: =relays_for_kinds= / =relays_for_filters= (the rule),
+  =plan_resolve_fetch= (per-filter, so a kind-narrowed relay only sees
+  the filters it was listed for), =compose_for_filters= (one stage,
+  =Phase::Read= + =Phase::Search=). =get_events= with no override
+  composes from the rule, so background paths follow it too.
+- Read = =fetch= ∪ the legacy =general= set, matching what the relays
+  screen shows as "read".
+- Relays screen: no Discovery section; *search kinds* disclosure on
+  every row; parked relays move to an *Inactive* section with a
+  reactivate link instead of an active/inactive pill.
+- Pulled kind-10086 (Amethyst indexer list) entries import as
+  "+ search (profiles)". There is no "Publish kind 10086" button.
+
+* What this gives up
+
+- Narrowing. A kind listed on one relay is still asked of every read
+  relay. The fan-out cost that motivated exclusive claims is back for
+  claimed kinds; the remedy is fewer read relays, not routing.
+- Fallback ordering. Everything fires in one stage; a hit on the read
+  relays no longer spares the profile relays a request.
+
+* Related
+- [[file:feat-relays.org][Relay management]]
+- [[file:decision-session-relay-choices.org][Fetch-modal choices are session state]]
+- [[file:idea-relay-kind-routing.org][Kind-scoped relay routing]] — the earlier, exclusive design
+- [[file:feat-network.org][Network modes]]
+- [[file:index.org][Index]]

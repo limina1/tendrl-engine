@@ -41,7 +41,11 @@ needed is local. The web already has a late-hydration path for profiles
   the backfill runs its primary pass, re-checks what's still missing, and
   only then drops to =indexer.default=, then =indexer.fallback=. A hit in
   the primary set means the indexers are never contacted;
-  =exclusive.indexer= still makes the indexers replace the primary set
+  =exclusive.indexer= still makes the indexers replace the primary set.
+  *Changed 2026-11-09:* the indexer class is gone
+  ([[file:decision-relay-flags-search-kinds.org][one relay list, five flags]]).
+  The backfill is now one pass over read ∪ the search relays serving
+  kind 0, so the profile relays are contacted every time, hit or not
 - [ ] Run compound =|= branches concurrently (bounded) — still open
 
 * The structural reading (added 2026-08-14)

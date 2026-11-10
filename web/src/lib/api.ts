@@ -1,3 +1,4 @@
+import { onIngested } from './network/ingest';
 import type {
 	BunkerConnectResponse,
 	BunkerStatus,
@@ -20,6 +21,7 @@ import type {
 	SearchResponse,
 	EmbeddingStatusResponse,
 	NetworkStatus,
+	SessionRelays,
 	NetworkMode,
 	DocumentFile,
 	ImportResult,
@@ -1115,17 +1117,25 @@ async function fetchEventOrNull(url: string): Promise<SingleEventResponse> {
 function eventFetchQs(opts: {
 	policy?: 'local_only' | 'local_first' | 'fetch_always';
 	bypassOffline?: boolean;
+	/** Relay hints — the relays an `nevent` / `naddr` names in its own
+	 *  TLVs. They join the relays proposed for this one fetch. */
+	relays?: string[];
 }): string {
 	const params = new URLSearchParams();
 	if (opts.policy) params.set('policy', opts.policy);
 	if (opts.bypassOffline) params.set('confirm', 'true');
+	if (opts.relays?.length) params.set('relays', opts.relays.join(','));
 	const qs = params.toString();
 	return qs ? `?${qs}` : '';
 }
 
 export function getEvent(
 	eventId: string,
-	opts: { policy?: 'local_only' | 'local_first' | 'fetch_always'; bypassOffline?: boolean } = {}
+	opts: {
+		policy?: 'local_only' | 'local_first' | 'fetch_always';
+		bypassOffline?: boolean;
+		relays?: string[];
+	} = {}
 ) {
 	return fetchEventOrNull(`/api/v1/events/${eventId}${eventFetchQs(opts)}`);
 }
@@ -1138,9 +1148,9 @@ export function getAddressable(
 	pubkey: string,
 	d_tag: string,
 	policy?: 'local_only' | 'local_first' | 'fetch_always',
-	opts: { bypassOffline?: boolean } = {}
+	opts: { bypassOffline?: boolean; relays?: string[] } = {}
 ) {
-	const qs = eventFetchQs({ policy, bypassOffline: opts.bypassOffline });
+	const qs = eventFetchQs({ policy, bypassOffline: opts.bypassOffline, relays: opts.relays });
 	return fetchEventOrNull(
 		`/api/v1/addressable/${kind}/${pubkey}/${encodeURIComponent(d_tag)}${qs}`
 	);
@@ -1897,9 +1907,8 @@ export function backfillPublication(pubkey: string, d_tag: string, depth?: numbe
 }
 
 /** Pull a user's relay-list events (kinds 10002 / 10007 / 10086 /
- *  10088 / 30002) through the engine's indexer composition — read
- *  relays first, falling through to indexer.default → indexer.fallback
- *  if the primary returns zero. Honors NetworkMode::Confirm via the
+ *  10088 / 30002) from the read relays plus the search relays serving
+ *  those kinds. Honors NetworkMode::Confirm via the
  *  activity-event modal. The web reads the events back from local
  *  nostrdb via api.search after this resolves. */
 export function pullUserData(pubkey: string, modeConfirm = true) {
@@ -1924,14 +1933,6 @@ export interface NamedRelaySet {
 	urls: string[];
 }
 
-/** Two-tier membership for a discovery class — `default` joins the
- *  primary fan-out (or replaces read with `exclusive`), `fallback`
- *  kicks in only on default-miss. */
-export interface DiscoveryClass {
-	default: string[];
-	fallback: string[];
-}
-
 export function getRelayConfig() {
 	return fetchJson<{
 		general: { urls: string[]; kinds: number[] };
@@ -1941,15 +1942,14 @@ export function getRelayConfig() {
 		/** NIP-42 opt-in set: relays the engine authenticates to when
 		 *  challenged. Local-only, never published. */
 		auth: { urls: string[]; kinds: number[] };
-		search: DiscoveryClass;
-		indexer: DiscoveryClass;
-		exclusive: { search: boolean; indexer: boolean };
+		/** Search relays — a per-relay flag. A search relay joins the read
+		 *  relays for every fetch whose kinds it serves. */
+		search: { urls: string[] };
 		named_sets: NamedRelaySet[];
-		/** Per-relay resolve-kind claims, keyed by normalized URL. A URL
-		 *  absent from the map claims nothing, and resolution for a kind
-		 *  nobody claims falls back to the read relays — so an empty map
-		 *  is exactly the pre-routing behavior. */
-		resolve_kinds: Record<string, number[]>;
+		/** Per-relay search kinds, keyed by normalized URL: the kinds a
+		 *  search relay is asked for. A search relay absent from the map
+		 *  serves any kind. */
+		search_kinds: Record<string, number[]>;
 		/** Parked relays: URL → the set memberships held when the relay
 		 *  was deactivated. Presence in the map IS the inactive state —
 		 *  the URL sits in no working set until reactivated. */
@@ -2067,24 +2067,6 @@ export function relayListPublishDiff(req: {
 	});
 }
 
-/** Toggle the `exclusive` flag for a discovery class. ON = read relays
- *  bypassed entirely for this class's lookup type. */
-export function setDiscoveryExclusive(klass: 'search' | 'indexer', value: boolean) {
-	return fetchJson<{ updated: boolean; message: string }>('/api/v1/config/update', {
-		method: 'POST',
-		body: JSON.stringify({ set_exclusive: { class: klass, value } })
-	});
-}
-
-/** Merge the engine's well-known indexer/search defaults into the
- *  current `default` tiers. Idempotent — already-present URLs skip. */
-export function restoreDiscoveryDefaults() {
-	return fetchJson<{ updated: boolean; message: string }>('/api/v1/config/update', {
-		method: 'POST',
-		body: JSON.stringify({ restore_discovery_defaults: true })
-	});
-}
-
 export interface SnapshotPayload {
 	include_relays?: boolean;
 	editor?: { line_numbers: boolean; vim_mode: boolean; insert_mode: string };
@@ -2189,6 +2171,7 @@ export async function refreshProfiles(pubkeys: string[]): Promise<void> {
 }
 
 export async function getProfile(pubkey: string): Promise<Profile> {
+	wantedProfiles.add(pubkey);
 	const cached = profileCache.get(pubkey);
 	if (cached) return cached;
 
@@ -2214,12 +2197,37 @@ export async function getProfile(pubkey: string): Promise<Profile> {
 	return promise;
 }
 
+// Profiles someone on the page has asked for. When the engine announces
+// a kind-0 for one of them (`ingested`), it is re-read from the local
+// store — that is how a detached relay prefetch reaches the UI, and how
+// a newer profile replaces a cached one.
+const wantedProfiles = new Set<string>();
+const profileRefreshQueue = new Set<string>();
+let profileRefreshTimer: ReturnType<typeof setTimeout> | null = null;
+
+onIngested((n) => {
+	for (const pk of n.profiles) {
+		if (wantedProfiles.has(pk)) profileRefreshQueue.add(pk);
+	}
+	if (profileRefreshQueue.size === 0 || profileRefreshTimer) return;
+	// nostrdb finishes writing a moment after the announcement.
+	profileRefreshTimer = setTimeout(async () => {
+		profileRefreshTimer = null;
+		const batch = [...profileRefreshQueue];
+		profileRefreshQueue.clear();
+		for (const pk of batch) profileCache.delete(pk);
+		await Promise.all(batch.map((pk) => getProfile(pk)));
+		notifyProfileUpdate();
+	}, 400);
+});
+
 /// Debounced profile prefetch — collects pubkeys over 300ms then fires once
 let prefetchQueue: Set<string> = new Set();
 let prefetchTimer: ReturnType<typeof setTimeout> | null = null;
 
 export function prefetchProfiles(pubkeys: string[]) {
 	for (const pk of pubkeys) {
+		if (pk.length === 64) wantedProfiles.add(pk);
 		if (!profileCache.has(pk) && pk.length === 64) prefetchQueue.add(pk);
 	}
 	if (prefetchQueue.size === 0) return;
@@ -2233,15 +2241,19 @@ async function flushPrefetch() {
 	prefetchTimer = null;
 	if (batch.length === 0) return;
 
+	// Local first: show whatever the store already holds…
+	await Promise.all(batch.map((pk) => getProfile(pk)));
+	notifyProfileUpdate();
+
+	// …then ask the relays for the ones it doesn't. The engine detaches
+	// this fetch and answers at once; the profiles arrive through the
+	// `ingested` announcement handled above.
 	try {
 		await fetchJson<{ fetched: number }>('/api/v1/profiles/fetch', {
 			method: 'POST',
 			body: JSON.stringify({ pubkeys: batch })
 		});
 	} catch { /* ignore */ }
-
-	await Promise.all(batch.map(pk => getProfile(pk)));
-	notifyProfileUpdate();
 }
 
 // Ignore List API
@@ -2436,6 +2448,15 @@ export async function importJsonl(
 
 export function getNetworkStatus() {
 	return fetchJson<NetworkStatus>('/api/v1/network/status');
+}
+
+/** Forget this session's relay overrides — the fetch-modal choices
+ *  (relays turned off / added) that otherwise stick until the engine
+ *  restarts. */
+export function resetSessionRelays() {
+	return fetchJson<{ reset: boolean; session: SessionRelays }>('/api/v1/network/session/reset', {
+		method: 'POST'
+	});
 }
 
 /** Kill one in-flight relay fetch by id, or all of them when id is omitted.

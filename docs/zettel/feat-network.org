@@ -33,13 +33,38 @@ toast. One shape, several callers — this is the place to track them:
 - *Fetch intent* (=FetchEvent::Intent=, =begin_operation_with_summary=): a REQ.
   Carries the proposed relay set + a =RequestSummary= (filters / composition /
   DSL sentence). =FetchConfirmModal= renders it; the user drops/adds relays and
-  =ConfirmDecision.relays= overrides the set the engine uses.
+  =ConfirmDecision.relays= overrides the set the engine uses. Since
+  2026-11-09 that choice is *session state* (off / on relays, applied in
+  Auto too) — see
+  [[file:decision-session-relay-choices.org][session relay choices]] —
+  and the proposed set is read ∪ matching search relays ∪ hints
+  ([[file:decision-relay-flags-search-kinds.org][one relay list, five flags]]).
 - *Publish intent* (=FetchEvent::PublishIntent=): the broadcast counterpart —
   carries the event ids + destination relays so the UI correlates per-relay
   Accepted / Rejected.
 - Nostrdown =embed= / =quote= / =slot= entity fetches ride the *fetch* intent
   (=FetchAlways= → Confirm), which is why a not-local reference's relay pull
   surfaces here — see [[file:feat-nostrdown.org][nostrdown]].
+
+* Local-first and reactive (2026-11-09)
+Views render from the local store and re-read when the engine announces an
+ingest — =FetchEvent::Ingested { kinds, count, profiles }= on the fetch-events
+stream, emitted from the one ingest funnel (=Engine::note_ingest_batch=). Web:
+=$lib/network/ingest.ts=. The feed, the timeline picker, the bookshelf and the
+profile cache subscribe; the feed keeps its rows up (dimmed) while a read is
+pending instead of blanking.
+
+The rule that goes with it: relay-bound work that fires on its own must not
+hold its HTTP request open. A browser has about six connections per origin and
+tendrl keeps two for SSE (fetch-events, signer channel), so a few requests
+waiting on slow relays queue every local read behind them — a 10 ms nostrdb
+read then looks like "Loading publications…" for seconds.
+- [X] =POST /profiles/fetch= (background prefetch) detaches; profiles arrive
+  through the announcement
+- [ ] feed sync, bookshelf sync, discussions list/counts, wiki resolve,
+  pull-user-data still hold their request (user-initiated, so one at a time)
+- [ ] not yet measured in a real browser session — the connection-limit cause
+  is inferred from timings (engine 10–35 ms, headless 54 ms), not observed
 
 Open refinements:
 - [[file:idea-entity-hinted-relay-intent.org][Entity-hinted relays in the intent]]

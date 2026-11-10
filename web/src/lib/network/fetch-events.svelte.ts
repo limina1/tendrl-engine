@@ -18,6 +18,7 @@ import { browser } from '$app/environment';
 import { getAppState } from '$lib/state.svelte';
 import type { FetchEvent } from '$lib/types';
 import * as api from '$lib/api';
+import { emitIngested } from '$lib/network/ingest';
 
 type AppState = ReturnType<typeof getAppState>;
 type IntentEvent = Extract<FetchEvent, { type: 'intent' }>;
@@ -103,6 +104,13 @@ function handleEvent(ev: FetchEvent) {
 		} else {
 			confirmState.queue.push(ev);
 		}
+		return;
+	}
+
+	// Not an operation event: fan it out to the views that show these
+	// kinds. Needs no AppState, so it runs before that check.
+	if (ev.type === 'ingested') {
+		emitIngested({ kinds: ev.kinds, count: ev.count, profiles: ev.profiles ?? [] });
 		return;
 	}
 
