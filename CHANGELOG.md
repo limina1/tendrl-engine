@@ -1,3 +1,22 @@
+## v0.19.0 — 2026-11-09
+
+- docs: CLAUDE.md module entry for transcript.rs (narration transcript review)
+- feat(narrate): transcript review step — skip, keep or replace flagged spans before narrating
+- feat(narration): reviewed transcripts drive estimate and generate
+- feat(narration): transcript review — flag what a section should not read as-is
+- fix(narration): AsciiDoc spans, hard breaks and footnote markers are not read aloud
+- fix(publication): read a mixed index in a-tag order, not leaves-then-indexes
+- feat(narration): player above the pager, TOC speaker badge, T slugs on recordings, ASCII Blossom auth
+- feat(narration): a partial narration still gets its root; sections chip (teal) on an index's menu
+- docs: attached-events feature note, provenance-first decision, network/reader/audiobook links, commands recipe, CLAUDE.md module entry
+- fix(network): the ungated provenance round honours relays switched off for the session
+- feat(attached): attached events in the menu, provenance-first fetch, audiobook view, per-chapter player, profile narration tabs
+- fix(identity): NIP-07 signer re-registers when the engine restarts or the channel drops
+- feat(network): local-first, reactive display — ingest announcements; background profile fetch no longer holds a request
+- docs(relays): kasten notes for the five-flag relay model + session choices; tester worksheet
+- docs(zettel): history feature note, WebView-stays-the-player decision, two fix notes; index/fix-index/mobile/audiobook links
+- feat(relays): one flat relay list with five flags, search kinds, session-scoped fetch choices
+
 ## v0.18.0 — 2026-11-09
 
 - feat(history): reading / listening history — resume where you were; narration speed persists across sections
