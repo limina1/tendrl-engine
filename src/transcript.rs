@@ -71,6 +71,50 @@ pub struct Flag {
     /// The flagged text, so a client can check it lines up.
     pub excerpt: String,
     pub reason: String,
+    /// A spoken form to offer as the replacement (`θ` → `theta`, `e1` →
+    /// `e one`, capitals → normal case), when there is an obvious one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub suggest: Option<String>,
+}
+
+/// One change to a section's spoken text: replace bytes `start..end` with
+/// `with` (empty = skip).
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Edit {
+    pub start: usize,
+    pub end: usize,
+    #[serde(default)]
+    pub with: String,
+}
+
+/// The narrator's decisions for one section, sent with estimate / generate:
+/// either the whole hand-edited `text`, or `edits` against the engine's own
+/// spoken text. `event_id` pins the version the offsets were computed on.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TranscriptOverride {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub event_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub text: Option<String>,
+    #[serde(default)]
+    pub edits: Vec<Edit>,
+}
+
+impl TranscriptOverride {
+    /// The text to narrate for a section whose current spoken text is
+    /// `spoken` and loaded version is `event_id`. `None` when the override
+    /// was made against another version (its offsets no longer apply).
+    pub fn resolve(&self, spoken: &str, event_id: Option<&str>) -> Option<String> {
+        if let (Some(want), Some(have)) = (self.event_id.as_deref(), event_id) {
+            if !want.eq_ignore_ascii_case(have) {
+                return None;
+            }
+        }
+        Some(match &self.text {
+            Some(t) => normalize_paragraphs(t),
+            None => apply_edits(spoken, &self.edits),
+        })
+    }
 }
 
 /// A suggestion for the section as a whole.
@@ -187,22 +231,42 @@ pub fn review(spoken: &str, title: &str) -> Review {
 /// The spoken text with the given byte ranges removed (overlaps and
 /// out-of-order ranges tolerated), whitespace re-normalised per paragraph.
 pub fn apply_skips(spoken: &str, ranges: &[(usize, usize)]) -> String {
-    let mut ranges: Vec<(usize, usize)> = ranges
+    let edits: Vec<Edit> = ranges.iter().map(|&(start, end)| Edit { start, end, with: String::new() }).collect();
+    apply_edits(spoken, &edits)
+}
+
+/// The spoken text with each edit's byte range replaced by its `with`
+/// (empty = removed). Out-of-order edits are sorted; an edit overlapping an
+/// earlier one, or off a char boundary, is dropped. Whitespace is
+/// re-normalised per paragraph.
+pub fn apply_edits(spoken: &str, edits: &[Edit]) -> String {
+    let mut edits: Vec<&Edit> = edits
         .iter()
-        .map(|&(s, e)| (s.min(spoken.len()), e.min(spoken.len())))
-        .filter(|&(s, e)| s < e && spoken.is_char_boundary(s) && spoken.is_char_boundary(e))
+        .filter(|e| e.start < e.end && e.end <= spoken.len())
+        .filter(|e| spoken.is_char_boundary(e.start) && spoken.is_char_boundary(e.end))
         .collect();
-    ranges.sort();
+    edits.sort_by_key(|e| (e.start, e.end));
     let mut out = String::with_capacity(spoken.len());
     let mut cursor = 0;
-    for (s, e) in ranges {
-        if s > cursor {
-            out.push_str(&spoken[cursor..s]);
+    for e in edits {
+        if e.start < cursor {
+            // Overlap: a skip swallowing a smaller one is fine (extend);
+            // a replacement inside a consumed range is dropped.
+            if e.with.is_empty() {
+                cursor = cursor.max(e.end);
+            }
+            continue;
         }
-        cursor = cursor.max(e);
+        out.push_str(&spoken[cursor..e.start]);
+        out.push_str(&e.with);
+        cursor = e.end;
     }
     out.push_str(&spoken[cursor..]);
-    out.split("\n\n")
+    normalize_paragraphs(&out)
+}
+
+fn normalize_paragraphs(s: &str) -> String {
+    s.split("\n\n")
         .map(|p| p.split_whitespace().collect::<Vec<_>>().join(" "))
         .filter(|p| !p.is_empty())
         .collect::<Vec<_>>()
@@ -484,7 +548,77 @@ fn flag(spoken: &str, kind: FlagKind, action: FlagAction, start: usize, end: usi
         js_end: utf16_len(&spoken[..end]),
         excerpt: spoken[start..end].to_string(),
         reason: reason.to_string(),
+        suggest: suggest(kind, &spoken[start..end]),
     }
+}
+
+const DIGITS: [&str; 10] = ["zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine"];
+
+/// An obvious spoken form for a flagged span, if there is one.
+fn suggest(kind: FlagKind, text: &str) -> Option<String> {
+    match kind {
+        FlagKind::Symbols | FlagKind::ForeignScript => {
+            // Letters of another script → their names; `e1` → `e one`.
+            let mut words: Vec<String> = Vec::new();
+            for tok in text.split(|c: char| c.is_whitespace() || c == ',') {
+                if tok.is_empty() {
+                    continue;
+                }
+                let mut cs = tok.chars();
+                let first = cs.next()?;
+                let rest: String = cs.collect();
+                if let Some(name) = greek_name(first).filter(|_| rest.is_empty()) {
+                    words.push(name.to_string());
+                } else if first.is_ascii_alphabetic() && !rest.is_empty() && rest.chars().all(|c| c.is_ascii_digit()) {
+                    let digits: Vec<&str> = rest.chars().map(|d| DIGITS[d.to_digit(10).unwrap_or(0) as usize]).collect();
+                    words.push(format!("{first} {}", digits.join(" ")));
+                } else {
+                    return None;
+                }
+            }
+            (!words.is_empty()).then(|| words.join(", "))
+        }
+        FlagKind::AllCaps => {
+            const SMALL: &[&str] = &["a", "an", "and", "the", "of", "to", "in", "on", "by", "for", "or", "as", "at", "versus"];
+            Some(
+                text.split(' ')
+                    .enumerate()
+                    .map(|(i, w)| {
+                        let lower = w.to_lowercase();
+                        if i > 0 && SMALL.contains(&lower.trim_matches(|c: char| !c.is_alphabetic())) {
+                            return lower;
+                        }
+                        // Roman numerals stay as they are.
+                        if w.trim_end_matches(['.', ',']).chars().all(|c| matches!(c, 'I' | 'V' | 'X' | 'L' | 'C')) {
+                            return w.to_string();
+                        }
+                        let mut cs = lower.chars();
+                        match cs.next() {
+                            Some(f) => f.to_uppercase().chain(cs).collect(),
+                            None => lower,
+                        }
+                    })
+                    .collect::<Vec<_>>()
+                    .join(" "),
+            )
+        }
+        _ => None,
+    }
+}
+
+fn greek_name(c: char) -> Option<&'static str> {
+    const NAMES: [&str; 24] = [
+        "alpha", "beta", "gamma", "delta", "epsilon", "zeta", "eta", "theta", "iota", "kappa", "lambda", "mu", "nu",
+        "xi", "omicron", "pi", "rho", "sigma", "tau", "upsilon", "phi", "chi", "psi", "omega",
+    ];
+    let lower = c.to_lowercase().next()?;
+    let idx = match lower {
+        'α'..='ρ' => lower as u32 - 'α' as u32,
+        'ς' => 17,
+        'σ'..='ω' => lower as u32 - 'α' as u32 - 1,
+        _ => return None,
+    };
+    NAMES.get(idx as usize).copied()
 }
 
 fn utf16_len(s: &str) -> usize {
@@ -548,6 +682,29 @@ mod tests {
     fn plain_prose_is_not_flagged() {
         let t = "The unreality of time is a cardinal doctrine of many metaphysical systems. As a Persian Sufi poet says:\n\n\"Past and future are what veil God from our sight.";
         assert!(review(t, "III. Time").flags.is_empty());
+    }
+
+    #[test]
+    fn suggestions_and_overrides() {
+        assert_eq!(suggest(FlagKind::Symbols, "θ").as_deref(), Some("theta"));
+        assert_eq!(suggest(FlagKind::Symbols, "ω").as_deref(), Some("omega"));
+        assert_eq!(suggest(FlagKind::ForeignScript, "κ, κ").as_deref(), Some("kappa, kappa"));
+        assert_eq!(suggest(FlagKind::Symbols, "e12").as_deref(), Some("e one two"));
+        assert_eq!(suggest(FlagKind::AllCaps, "I. REASON AND INTUITION").as_deref(), Some("I. Reason and Intuition"));
+        assert_eq!(suggest(FlagKind::Citation, "(p. 8)."), None);
+
+        let spoken = "if κ is the class in which θ appears (p. 8). Done.\n\nFootnotes\n\n[1] Burnet.";
+        let r = review(spoken, "VII. Private Space");
+        let edits: Vec<Edit> = r
+            .flags
+            .iter()
+            .map(|f| Edit { start: f.start, end: f.end, with: if f.action == FlagAction::Skip { String::new() } else { f.suggest.clone().unwrap_or_default() } })
+            .collect();
+        let o = TranscriptOverride { event_id: Some("ab".into()), text: None, edits };
+        assert_eq!(o.resolve(spoken, Some("AB")).as_deref(), Some("if kappa is the class in which theta appears Done."));
+        assert_eq!(o.resolve(spoken, Some("cd")), None, "offsets from another version never apply");
+        let hand = TranscriptOverride { event_id: None, text: Some(" my  own\n\n text ".into()), edits: vec![] };
+        assert_eq!(hand.resolve(spoken, Some("cd")).as_deref(), Some("my own\n\ntext"));
     }
 
     #[test]

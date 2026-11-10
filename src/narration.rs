@@ -1620,6 +1620,34 @@ pub fn flatten_tree(pub_: &Publication, depth: usize, cap: usize, out: &mut Vec<
     }
 }
 
+/// Apply the narrator's reviewed transcripts to a plan: each overridden
+/// section's `text` / `chars` / `chunks` become the reviewed text (an empty
+/// result drops it from the run). Returns the coords whose override was made
+/// against another version of the section — their offsets no longer apply,
+/// so the caller reports them instead of narrating a mis-spliced text.
+pub fn apply_transcripts(
+    nodes: &mut [TreeNode],
+    overrides: &HashMap<String, crate::transcript::TranscriptOverride>,
+    cap: usize,
+) -> Vec<String> {
+    let mut stale = Vec::new();
+    if overrides.is_empty() {
+        return stale;
+    }
+    for n in nodes.iter_mut().filter(|n| !n.is_index) {
+        let Some(o) = overrides.get(&n.coord) else { continue };
+        match o.resolve(n.text.as_deref().unwrap_or(""), n.event_id.as_deref()) {
+            Some(t) => {
+                n.chunks = if t.is_empty() { 0 } else { chunk_text(&t, cap).len() };
+                n.chars = t.chars().count();
+                n.text = Some(t);
+            }
+            None => stale.push(n.coord.clone()),
+        }
+    }
+    stale
+}
+
 // ---------------------------------------------------------------------------
 // Engine
 // ---------------------------------------------------------------------------
@@ -1666,6 +1694,11 @@ pub struct GenerateRequest {
     /// Narrate only these section coordinates (empty = every section).
     #[serde(default)]
     pub only: Vec<String>,
+    /// Reviewed transcripts by section coordinate (skips, replacements, or
+    /// a hand-edited text) — see [`crate::transcript::TranscriptOverride`].
+    /// The resolved text is what is narrated and stored as the transcript.
+    #[serde(default)]
+    pub transcripts: HashMap<String, crate::transcript::TranscriptOverride>,
 }
 
 fn default_model() -> String {
@@ -2330,7 +2363,7 @@ impl<'a> NarrationEngine<'a> {
                 return;
             }
         };
-        let nodes = match self.plan(&addr, model.char_cap, FetchPolicy::LocalFirst).await {
+        let mut nodes = match self.plan(&addr, model.char_cap, FetchPolicy::LocalFirst).await {
             Ok(n) => n,
             Err(e) => {
                 emit!(GenEvent::Error { message: format!("load publication: {e}"), coord: None });
@@ -2338,10 +2371,20 @@ impl<'a> NarrationEngine<'a> {
             }
         };
         let only: HashSet<&str> = req.only.iter().map(String::as_str).collect();
+        let stale = apply_transcripts(&mut nodes, &req.transcripts, model.char_cap);
+        for coord in &stale {
+            if only.is_empty() || only.contains(coord.as_str()) {
+                emit!(GenEvent::Error {
+                    message: "this section changed since its transcript was reviewed — review it again".into(),
+                    coord: Some(coord.clone()),
+                });
+            }
+        }
         let sections: Vec<&TreeNode> = nodes
             .iter()
             .filter(|n| !n.is_index && n.chars > 0)
             .filter(|n| only.is_empty() || only.contains(n.coord.as_str()))
+            .filter(|n| !stale.contains(&n.coord))
             .collect();
         let total_chars: usize = sections.iter().map(|n| n.chars).sum();
         let total_chunks: usize = sections.iter().map(|n| n.chunks).sum();
@@ -2792,6 +2835,13 @@ pub mod handlers {
         pub model: String,
         #[serde(default)]
         pub only: Vec<String>,
+        /// Reviewed transcripts: chars / calls / cost use the resolved text.
+        #[serde(default)]
+        pub transcripts: HashMap<String, crate::transcript::TranscriptOverride>,
+        /// Ship each section's own spoken text + its transcript review (the
+        /// review step's input) on the plan nodes.
+        #[serde(default)]
+        pub review: bool,
     }
 
     #[derive(Deserialize)]
@@ -2817,11 +2867,26 @@ pub mod handlers {
             .ok_or_else(|| EngineError::BadRequest(format!("unknown TTS model {}", req.model)))?;
         let ne = NarrationEngine::new(&st.engine);
         let addr = NAddr::new(KIND_PUBLICATION_INDEX, &req.pubkey, &req.d_tag);
-        let nodes = ne.plan(&addr, model.char_cap, FetchPolicy::LocalFirst).await?;
+        let mut nodes = ne.plan(&addr, model.char_cap, FetchPolicy::LocalFirst).await?;
+        // The review runs on the section's own spoken text, before overrides.
+        let reviews: HashMap<String, (String, crate::transcript::Review)> = if req.review {
+            nodes
+                .iter()
+                .filter(|n| !n.is_index)
+                .filter_map(|n| {
+                    let t = n.text.as_deref()?;
+                    Some((n.coord.clone(), (t.to_string(), crate::transcript::review(t, &n.title))))
+                })
+                .collect()
+        } else {
+            HashMap::new()
+        };
+        let stale = apply_transcripts(&mut nodes, &req.transcripts, model.char_cap);
         let only: HashSet<&str> = req.only.iter().map(String::as_str).collect();
         let sections: Vec<&TreeNode> = nodes
             .iter()
             .filter(|n| !n.is_index && n.chars > 0 && (only.is_empty() || only.contains(n.coord.as_str())))
+            .filter(|n| !stale.contains(&n.coord))
             .collect();
         let chars: usize = sections.iter().map(|n| n.chars).sum();
         let chunks: usize = sections.iter().map(|n| n.chunks).sum();
@@ -2835,6 +2900,9 @@ pub mod handlers {
                     "is_index": n.is_index, "chars": n.chars, "chunks": n.chunks,
                     "est_bytes": bytes, "est_pieces": pieces,
                     "preview": n.text.as_deref().map(|t| t.chars().take(160).collect::<String>()),
+                    "spoken": reviews.get(&n.coord).map(|r| &r.0),
+                    "review": reviews.get(&n.coord).map(|r| &r.1),
+                    "stale": stale.contains(&n.coord),
                 })
             })
             .collect();
@@ -3105,6 +3173,42 @@ mod tests {
         let broken = "[.i0]#\"Past and future. +\n# [.i0]#Burn up both of them. +\n#\n";
         let t = spoken_text(broken, Some(crate::mimetype::ASCIIDOC));
         assert_eq!(t, "\"Past and future. Burn up both of them.");
+    }
+
+    #[test]
+    fn reviewed_transcripts_replace_plan_text() {
+        use crate::transcript::{Edit, TranscriptOverride};
+        let node = |coord: &str, id: &str, text: &str| TreeNode {
+            addr: NAddr::new(30041, "pk", coord),
+            coord: coord.into(),
+            event_id: Some(id.into()),
+            title: coord.into(),
+            depth: 1,
+            is_index: false,
+            chars: text.chars().count(),
+            chunks: 1,
+            text: Some(text.into()),
+        };
+        let mut nodes = vec![
+            node("a", "11", "if θ holds. Footnotes [1] x."),
+            node("b", "22", "untouched text."),
+            node("c", "33", "old version."),
+            node("d", "44", "all of it skipped."),
+        ];
+        let mut o = HashMap::new();
+        o.insert("a".to_string(), TranscriptOverride { event_id: Some("11".into()), text: None, edits: vec![
+            Edit { start: 3, end: 5, with: "theta".into() },
+            Edit { start: 12, end: 29, with: String::new() },
+        ] });
+        o.insert("c".to_string(), TranscriptOverride { event_id: Some("99".into()), text: Some("new".into()), edits: vec![] });
+        o.insert("d".to_string(), TranscriptOverride { event_id: None, text: None, edits: vec![Edit { start: 0, end: 18, with: String::new() }] });
+        let stale = apply_transcripts(&mut nodes, &o, 4096);
+        assert_eq!(stale, vec!["c".to_string()]);
+        assert_eq!(nodes[0].text.as_deref(), Some("if theta holds."));
+        assert_eq!(nodes[0].chars, "if theta holds.".len());
+        assert_eq!(nodes[1].text.as_deref(), Some("untouched text."));
+        assert_eq!(nodes[2].text.as_deref(), Some("old version."), "stale override leaves the text alone");
+        assert_eq!((nodes[3].chars, nodes[3].chunks), (0, 0), "a fully skipped section drops out");
     }
 
     #[test]
