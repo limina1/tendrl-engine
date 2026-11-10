@@ -127,6 +127,10 @@ wiki resolve, pull-user-data — convert them the same way when touched.
 Pending intents and live fetch activity are pushed to clients over an SSE
 `fetch-events` stream; the UI approves an intent via a confirm endpoint. The
 `FetchGuard` RAII type tracks active relay fetches for the activity log.
+One exception: the **provenance round** (`begin_operation_ungated`) — a
+fetch aimed only at relays a document was already served from — emits
+its intent with `needs_confirmation: false` and never blocks, in either
+mode; session-off relays still apply.
 
 ### Publication System (`src/publication.rs`)
 Implements NKBIP-01 structured documents:
@@ -291,6 +295,20 @@ sections and embeds new events on a 60-second interval when embeddings are enabl
   an event. API: `GET/POST /api/v1/history`, `POST /history/remove`
   (`coord:"*"` clears). Web: `history.svelte.ts` (debounced reads,
   throttled listens, optimistic mirror), reader resume, feed *history* tab.
+- **`attached.rs`**: what hangs off a document — NIP-22 comments, NIP-84
+  highlights, kind-32176 narration indexes and leaves, the containing
+  30040 — bucketed per target (`classify`, pure). `GET /api/v1/attached?
+  coord=|id=&policy=`: `local_first` runs the **provenance round**
+  (`Engine::provenance_for` = the index's + its sections' relay
+  provenance; `Engine::provenance_round` → `NetworkActivity::
+  begin_operation_ungated`, an intent with `needs_confirmation: false`
+  that never blocks — the relays a document came from already know the
+  reader has it); `fetch_always` is the gated widening round. Narration
+  discovery runs the same round first. Web: the event menu's publication
+  row + coloured chips, `NarrationStrip` under every chapter / article
+  with audio, `AudiobookBuffer` (`audiobook:<pk>:<d>`, a 32176 opened
+  when its document is not local), profile Narrations / Audio tabs.
+  Decision: `docs/zettel/decision-provenance-first-fetch.org`.
 - **`git.rs`**: NIP-34 git (`nips/34.md`) — kind-30617 repository
   announcements (name/description, multi-valued `web`/`clone`/`relays`/
   `maintainers`, `r … euc`, `u` fork pointer, `t`), kind-30618 state
@@ -357,7 +375,10 @@ sections and embeds new events on a 60-second interval when embeddings are enabl
   section → root → optional broadcast; SSE `GenEvent`s; skips sections
   already narrated for the same `E` + voice) / `mirror`. API under
   `/api/v1/narration/*` (`models`, `voices`, `servers`, `estimate`,
-  `generate` SSE, `for/:pubkey/:d_tag`, `mirror`). ppq returns MP3 only
+  `generate` SSE, `for/:pubkey/:d_tag`, `node/:kind/:pubkey/:d_tag` —
+  one document on its own, `event/:pubkey/:d_tag` — a 32176 opened as
+  a book: chapters in `a` order, version pin, the local publication
+  listing the narrated section, `mirror`). ppq returns MP3 only
   (`response_format` ignored, probed 2026-11-09). Web: `narration.svelte.ts`
   store (one global player, recordings cache), `NarrationPlayer` strip,
   `NarrateModal`, reader `NarrationDrawer` + per-section ▶, Settings ›

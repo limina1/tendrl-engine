@@ -2410,6 +2410,45 @@ Android 13+ asks for notification permission the first time ▶ is pressed;
 declined, the audio still runs in the background but there is no
 lock-screen card. =×= on the player strip stops the service.
 
+** Attached events, provenance round, audio view (=feat/attached-events=)
+
+Engine on an isolated instance (never :3030); the narration fixture above
+(=PK= / =narr-book=) has 2 roots + 3 leaves.
+
+#+begin_src bash
+B=http://127.0.0.1:3131/api/v1
+curl -s "$B/attached?coord=30040:$PK:narr-book&policy=local_only" | jq '{comments:(.comments|length), highlights:(.highlights|length), narration_index:(.narration_index|length), narration_leaves:(.narration_leaves|length), index:(.index|length), publication:.publication.id[:8]}'
+curl -s "$B/attached?coord=30041:$PK:narr-s2&policy=local_only" | jq '.publication.tags[]|select(.[0]=="title")'   # the containing index = the menu's publication row
+curl -s "$B/attached?id=<comment or highlight id>&policy=local_only" | jq '.publication.id, (.index|length)'
+curl -s "$B/narration/node/30023/$PK/<d>?policy=local_only" | jq '.nodes[0] | {title, n:(.recordings|length)}'   # one document on its own
+ROOT=$(curl -s "$B/narration/for/$PK/narr-book?policy=local_only" | jq -r '.nodes[0].recordings[0].d_tag')
+curl -s "$B/narration/event/$PK/$ROOT?policy=local_only" | jq '{is_root, about, about_kind, about_local, about_publication, missing, chapters:[.chapters[]|{title, about_local, m:.recording.version_match}]}'
+# provenance round: a publication fetched FROM a relay carries it; local_first asks that relay only, no intent, even in Confirm mode
+curl -s -X POST $B/network/mode -H 'content-type: application/json' -d '{"mode":"auto"}'
+curl -s -X POST $B/search -H 'content-type: application/json' -d '{"query":"k:30040 limit:3","limit":3,"policy":"fetch_always","relays":["wss://theforest.nostr1.com"]}' | jq '.results[0].addr'
+curl -s -X POST $B/network/mode -H 'content-type: application/json' -d '{"mode":"confirm"}'
+time curl -s "$B/attached?coord=30040:<pk>:<d>&policy=local_first" | jq '{provenance, fetched_from}'   # ["wss://theforest.nostr1.com"] twice, < 1 s, no modal
+#+end_src
+
+A 32176 root narrating a publication that is NOT local (the audio view):
+sign one with a throwaway key whose =a= children are existing leaves —
+=nak event -k 32176 -d ghost-root -t "A=30040:<pk>:ghost-book" -t K=30040 -t "a=32176:<pk>:<leaf d>;;Chapter one" … --sec <hex> < /dev/null=
+— and =POST $B/ingest= it (x-ndjson).
+
+GUI (headless as in "Narration"; the browser caches the bundle — reload
+with a query string after =pnpm -C web build=): open the publication →
+each chapter shows the strip (▶ · you · voice · 0:18 · *recordings*);
+*§ menu* → PUBLICATION INDEX row + publisher/date + chips *comments 0 ·
+highlights 0 · narration index 2 · 30040 index 1 · audio 1*; *audio* →
+the leaf's menu (breadcrumb ‹); *narration index* → a two-row list → a
+root's menu. Me-chip → profile → *Narrations (n)* / *Audio (n)* tabs; a
+root whose publication is local → the reader; the ghost root → the AUDIO
+buffer (chapters, *▶ play all*, *open §*, *text*). An article with a
+leaf bound to it (=A=30023:…=) shows the strip in the doc view and
+*audio 1* in its menu. Headless Chromium refuses autoplay: the player
+strip loads the blob URL but stays paused — that is the browser, not
+the store.
+
 * Relay model: five flags, search kinds, session overrides (feat/relay-simplify)
 
 One flat relay list (auth / read / write / search / broadcast), no indexer

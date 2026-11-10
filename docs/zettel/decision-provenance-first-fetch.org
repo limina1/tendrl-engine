@@ -1,0 +1,80 @@
+#+TITLE: Decision: attached events fetch provenance first, without an intent
+#+TYPE: decision
+#+STATUS: decided 2026-11-09, built on feat/attached-events
+#+DATE: 2026-11-09
+
+When a document's *attached* kinds are wanted — NIP-22 comments, NIP-84
+highlights, kind-32176 narration indexes and leaves, missing 30041
+sections — the first fetch goes to the relays the document itself came
+from, and that round raises no intent in Confirm mode. Widening to the
+general set is a second, gated round.
+
+* The user's statement
+
+"For 30040/30041 events, if we're fetching multiple kinds attached to
+them — comments, highlights, blossom indices and leaves — the first
+fetch should be by their provenance. That doesn't even need an intent
+because it's a given: that's where they come from, so that's where they
+fetch from."
+
+* Why the intent can be skipped
+
+Confirm mode's promise is that no relay learns of an interest the user
+did not approve. A provenance relay already served the document; asking
+it what hangs off the same coordinate tells it nothing new. The one
+thing it does change is *when*: a relay touched once through a hint is
+touched again in a later session. Writing provenance down as implied
+consent covers that. The round is still *emitted* — an =Intent= with
+=needs_confirmation: false= — so the activity log shows it; it just
+does not block. A relay the user switched off for the session stays
+off; session-added relays do not join (the round is provenance only).
+
+* What provenance is
+
+nostrdb records the relays each event was seen on
+(=IngestMetadata::relay=, =note.relays()=); the publication stream
+already carries it as the reader's relay pill. =Engine::provenance_for(coord)=
+unions the newest local event's relays with — for a 30040 — those of
+every section and nested index it lists, normalized, =local= dropped.
+A draft signed here and never accepted anywhere has none, so round one
+is empty and the caller goes straight to the gated round or nothing.
+
+* Where it runs
+
+=Engine::provenance_round= (an ungated =FetchOperation= from
+=NetworkActivity::begin_operation_ungated=, =FetchAlways= over the
+provenance set, results stored, then read back locally so provenance
+rides on every event) is called by:
+
+- =attached::AttachedEngine::load= at =policy=local_first= (the menu's
+  first open per document per session);
+- =NarrationEngine::discover= (a publication's recordings) before its
+  gated general round, which now runs only when the provenance round
+  found nothing or the caller asked for =fetch_always=;
+- =NarrationEngine::discover_node= (one document) and =open= (a 32176
+  as a book, for the chapters it lists but we do not have).
+
+Comments and highlights in the reader's own discussion summary still
+take the gated path (=discussions_list_handler=); switching them is a
+follow-up with the same helper.
+
+* Limits
+
+- Round one is a strong first guess, not the whole answer: a commenter
+  or another narrator writes to *their* relays; only the =A= tag's hint
+  ties the comment back to the root's relay. The gated round stays.
+- A publication seen on many relays means that many sockets ungated;
+  the set is the provenance, bounded by what the user already touched.
+- Events already local are not re-stamped when a search finds them again
+  on a new relay (nostrdb dedups by id before the relay metadata is
+  appended on that path) — a pre-existing gap, visible as a publication
+  that came from a relay but shows no provenance.
+
+* Related
+
+- [[file:feat-attached-events.org][Attached events]] — the feature this serves
+- [[file:feat-network.org][Network modes]] — the intent pattern this carves an exception into
+- [[file:idea-entity-hinted-relay-intent.org][Entity-hinted relays in the intent]] — the second narrowing rule: hints
+- [[file:idea-relay-kind-routing.org][Kind-scoped relay routing]] — the third: kinds
+- [[file:decision-session-relay-choices.org][Session relay choices]] — the off set this honours
+- [[file:index.org][Index]]

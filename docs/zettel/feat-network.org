@@ -116,6 +116,19 @@ in, no signer, or refused) and =authenticated=. =FetchRecord.authenticated=
 marks the activity log. Both are passive; the Confirm-mode intent approval
 already covers AUTH for opted-in relays, no second modal.
 
+* The provenance round (2026-11-09)
+
+One exception to "every user-initiated relay fetch emits an intent":
+when what is wanted is *attached* to a document already here —
+comments, highlights, narrations, the chapters of a recording — the
+first round asks only the relays that document was served from
+(nostrdb provenance), and in Confirm mode it does not block.
+=NetworkActivity::begin_operation_ungated= still emits the =Intent=
+(=needs_confirmation: false=) so the activity log shows it; relays
+switched off for the session stay off. Widening to the general set is
+a second, gated round. Rationale and limits:
+[[file:decision-provenance-first-fetch.org][the decision note]].
+
 * Gaps / open edges
 - No per-source or per-kind fetch policies — the mode is engine-global.
 - Performance (2026-08-12 audit): every relay fetch is a fresh
@@ -129,3 +142,4 @@ already covers AUTH for opted-in relays, no second modal.
 - [[file:index.org][Index]]
 - [[file:feat-relays.org][Relays]]
 - [[file:idea-post-hoc-labeling.org][Post-hoc labeling]]
+- [[file:decision-provenance-first-fetch.org][Provenance-first fetch]] — the ungated first round for attached events

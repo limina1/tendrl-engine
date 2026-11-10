@@ -41,6 +41,7 @@ exists (with code paths), gaps.
 - [[file:feat-bookshelf.org][Bookshelves (kind 30045)]] — saved books as an event; read/write, named shelves, three surfaces
 - [[file:feat-reader.org][Reader]] — view modes, nested TOCs, highlights
 - [[file:feat-history.org][Reading & listening history]] — engine-kept save-place per 30040/30023/30818 + the narration position; resume, feed tab; 2026-11-09
+- [[file:feat-attached-events.org][Attached events]] — menu publication row + comment/highlight/narration/index chips, per-chapter player strip, 32176 audio view, profile Narrations/Audio tabs; 2026-11-09
 - [[file:feat-discussions.org][Discussions & highlights]] — 9802 anatomy, source families, both capture surfaces
 
 ** Substrate
@@ -66,6 +67,7 @@ exists (with code paths), gaps.
 - [[file:decision-mimetype-tag.org][Content format is the m tag — tag or user, never heuristics]] — stamped on every 30041, never on an index; 2026-10-01
 - [[file:decision-layers-default-on.org][Markup layers on by default; kind-defined formats; untagged fallback]] — Markdown/AsciiDoc/Org decorate out of the box, 30023/30818 by spec, untagged = the user's answer; 2026-11-02
 - [[file:decision-webview-stays-the-player.org][On Android the WebView stays the audio player]] — foreground service + MediaSession around the SPA's <audio>, no native player; 2026-11-09
+- [[file:decision-provenance-first-fetch.org][Attached events fetch provenance first, without an intent]] — the relays a document came from already know; round two (general set) stays gated; 2026-11-09
 - [[file:decision-context-set-engine-owned.org][The context set is engine-owned]] — flags web, set engine; supersedes the web-pool call in half
 - [[file:decision-assistant-signs-own-key.org][The assistant signs with its own key]] — named =sign_as= source, never the user's
 - [[file:decision-chat-runs-on-agent-services.org][The chat runs on agent services; Claude is the external harness]] — Anthropic provider removed 2026-09-22

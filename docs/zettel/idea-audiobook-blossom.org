@@ -255,6 +255,8 @@ background playback". Manifest: =FOREGROUND_SERVICE=,
 - [[file:index.org][Index]]
 - [[file:feat-reader.org][Reader]] — where ▶ lives
 - [[file:feat-history.org][Reading & listening history]] — the listening place ▶ resumes from
+- [[file:feat-attached-events.org][Attached events]] — where the 32176s stopped being hidden: menu chips, chapter strips, the audio view, profile tabs
+- [[file:decision-provenance-first-fetch.org][Provenance-first fetch]] — discovery asks the publication's relays first, ungated
 - [[file:fix-narration-rate-reset.org][Fix: rate reset]] — speed across sections
 - [[file:feat-agent-services.org][Agent services]] — the ppq account that pays
 - [[file:feat-publishing.org][Publishing]] — sign-is-the-snapshot, local-until-broadcast

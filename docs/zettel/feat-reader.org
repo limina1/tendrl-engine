@@ -106,6 +106,16 @@ never happen in the browser.
   *history* tab lists entries (📖 / 🎧) with *▶ listen* and *×*. The
   narration playback rate persists in the browser (=tendrl.narration.rate=)
   and survives section/piece changes (=load()= resets it otherwise).
+- Attached events + the chapter player strip (2026-11-09,
+  =feat/attached-events=): every chapter with audio renders a slim
+  strip at the top of its body (▶ · narrator · voice · length ·
+  progress · *recordings* → the drawer) — the title ▶ is gone. The
+  section menu shows the *publication row* (index, publisher, published
+  at) and coloured chips — comments, highlights, narration index, 30040
+  index, audio — each opening the event in place; the first open per
+  document asks the publication's provenance relays, ungated. A 32176
+  opened on its own routes to the reader when its publication is local,
+  else to the audio view. See [[file:feat-attached-events.org][Attached events]].
 
 * Gaps / open edges
 - Nested-publication packed cards, drill-in with breadcrumbs, and parent

@@ -1,0 +1,134 @@
+#+TITLE: Attached Events — the menu's publication row, chips, and the audio view
+#+TYPE: feature
+#+STATUS: implemented
+#+DATE: 2026-11-09
+
+Everything that hangs off a document is one hop away from its menu, and
+audio is visible where the text is. Shipped on =feat/attached-events=.
+
+* The gap it closes
+
+The narration work ([[file:idea-audiobook-blossom.org][audiobooks on Blossom]])
+made it plain: kind-32176 indexes and leaves were *hidden*. They were
+attached to the publication index and its sections the same way
+comments and highlights are — by coordinate — yet nothing in the event
+menu said so, the profile had no column for them, and a 32176 found on
+its own (search hit, profile, a relay) had nowhere to open.
+
+* What exists
+
+** The engine: =src/attached.rs=
+
+=GET /api/v1/attached?coord=<kind:pubkey:d>= (or =?id=<event id>= for a
+comment or highlight) answers with the *publication row* and five
+buckets:
+
+| bucket             | what                                                      |
+|--------------------+-----------------------------------------------------------|
+| =publication=      | the 30040 the target belongs to — itself for an index, the containing index for a section / recording, the root document for a comment or highlight; a standalone article / wiki is its own row |
+| =comments=         | NIP-22 kind 1111 whose root or parent (=A= / =a=) is the target |
+| =highlights=       | NIP-84 kind 9802 whose =a= is the target                    |
+| =narration_index=  | kind-32176 roots (an =a=-children TOC) bound to the publication |
+| =narration_leaves= | kind-32176 leaves (one =b= blob each) bound to the target — for a 30040, to any section it lists |
+| =index=            | 30040s containing a section / narrated by a recording (empty when the target is one) |
+
+=classify= is pure (bucket a bag of events against a =TargetShape=);
+replaceables collapse to the newest version per coordinate. The handler
+runs the local queries and the two fetch rounds of
+[[file:decision-provenance-first-fetch.org][the provenance-first decision]]:
+=policy=local_first= asks the relays the document came from, ungated;
+=fetch_always= widens to the general set ∪ provenance ∪ hints behind the
+usual intent.
+
+Two narration lookups came with it (=src/narration.rs=):
+
+- =GET /narration/node/:kind/:pubkey/:d= — recordings bound to one
+  document on its own (article, wiki, spec, a section outside its
+  publication), ranked against the local version; same two rounds.
+- =GET /narration/event/:pubkey/:d= — a 32176 opened *as a book*: the
+  event as a =Recording=, its chapters in =a= order (a leaf alone is one
+  chapter), the version pin of each against the local node, what it
+  narrates (=A= / =K=), whether that is local, and the local 30040 that
+  lists a narrated section (=about_publication=).
+
+** The event menu (=EventViewModal=)
+
+Under the header, for every document kind (30040 / 30041 / 30023 /
+30818 / 30817 / 32176 / 1111 / 9802):
+
+1. the *publication row* — kind label, title; click opens that event's
+   menu in place (breadcrumb back). Hidden when the event *is* the
+   publication (the header already says so);
+2. publisher · *published* date and time;
+3. one chip per bucket, coloured: comments *orange*, highlights
+   *yellow*, narration index *green*, 30040 index *blue*, audio leaves
+   *purple*, each with its count. One event → the chip opens its menu;
+   several → the chip unfolds a list of rows (author · label · date), a
+   row opens the menu. A chip with nothing is dimmed, never hidden;
+4. ⟳ runs the widening round; "via N relays" shows what the provenance
+   round asked.
+
+The first open per document in a session runs the provenance round;
+later opens read the local store. A 32176's primary action reads
+*Listen*.
+
+** The per-chapter player strip (=NarrationStrip=)
+
+Every content event with audio attached renders a slim strip at the top
+of its body: ▶, narrator, voice, duration, progress while it plays, and
+a *recordings* button that opens the drawer the way comments and
+highlights open theirs. It replaces the ▶ that used to sit in the
+section title. Inside a publication the strip plays the whole book from
+that chapter; an article / wiki / spec on its own resumes from its
+history entry (the document is the history key; a bare section is not
+remembered). The doc view feeds it with one-node discovery
+(=nar.refreshNode=), the reader with the publication's discovery.
+
+** The audio view (=AudiobookBuffer=, =audiobook:<pk>:<d>=)
+
+Opening a 32176 anywhere (search hit, profile tab, menu *Listen*) goes
+through =app.openNarrationEvent=: when the narrated publication — or
+the publication that lists the narrated section — is local, the
+*reader* opens (the strips and ▶ listen are there); when it is not, the
+recording opens like a book: title, narrator, voice, chapter count,
+total length, *▶ play all*, and one card per chapter — ▶ from here,
+duration, version pin, *open §* when that node is local, sources, the
+transcript, ⋮ to its menu. ↻ fetches missing chapters (provenance
+first, then the gated round). The listening place is remembered under
+the narrated 30040 / document when there is one.
+
+** Profile columns
+
+*Narrations* (32176 roots) and *Audio* (32176 leaves) tabs, newest
+version per d-tag, with voice, duration, section count and what they
+narrate; a row opens through =openNarrationEvent=; *menu* opens the
+event.
+
+* Verified (2026-11-09, headless, isolated :3131)
+
+Section menu → publication row + chips (narration index 2 · 30040 index
+1 · audio 1); audio chip → the leaf's menu (breadcrumb); narration index
+chip → list → a root's menu. Strip under each chapter; strip on a 30023
+in the doc view, ▶ feeds the global player; its menu shows *audio 1*.
+Profile Narrations (3) / Audio (3); a root whose publication is local →
+reader; a root narrating a non-local publication → audio view with two
+playable chapters. Provenance round in Confirm mode: a publication
+fetched from theforest → =provenance= / =fetched_from= = theforest, no
+intent, 0.6 s. Recipe: =docs/commands.org= "Attached events".
+
+* Open
+
+- Comments and highlights on *other sections* are not in a section's
+  chips (per-event by design; the reader's discussion summary stays the
+  publication-wide view).
+- Nested 30040s: a 30040's "audio" chip covers its direct sections only.
+- The audio view's *play all* is not device-tested on Android.
+
+* Related
+
+- [[file:index.org][Index]]
+- [[file:decision-provenance-first-fetch.org][Provenance-first fetch]] — the round these lookups run first
+- [[file:idea-audiobook-blossom.org][Audiobooks on Blossom]] — the 32176 trees this surfaces
+- [[file:feat-reader.org][Reader]] — strips, ▶ listen, drawer
+- [[file:feat-history.org][Reading & listening history]] — what the strip resumes from
+- [[file:feat-ui-patterns.org][UI patterns]] — chips, armed ⟳, no browser dialogs
