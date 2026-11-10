@@ -204,7 +204,7 @@ leaf 32176  d=<nanoid>  title="<section title>"
   fresh descriptor (201). Cost $0.0093 on =deepgram_aura_2=.
   Recipe: =docs/commands.org= "Narration".
 
-* Android background playback (built 2026-11-09, =feat/android-background-audio=)
+* Android background playback (built 2026-11-09, =feat/android-background-audio=; decision: [[file:decision-webview-stays-the-player.org][WebView stays the player]]; user-confirmed, v0.18.0)
 
 Symptom on the v0.17.0 APK: audio cut off when the screen went off or the
 app was switched away. Two mechanisms were at work: wry's generated
@@ -254,6 +254,8 @@ background playback". Manifest: =FOREGROUND_SERVICE=,
 
 - [[file:index.org][Index]]
 - [[file:feat-reader.org][Reader]] — where ▶ lives
+- [[file:feat-history.org][Reading & listening history]] — the listening place ▶ resumes from
+- [[file:fix-narration-rate-reset.org][Fix: rate reset]] — speed across sections
 - [[file:feat-agent-services.org][Agent services]] — the ppq account that pays
 - [[file:feat-publishing.org][Publishing]] — sign-is-the-snapshot, local-until-broadcast
 - [[file:idea-version-semantics.org][Version semantics]] — exact-version vs live pointer is the =E= / =A= split here

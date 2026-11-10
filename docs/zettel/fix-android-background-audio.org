@@ -1,0 +1,30 @@
+#+TITLE: Fix: Narration Audio Cut Off When Android Backgrounds the App
+#+TYPE: fix
+#+STATUS: fixed
+#+DATE: 2026-11-09
+
+* The issue (observed 2026-11-09, v0.17.0 APK)
+
+Playing a narration, then turning the screen off or switching apps,
+stopped the audio within a second. Two mechanisms:
+
+1. wry's generated =WryActivity.onPause()= calls =WebView.onPause()=,
+   which marks the page hidden (=AwContents.mIsPaused= →
+   =WebContents= HIDDEN).
+2. With no foreground service, Android moves the backgrounded process
+   to the cached/frozen state; decoding stops regardless of the page.
+
+* The fix (commit =0cad271=, merged =f958953=, v0.18.0)
+
+=mediaPlayback= foreground service + MediaSession + notification +
+partial wake lock (=MediaService.kt=), =MainActivity.onPause()=
+re-resumes the WebView while a playlist is loaded, Tauri =media= plugin
+for state in / buttons out. Design and reasons:
+[[file:decision-webview-stays-the-player.org][WebView stays the player]].
+Verification recipe: =docs/commands.org= "Android background playback".
+User-confirmed on device.
+
+* Not fixed here
+
+Background *network* for the engine's own loops and SSE streams while
+suspended — see [[file:fix-android-lifecycle.org][Android lifecycle gaps]].

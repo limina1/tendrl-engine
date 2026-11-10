@@ -1,0 +1,78 @@
+#+TITLE: Reading & Listening History
+#+TYPE: feature
+#+STATUS: implemented
+#+DATE: 2026-11-09
+
+Where you were, per document, kept by the engine on this device: the
+last section a publication showed and the last position a narration
+reached. Emacs =save-place= for books, plus a bookmark in the audio.
+Shipped on =feat/listening-history= (master =0b744ff=, v0.18.0).
+
+* What is tracked (the user's rule, 2026-11-09)
+
+- *Publication indexes (30040)* — one entry per index, carrying the
+  section last shown (=section= place: coordinate + title).
+- *Atomic documents* — 30023 long-form articles and 30818 wiki pages get
+  an entry of their own, no section.
+- *Sections (30041) only inside their publication.* A section opened on
+  its own (search hit, =nostr:= link) leaves no entry: the place belongs
+  to the book it is read in, not to the leaf.
+- *Listening* — the publication's entry also carries the =audio= place:
+  section coordinate, the kind-32176 recording id, piece, position and
+  duration. Written every ~5 s while playing and flushed on pause, seek,
+  track change, × and page hide. A finished playlist *clears* it, so the
+  next ▶ starts the book over.
+
+* Storage & API
+
+=src/history.rs= — =<data_dir>/history.json=, newest first, capped at
+200 entries, written under a process-wide lock (reader and player both
+write). Same lineage as =relays.json= / =blossom.json=: local state,
+*never a Nostr event*, never broadcast
+([[file:../../CLAUDE.md][publishing philosophy]]). =GET /api/v1/history=,
+=POST /api/v1/history= (partial upsert: =section= / =audio= replace only
+when present, =clear_section= / =clear_audio= drop them),
+=POST /api/v1/history/remove= (=coord: "*"= clears all).
+
+* Surfaces
+
+- *Reader* — records the section it shows (debounced 1.5 s per
+  publication in =history.svelte.ts=). A fresh open of a publication
+  jumps to the remembered section; the per-buffer reading place
+  ([[file:decision-buffer-state-homes.org][buffer state homes]]) still
+  wins while the buffer lives. Recording waits for that resume check so
+  section 0 never overwrites the saved place.
+- *▶ listen* (reader toolbar) — =resumeOrPlay=: re-chooses the remembered
+  recording when it is still among the section's recordings, starts at
+  the remembered piece and seeks to the position once metadata loads.
+  SectionCard ▶ ignores history on purpose (it is an explicit "from
+  here").
+- *Feed › history* — third tab beside relays and bookshelf: rows with
+  the kind label (PUBLICATION / ARTICLE / WIKI), 📖 section, 🎧 section
+  · position / duration, author, age; *▶ listen* opens the reader and
+  resumes; *×* forgets one; *Clear history*.
+
+* Boundary
+
+The engine owns the file and the merge (=history::apply=, unit-tested);
+the web keeps an optimistic mirror so the feed updates at once and
+replaces each row with the engine's answer. Debounce/throttle are
+view-side concerns and live in the web store.
+
+* Open
+
+- Cross-device: the file is per engine. A synced place would be an
+  event (kind 30078 app data or a private NIP-51 list) — deliberately
+  not done; see [[file:idea-bookshelf-lifecycle.org][bookshelf lifecycle]]
+  for the shelf-side of "what I'm reading".
+- Articles/wikis record no in-document position (scroll); a 30023 is
+  one section.
+
+* Related
+
+- [[file:feat-reader.org][Reader]] — the surfaces
+- [[file:feat-feed.org][Feed]] — the history tab
+- [[file:feat-bookshelf.org][Bookshelves]] — the published counterpart (what I keep) vs this (where I am)
+- [[file:idea-audiobook-blossom.org][Audiobooks on Blossom]] — the recordings the listening place points into
+- [[file:idea-place-routing.org][Places & navigation history]] — in-session navigation history; this note is the cross-session one
+- [[file:fix-narration-rate-reset.org][Fix: narration rate reset]] — shipped in the same slice

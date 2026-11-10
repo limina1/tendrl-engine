@@ -1,0 +1,56 @@
+#+TITLE: Decision: On Android the WebView Stays the Audio Player
+#+TYPE: decision
+#+STATUS: current
+#+DATE: 2026-11-09
+
+* The decision
+
+Background narration on Android is solved by keeping the SPA's =<audio>=
+element as the one player and adding only what Android requires around
+it — not by moving playback into a native ExoPlayer.
+
+1. A =mediaPlayback= *foreground service* (=MediaService.kt=) with a
+   platform =MediaSession=, a =MediaStyle= notification and a partial
+   wake lock while playing. It never touches audio bytes.
+2. =MainActivity.onPause()= calls =WebView.onResume()= right after wry's
+   generated =WryActivity.onPause()= paused it, while a playlist is
+   loaded (=MediaBridge.keepAwake=). Chromium's paused state is one
+   symmetric flag (=AwContents.mIsPaused= → page hidden), so the
+   re-resume fully reverses it; the skipped pause is applied by
+   =MediaBridge.settle()= when playback stops.
+3. The SPA mirrors state through a Tauri plugin (=plugin:media|set_state=
+   / =stop=, =mobile/src-tauri/src/media.rs=, =MediaPlugin.kt=); system
+   transport buttons come back as a =tendrl:media= CustomEvent evaluated
+   into the page — no Tauri event plumbing.
+
+* Why
+
+- *One playlist, one failover.* The web store already owns the ranked
+  recordings, the per-blob server failover (BUD-03) and the NKBIP-07
+  piece logic. A native player would duplicate all of it in Kotlin and
+  split position/rate state across two runtimes.
+- *The real causes were elsewhere.* Audio stopped on screen-off for two
+  reasons: wry pauses the WebView, and without a foreground service
+  Android parks a backgrounded app in the cached/frozen state. Both are
+  fixed around the player, not inside it.
+- *Generated code is not patchable.* =WryActivity.kt= is rewritten by
+  wry's =build.rs= on every build and is gitignored (=/src/main/**/generated=);
+  an edit there vanished on the first rebuild. Hence the re-resume in
+  =MainActivity=, which we own.
+
+* Consequences
+
+- Manifest: =FOREGROUND_SERVICE=, =FOREGROUND_SERVICE_MEDIA_PLAYBACK=,
+  =POST_NOTIFICATIONS= (asked once on first ▶, Android 13+), =WAKE_LOCK=.
+- Closing the app (Back → process exit) ends playback; that matches the
+  app's exit model.
+- Confirmed on the user's tablet 2026-11-09 (screen off, app switch,
+  lock-screen controls). Shipped in v0.18.0.
+
+* Related
+
+- [[file:fix-android-background-audio.org][Fix: audio cut off in the background]]
+- [[file:idea-audiobook-blossom.org][Audiobooks on Blossom]]
+- [[file:feat-mobile.org][Mobile / Android]]
+- [[file:fix-android-lifecycle.org][Android lifecycle gaps]] — the other
+  suspend-side gaps (SSE, loops) are still open
