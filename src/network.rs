@@ -530,12 +530,17 @@ impl NetworkActivity {
         summary: Option<RequestSummary>,
     ) -> FetchOperation {
         let operation_id = next_operation_id();
+        // A relay switched off for this session stays off here too; the
+        // session's added relays do not join — the round is provenance only.
+        let off = self.session_relays().off;
+        let relays: Vec<String> = relays.into_iter().filter(|u| !off.contains(u)).collect();
         self.emit(FetchEvent::Intent {
             operation_id: operation_id.clone(),
             pattern,
             label,
             steps,
             relays: relays.clone(),
+            session_off: Vec::new(),
             needs_confirmation: false,
             summary,
         });
