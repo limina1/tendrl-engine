@@ -54,6 +54,8 @@ pub enum EditRoute {
 #[derive(Debug, Clone, Serialize)]
 pub struct EditPlan {
     pub route: EditRoute,
+    /// The edited event's kind (30041 / 30023 / 30818 / 30817).
+    pub kind: u32,
     /// Coordinate + id of the version that was edited.
     pub base_coordinate: String,
     pub base_id: String,
@@ -89,7 +91,7 @@ fn edited_tags(
     mut tags: Vec<Vec<String>>,
     old_content: &str,
     edit: &SectionEdit,
-    format: &str,
+    format: Option<&str>,
 ) -> Vec<Vec<String>> {
     tags.retain(|t| tag_name(t) != "client");
     // reference tags the old content produced → out; the new content's → in
@@ -115,9 +117,50 @@ fn edited_tags(
             None => tags.push(vec!["title".into(), title.to_string()]),
         }
     }
-    tags.retain(|t| tag_name(t) != "m" && tag_name(t) != "format");
-    tags.push(vec!["m".into(), format.to_string()]);
+    if let Some(format) = format {
+        tags.retain(|t| tag_name(t) != "m" && tag_name(t) != "format");
+        tags.push(vec!["m".into(), format.to_string()]);
+    }
     tags
+}
+
+/// Kinds this module edits: the publication section, and the atomic
+/// long-form / wiki kinds.
+pub const EDITABLE_KINDS: [u32; 4] = [30041, 30023, 30818, 30817];
+
+/// The copy process for an atomic article (NIP-54 § Forks): every tag
+/// verbatim under the **same `d`** in the editor's name, earlier fork
+/// markers dropped, `a` + `e` to the copied version with the `fork`
+/// marker, `p` to its author.
+pub fn fork_atomic(
+    base: &Value,
+    base_coord: &str,
+    editor: &str,
+    relay_hint: &str,
+    now: i64,
+) -> Result<EventTemplate, String> {
+    let kind = base.get("kind").and_then(Value::as_u64).ok_or("no kind")? as u32;
+    let author = base.get("pubkey").and_then(Value::as_str).ok_or("no pubkey")?;
+    let id = base.get("id").and_then(Value::as_str).ok_or("no id")?;
+    let mut tags: Vec<Vec<String>> = event_tags(base)
+        .into_iter()
+        .filter(|t| tag_name(t) != "client" && t.get(3).map(String::as_str) != Some("fork"))
+        .collect();
+    tags.push(vec!["a".into(), base_coord.to_string(), relay_hint.to_string(), "fork".into()]);
+    tags.push(vec!["e".into(), id.to_string(), relay_hint.to_string(), "fork".into()]);
+    if !tags
+        .iter()
+        .any(|t| tag_name(t) == "p" && t.get(1).map(String::as_str) == Some(author))
+    {
+        tags.push(vec!["p".into(), author.to_string()]);
+    }
+    Ok(EventTemplate {
+        kind,
+        created_at: now,
+        tags,
+        content: String::new(),
+        pubkey: Some(editor.to_string()),
+    })
 }
 
 fn title_of(ev: &Value) -> String {
@@ -140,8 +183,9 @@ pub fn plan(
     with_derivative: bool,
     now: i64,
 ) -> Result<EditPlan, String> {
-    if base.get("kind").and_then(Value::as_u64) != Some(30041) {
-        return Err("only a kind-30041 section can be edited here".into());
+    let kind = base.get("kind").and_then(Value::as_u64).unwrap_or(0) as u32;
+    if !EDITABLE_KINDS.contains(&kind) {
+        return Err(format!("kind {kind} cannot be edited here (30041, 30023, 30818, 30817)"));
     }
     if editor.len() != 64 {
         return Err("editor must be a 64-hex pubkey".into());
@@ -157,12 +201,21 @@ pub fn plan(
         .and_then(Value::as_str)
         .unwrap_or("")
         .to_string();
+    let own_m = crate::mimetype::from_event(base);
     let format = match edit.format.as_deref() {
         Some(f) => crate::mimetype::canonical(f).ok_or_else(|| format!("unknown format `{f}`"))?,
-        None => crate::mimetype::from_event(base)
-            .ok_or("the section declares no format — pick one (markdown, org, asciidoc, plain)")?,
+        None => own_m
+            .or_else(|| crate::mimetype::for_kind(kind as u64))
+            .ok_or("the event declares no format — pick one (markdown, org, asciidoc, plain)")?,
     }
     .to_string();
+    // `m` is stamped on every 30041; on a kind whose format the spec fixes
+    // it is written only when declared (the base had one, or the edit
+    // differs from the kind's format).
+    let stamp = kind == 30041
+        || own_m.is_some()
+        || crate::mimetype::for_kind(kind as u64) != Some(format.as_str());
+    let stamp_fmt = stamp.then_some(format.as_str());
     let old_content = base.get("content").and_then(Value::as_str).unwrap_or("");
     let old_title = title_of(base);
     let title_changed = edit
@@ -170,26 +223,28 @@ pub fn plan(
         .as_deref()
         .map(str::trim)
         .is_some_and(|t| !t.is_empty() && t != old_title);
-    let format_changed = crate::mimetype::from_event(base) != Some(format.as_str());
+    let format_changed = own_m.or_else(|| crate::mimetype::for_kind(kind as u64)) != Some(format.as_str());
     let unchanged = old_content == edit.content && !title_changed && !format_changed;
     let hunks = line_diff(old_content, &edit.content);
 
     let index = index.filter(|ix| {
-        ix.get("kind").and_then(Value::as_u64) == Some(30040)
+        kind == 30041
+            && ix.get("kind").and_then(Value::as_u64) == Some(30040)
             && event_tags(ix).iter().any(|t| {
                 tag_name(t) == "a" && t.get(1).map(String::as_str) == Some(base_coord.as_str())
             })
     });
 
     if owner == editor {
-        let tags = edited_tags(event_tags(base), old_content, edit, &format);
+        let tags = edited_tags(event_tags(base), old_content, edit, stamp_fmt);
         return Ok(EditPlan {
             route: EditRoute::Republish,
+            kind,
             base_coordinate: base_coord.clone(),
             base_id,
             owner,
             section: EventTemplate {
-                kind: 30041,
+                kind,
                 created_at: now,
                 tags,
                 content: edit.content.clone(),
@@ -204,8 +259,12 @@ pub fn plan(
         });
     }
 
-    let mut fork = fork_section(base, editor, relay_hint, now)?;
-    fork.tags = edited_tags(fork.tags, old_content, edit, &format);
+    let mut fork = if kind == 30041 {
+        fork_section(base, editor, relay_hint, now)?
+    } else {
+        fork_atomic(base, &base_coord, editor, relay_hint, now)?
+    };
+    fork.tags = edited_tags(fork.tags, old_content, edit, stamp_fmt);
     fork.content = edit.content.clone();
     let fork_d = fork
         .tags
@@ -213,7 +272,7 @@ pub fn plan(
         .find(|t| tag_name(t) == "d")
         .and_then(|t| t.get(1).cloned())
         .ok_or("fork has no d")?;
-    let fork_coord = format!("30041:{editor}:{fork_d}");
+    let fork_coord = format!("{kind}:{editor}:{fork_d}");
 
     let index_owner = index.and_then(|ix| ix.get("pubkey").and_then(Value::as_str));
     if let (Some(ix), Some(ix_owner)) = (index, index_owner) {
@@ -233,6 +292,7 @@ pub fn plan(
             }
             return Ok(EditPlan {
                 route: EditRoute::ForkIntoIndex,
+                kind,
                 base_coordinate: base_coord,
                 base_id,
                 owner,
@@ -273,6 +333,7 @@ pub fn plan(
     };
     Ok(EditPlan {
         route: EditRoute::ForkAndRequest,
+        kind,
         base_coordinate: base_coord,
         base_id,
         owner,
@@ -470,6 +531,39 @@ mod tests {
         let d = p2.index.unwrap();
         assert_ne!(tag(&d, "d")[0][1], "book");
         assert!(tag(&d, "a").iter().any(|t| t[1] == p2.section_coordinate));
+    }
+
+    #[test]
+    fn a_foreign_wiki_forks_under_the_same_d_with_nip54_markers() {
+        let wiki = json!({
+            "id": SEC_ID, "kind": 30818, "pubkey": ALICE, "created_at": 10,
+            "content": "= Bitcoin\n\nA coin.",
+            "tags": [["d", "bitcoin"], ["title", "Bitcoin"], ["client", "x"]]
+        });
+        let p = plan(&wiki, Some(&index(BOB, ALICE)), BOB, &edit("= Bitcoin\n\nA better coin."), "wss://h", false, 5).unwrap();
+        assert_eq!(p.route, EditRoute::ForkAndRequest, "an index never applies to an atomic kind");
+        assert_eq!(p.kind, 30818);
+        assert_eq!(p.section.kind, 30818);
+        assert_eq!(p.section_coordinate, format!("30818:{BOB}:bitcoin"), "same d, my key");
+        assert!(tag(&p.section, "m").is_empty(), "30818 is AsciiDoc by spec — no m stamped");
+        let a = tag(&p.section, "a");
+        assert_eq!(a[0][1], format!("30818:{ALICE}:bitcoin"));
+        assert_eq!(a[0][3], "fork");
+        assert_eq!(tag(&p.section, "e")[0][1], SEC_ID);
+        assert!(p.index.is_none());
+        let mr = merge_request_for(&p, &"3".repeat(64), "", &Default::default(), 6).unwrap();
+        assert_eq!(mr.tags[0][1], format!("30818:{ALICE}:bitcoin"));
+        // own 30023 republishes, same d
+        let mut post = wiki.clone();
+        post["kind"] = json!(30023);
+        let own = plan(&post, None, ALICE, &edit("new body"), "", false, 5).unwrap();
+        assert_eq!(own.route, EditRoute::Republish);
+        assert_eq!(own.section.kind, 30023);
+        assert_eq!(own.format, "text/markdown");
+        assert!(tag(&own.section, "m").is_empty());
+        // a kind outside the set is refused
+        post["kind"] = json!(1);
+        assert!(plan(&post, None, ALICE, &edit("x"), "", false, 5).is_err());
     }
 
     #[test]

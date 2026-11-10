@@ -66,7 +66,7 @@ impl MergeRequest {
         let a = tags.iter().find(|t| t.first().map(String::as_str) == Some("a"))?;
         let target = a.get(1)?.trim().to_string();
         let (target_kind, target_pk, _) = coord_parts(&target)?;
-        if !matches!(target_kind, 30040 | 30041 | 30818) {
+        if !matches!(target_kind, 30040 | 30041 | 30023 | 30818 | 30817) {
             return None;
         }
         let target_relay_hint = a.get(2).cloned().unwrap_or_default();
@@ -131,7 +131,7 @@ pub fn template(
 ) -> Result<EventTemplate, String> {
     let (kind, target_pk, _) =
         coord_parts(target).ok_or_else(|| format!("target is not a coordinate: `{target}`"))?;
-    if !matches!(kind, 30040 | 30041 | 30818) {
+    if !matches!(kind, 30040 | 30041 | 30023 | 30818 | 30817) {
         return Err(format!("a merge request targets a 30040, 30041 or 30818, not kind {kind}"));
     }
     let owner = if owner.trim().is_empty() { target_pk } else { owner.trim() };
@@ -704,16 +704,17 @@ mod tests {
     }
 
     #[test]
-    fn from_event_accepts_30818_flags_kind_and_refuses_other_targets() {
+    fn from_event_accepts_editable_kinds_and_refuses_other_targets() {
         let wiki = template(&format!("30818:{OWNER}:bitcoin"), None, Some(SRC), "", "", &MergeHints::default(), 1).unwrap();
         let mr = MergeRequest::from_event(&as_event(&wiki, MR_ID, ME)).unwrap();
         assert_eq!(mr.target_kind, 30818);
         assert_eq!(mr.owner, OWNER, "owner defaults to the target's pubkey");
         assert!(mr.base.is_none());
-        assert!(template(&format!("30023:{OWNER}:x"), None, None, OWNER, "", &MergeHints::default(), 1).is_err());
+        assert!(template(&format!("30023:{OWNER}:x"), None, None, OWNER, "", &MergeHints::default(), 1).is_ok(), "long-form is editable too");
+        assert!(template(&format!("1:{OWNER}:x"), None, None, OWNER, "", &MergeHints::default(), 1).is_err());
         let not_818 = json!({ "kind": 1, "tags": [["a", target()]], "content": "" });
         assert!(MergeRequest::from_event(&not_818).is_none());
-        let bad_target = json!({ "kind": 818, "tags": [["a", "30023:x:y"], ["p", OWNER]], "content": "" });
+        let bad_target = json!({ "kind": 818, "tags": [["a", format!("30402:{OWNER}:y")], ["p", OWNER]], "content": "" });
         assert!(MergeRequest::from_event(&bad_target).is_none());
     }
 

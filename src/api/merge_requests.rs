@@ -69,7 +69,7 @@ pub async fn destinations(engine: &AppState, req: &DestinationsRequest) -> Resul
     let target = req.target.trim().to_string();
     let (kind, target_pk, _) = coord_parts(&target)
         .ok_or_else(|| EngineError::BadRequest(format!("target is not a coordinate: `{target}`")))?;
-    if !matches!(kind, 30040 | 30041 | 30818) {
+    if !matches!(kind, 30040 | 30041 | 30023 | 30818 | 30817) {
         return Err(EngineError::BadRequest(format!("a merge request targets a 30040 or 30041, not kind {kind}")));
     }
     let owner = req
@@ -471,7 +471,10 @@ fn first_tag<'a>(tags: &'a [Vec<String>], name: &str) -> Option<&'a str> {
 fn next_section(original: &Value, derivative: &Value, owner: &str, created_at: i64) -> (EventTemplate, Vec<Vec<String>>, Vec<Vec<String>>) {
     let o_tags = event_tags(original);
     let d_tags = event_tags(derivative);
-    let is_ref = |t: &Vec<String>| REF_TAGS.contains(&tag_name(t));
+    // fork / source pointers belong to the derivative, never the owner's version
+    let is_ref = |t: &Vec<String>| {
+        REF_TAGS.contains(&tag_name(t)) && !matches!(t.get(3).map(String::as_str), Some("fork" | "source"))
+    };
     let same = |x: &Vec<String>, y: &Vec<String>| x.first() == y.first() && x.get(1) == y.get(1);
     let added: Vec<Vec<String>> = d_tags.iter().filter(|t| is_ref(t) && !o_tags.iter().any(|o| same(o, t))).cloned().collect();
     let removed: Vec<Vec<String>> = o_tags.iter().filter(|t| is_ref(t) && !d_tags.iter().any(|d| same(d, t))).cloned().collect();
@@ -490,7 +493,7 @@ fn next_section(original: &Value, derivative: &Value, owner: &str, created_at: i
     }
     (
         EventTemplate {
-            kind: 30041,
+            kind: original.get("kind").and_then(Value::as_u64).unwrap_or(30041) as u32,
             created_at,
             tags,
             content: derivative.get("content").and_then(Value::as_str).unwrap_or("").to_string(),
@@ -567,7 +570,7 @@ pub async fn review(engine: &AppState, id: &str, me: &str) -> Result<ReviewRespo
     let now = super::unix_now_i64();
     let mut sections = Vec::new();
     let mut index = None;
-    if mr.target_kind == 30041 {
+    if mr.target_kind != 30040 {
         let (next, added, removed) = next_section(&current, &source, &owner, now);
         let tags = event_tags(&current);
         sections.push(ReviewSection {

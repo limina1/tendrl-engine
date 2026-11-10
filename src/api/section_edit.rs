@@ -1,4 +1,4 @@
-//! Edit one section in place — `POST /api/v1/section-edit/{preview,publish}`.
+//! Edit one section (30041) or atomic article (30023 / 30818 / 30817) in place — `POST /api/v1/section-edit/{preview,publish}`.
 //!
 //! The planning is pure (`publication::section_edit`); this half loads the
 //! base section + its containing index from the store, resolves the signer,
@@ -66,6 +66,11 @@ pub struct SectionEditPreview {
     pub destinations: Option<DestinationsResponse>,
     /// The containing index resolved and listing this section.
     pub index_coordinate: Option<String>,
+    /// A fork of an atomic kind keeps the `d` (NIP-54): when the editor
+    /// already has an event at that coordinate, its id — publishing
+    /// replaces it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub overwrites: Option<String>,
 }
 
 const SOURCE_PLACEHOLDER: &str = "<fork id — set when signed>";
@@ -210,12 +215,20 @@ pub async fn preview_handler(
     } else {
         (None, None)
     };
+    let overwrites = match (plan.route, coord_parts(&plan.section_coordinate)) {
+        (EditRoute::Republish, _) | (_, None) => None,
+        (_, Some((k, pk, d))) => engine
+            .get_addressable(k as u64, pk, d, FetchPolicy::LocalOnly)
+            .await?
+            .and_then(|e| e.get("id").and_then(Value::as_str).map(str::to_string)),
+    };
     Ok(Json(SectionEditPreview {
         plan,
         moved_on,
         merge_request,
         destinations: dests,
         index_coordinate,
+        overwrites,
     }))
 }
 
