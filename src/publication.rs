@@ -17,6 +17,8 @@ use serde_json::Value;
 
 pub mod compose;
 pub mod tree_emit;
+pub mod event_util;
+pub mod merge_request;
 
 /// Kind constants for NKBIP-01 publications
 pub const KIND_PUBLICATION_INDEX: u64 = 30040;
