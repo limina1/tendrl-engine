@@ -9,6 +9,9 @@
 	import { getAppState } from '$lib/state.svelte';
 	import { identityCanSign } from '$lib/identity/signer';
 	import { confirmState } from '$lib/network/fetch-events.svelte';
+	import { untrack } from 'svelte';
+	import TranscriptReview from './TranscriptReview.svelte';
+	import { countsFor, overridesFor, type Decision } from '$lib/narration-review';
 
 	const app = getAppState();
 	const req = $derived(app.narrateModal);
@@ -58,6 +61,27 @@
 	let loadErr = $state<string | null>(null);
 	/** Section coordinates ticked for narration (empty set = all). */
 	let picked = $state<Record<string, boolean>>({});
+
+	// Transcript review (step 2): the engine's flags per section, fetched
+	// once per open (`estimate` with `review: true`), and the narrator's
+	// decisions on them. The engine resolves decisions into the final text —
+	// every later estimate carries them, so counts and cost are its numbers.
+	let step = $state<'setup' | 'review'>('setup');
+	let reviewData = $state<Record<string, { spoken: string; review: api.TranscriptReview | null }>>({});
+	let decisions = $state<Record<string, Decision>>({});
+	let reps = $state<Record<string, string>>({});
+	let handText = $state<Record<string, string>>({});
+	/** Plan nodes joined with their review data — the review step's input. */
+	const reviewNodes = $derived(
+		(estimate?.nodes ?? []).map((n) => {
+			const r = reviewData[n.coord];
+			return r ? { ...n, spoken: r.spoken, review: r.review } : n;
+		})
+	);
+	const overrides = $derived(overridesFor(reviewNodes, decisions, reps, handText));
+	const pendingChecks = $derived(
+		reviewNodes.reduce((a, n) => a + (!n.is_index && n.spoken != null && picked[n.coord] !== false ? countsFor(n, decisions, handText).pending : 0), 0)
+	);
 
 	// Hearing a voice before spending on a whole book: ppq's canned clip per
 	// voice (free, `preview_url`) and a paid sample of the user's own text.
@@ -178,12 +202,35 @@
 		ensureVoice();
 	}
 
+	let estimateSeq = 0;
 	async function loadEstimate() {
 		if (!req || !model) return;
 		estimating = true;
+		const seq = ++estimateSeq;
+		const first = Object.keys(reviewData).length === 0;
 		try {
-			estimate = await api.estimateNarration({ pubkey: req.pubkey, d_tag: req.d_tag, model });
-			if (req.only?.length) {
+			const transcripts = untrack(() => $state.snapshot(overrides));
+			const est = await api.estimateNarration({
+				pubkey: req.pubkey,
+				d_tag: req.d_tag,
+				model,
+				transcripts: Object.keys(transcripts).length ? transcripts : undefined,
+				review: first
+			});
+			if (seq !== estimateSeq) return;
+			if (first) {
+				const rd: Record<string, { spoken: string; review: api.TranscriptReview | null }> = {};
+				for (const n of est.nodes) {
+					if (n.is_index || n.spoken == null) continue;
+					rd[n.coord] = { spoken: n.spoken, review: n.review ?? null };
+					// Apparatus sections (Index, Contents, footnote leaves) start
+					// unticked unless the caller named the sections to narrate.
+					if (!req.only?.length && n.review?.section?.action === 'skip') picked[n.coord] = false;
+				}
+				reviewData = rd;
+			}
+			estimate = est;
+			if (req.only?.length && first) {
 				const only = new Set(req.only);
 				for (const n of estimate.nodes) if (!n.is_index) picked[n.coord] = only.has(n.coord);
 			}
@@ -198,6 +245,16 @@
 	$effect(() => {
 		// Initial load, once per open.
 		void req;
+		untrack(() => {
+			step = 'setup';
+			reviewData = {};
+			decisions = {};
+			reps = {};
+			handText = {};
+			picked = {};
+			estimate = null;
+			overridesKey = '';
+		});
 		(async () => {
 			try {
 				const m = await api.getNarrationModels();
@@ -217,6 +274,22 @@
 			}
 			await Promise.all([loadVoices(), loadEstimate()]);
 		})();
+	});
+
+	// Decisions changed → re-estimate with them (debounced). The key is a
+	// plain string so the effect only re-runs on a real change.
+	let overridesKey = '';
+	let reestimateTimer: ReturnType<typeof setTimeout> | null = null;
+	$effect(() => {
+		const key = JSON.stringify(overrides);
+		if (key === overridesKey) return;
+		const firstRun = overridesKey === '';
+		overridesKey = key;
+		if (firstRun && key === '{}') return;
+		untrack(() => {
+			if (reestimateTimer) clearTimeout(reestimateTimer);
+			reestimateTimer = setTimeout(() => void loadEstimate(), 500);
+		});
 	});
 
 	function onModelChange() {
@@ -250,7 +323,8 @@
 					broadcast,
 					transcript,
 					server: server || undefined,
-					only
+					only,
+					transcripts: $state.snapshot(overrides)
 				},
 				(ev) => {
 					switch (ev.type) {
@@ -327,9 +401,14 @@
 {#if req}
 	<!-- svelte-ignore a11y_click_events_have_key_events -->
 	<div class="nm-backdrop {yielding ? 'nm-backdrop--yield' : ''}" onclick={close} role="presentation">
-		<div class="nm-modal" onclick={(e) => e.stopPropagation()} role="dialog" aria-modal="true" aria-label="Narrate publication" tabindex="-1">
+		<div class="nm-modal" class:nm-modal--wide={step === 'review'} onclick={(e) => e.stopPropagation()} role="dialog" aria-modal="true" aria-label="Narrate publication" tabindex="-1">
 			<header class="nm-header">
 				<h3 class="nm-title">narrate · {req.title ?? req.d_tag}</h3>
+				<ol class="nm-steps" aria-label="Steps">
+					<li aria-current={step === 'setup' ? 'step' : undefined}>1 voice</li>
+					<li aria-current={step === 'review' ? 'step' : undefined}>2 review transcript</li>
+				</ol>
+				<span class="nm-sp"></span>
 				<button class="nm-close" onclick={close} aria-label="Close" disabled={running}>×</button>
 			</header>
 
@@ -346,6 +425,7 @@
 				<div class="nm-detail nm-detail--bad">{loadErr}</div>
 			{/if}
 
+			{#if step === 'setup'}
 			<div class="nm-grid">
 				<label class="nm-label" for="nm-model">model</label>
 				<select id="nm-model" class="nm-input" bind:value={model} onchange={onModelChange} disabled={running}>
@@ -419,6 +499,9 @@
 			<div class="nm-plan">
 				<div class="nm-plan__head">
 					<span>sections</span>
+					{#if Object.keys(reviewData).length}
+						<button class="nm-link" onclick={() => (step = 'review')} disabled={running}>review transcript{pendingChecks > 0 ? ` · ${pendingChecks} to check` : ''}</button>
+					{/if}
 					<span class="nm-sp"></span>
 					<button class="nm-link" onclick={() => { for (const n of sectionNodes) picked[n.coord] = true; }} disabled={running}>all</button>
 					<button class="nm-link" onclick={() => { for (const n of sectionNodes) picked[n.coord] = false; }} disabled={running}>none</button>
@@ -438,13 +521,17 @@
 									</label>
 									<span class="nm-row__meta" class:nm-row__meta--split={(n.est_pieces ?? 0) > 1}
 										title={(n.est_pieces ?? 0) > 1 ? `About ${nar.fmtBytes(n.est_bytes ?? 0)} of audio — over the ${nar.fmtBytes(estimate?.piece_cap_bytes ?? 0)} per-blob cap, so it uploads as ${n.est_pieces} blobs (NKBIP-07 pieces) and plays back to back` : ''}
-									>{n.chars === 0 ? 'no text' : `${n.chars} chars · ${n.chunks} call${n.chunks === 1 ? '' : 's'} · ~${nar.fmtBytes(n.est_bytes ?? 0)}${(n.est_pieces ?? 0) > 1 ? ` · ${n.est_pieces} blobs` : ''}`}</span>
+									>{n.chars === 0 ? (reviewData[n.coord]?.spoken ? 'all skipped' : 'no text') : `${n.chars} chars · ${n.chunks} call${n.chunks === 1 ? '' : 's'} · ~${nar.fmtBytes(n.est_bytes ?? 0)}${(n.est_pieces ?? 0) > 1 ? ` · ${n.est_pieces} blobs` : ''}`}</span>
 								</li>
 							{/if}
 						{/each}
 					</ul>
 				{/if}
 			</div>
+
+			{:else}
+				<TranscriptReview nodes={reviewNodes} bind:picked bind:decisions bind:reps bind:handText disabled={running} />
+			{/if}
 
 			<div class="nm-cost" class:nm-cost--bad={underfunded}>
 				<span>{pickedCoords.length} section{pickedCoords.length === 1 ? '' : 's'} · {pickedChars} chars · {pickedChunks} calls · ~{nar.fmtBytes(pickedChars * 400)}</span>
@@ -483,7 +570,15 @@
 				{#if running}
 					<button class="nm-btn" onclick={cancel}>Cancel</button>
 				{:else}
-					<button class="nm-btn" onclick={close}>Close</button>
+					{#if pendingChecks > 0}
+						<span class="nm-pending" title="flagged spans nobody has decided on are narrated as written">{pendingChecks} unresolved</span>
+					{/if}
+					{#if step === 'setup'}
+						<button class="nm-btn" onclick={close}>Close</button>
+						<button class="nm-btn" onclick={() => (step = 'review')} disabled={!Object.keys(reviewData).length}>Review transcript</button>
+					{:else}
+						<button class="nm-btn" onclick={() => (step = 'setup')}>Back</button>
+					{/if}
 					<button class="nm-btn nm-btn--go" onclick={run} disabled={!canRun}>Narrate</button>
 				{/if}
 			</footer>
@@ -504,6 +599,34 @@
 	}
 	.nm-backdrop--yield {
 		visibility: hidden;
+	}
+	.nm-modal.nm-modal--wide {
+		width: min(1160px, 96vw);
+		height: 86dvh;
+		overflow: hidden;
+	}
+	.nm-steps {
+		display: flex;
+		gap: 4px;
+		list-style: none;
+		margin: 0 0 0 12px;
+		padding: 0;
+		font-size: calc(var(--t-xs) - 1px);
+		color: var(--base6);
+		flex-shrink: 0;
+	}
+	.nm-steps li {
+		padding: 1px 7px;
+		border: 1px solid var(--panel-border);
+		border-radius: 10px;
+	}
+	.nm-steps li[aria-current='step'] {
+		color: var(--blue);
+		border-color: var(--blue);
+	}
+	.nm-pending {
+		color: var(--yellow);
+		white-space: nowrap;
 	}
 	.nm-modal {
 		width: min(640px, 94vw);

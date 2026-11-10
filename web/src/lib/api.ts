@@ -3124,6 +3124,56 @@ export interface NarrationPlanNode {
 	est_bytes?: number;
 	est_pieces?: number;
 	preview?: string | null;
+	/** The section's own spoken text + its review (estimate `review: true`). */
+	spoken?: string | null;
+	review?: TranscriptReview | null;
+	/** A transcript override made on another version of this section. */
+	stale?: boolean;
+}
+
+/** One flagged span of a section's spoken text (src/transcript.rs). Byte
+ *  offsets (`start`/`end`) go back to the engine; `js_start`/`js_end`
+ *  index the JS string for display. */
+export interface TranscriptFlag {
+	kind:
+		| 'footnote_section'
+		| 'footnote_definition'
+		| 'footnote_marker'
+		| 'citation'
+		| 'foreign_script'
+		| 'all_caps'
+		| 'number_dense'
+		| 'symbols'
+		| 'url'
+		| 'markup'
+		| 'run_on';
+	action: 'skip' | 'review';
+	start: number;
+	end: number;
+	js_start: number;
+	js_end: number;
+	excerpt: string;
+	reason: string;
+	suggest?: string | null;
+}
+
+export interface TranscriptReview {
+	section?: { action: 'skip' | 'review'; reason: string } | null;
+	flags: TranscriptFlag[];
+}
+
+/** A change to a section's spoken text, in its byte offsets (empty `with` = skip). */
+export interface TranscriptEdit {
+	start: number;
+	end: number;
+	with: string;
+}
+
+/** The narrator's decisions for one section — resolved engine-side. */
+export interface TranscriptOverride {
+	event_id?: string | null;
+	text?: string;
+	edits?: TranscriptEdit[];
 }
 
 export interface NarrationEstimate {
@@ -3150,6 +3200,8 @@ export interface NarrateRequest {
 	transcript?: boolean;
 	server?: string;
 	only?: string[];
+	/** Reviewed transcripts by section coordinate. */
+	transcripts?: Record<string, TranscriptOverride>;
 }
 
 export type NarrationGenEvent =
@@ -3188,8 +3240,22 @@ export function setNarrationServers(servers: string[]): Promise<{ servers: strin
 	return fetchJson(`${NARRATION}/servers`, { method: 'POST', body: JSON.stringify({ servers }) });
 }
 
-export function estimateNarration(req: { pubkey: string; d_tag: string; model: string; only?: string[] }): Promise<NarrationEstimate> {
+export function estimateNarration(req: {
+	pubkey: string;
+	d_tag: string;
+	model: string;
+	only?: string[];
+	transcripts?: Record<string, TranscriptOverride>;
+	/** Include each section's spoken text + review on the plan nodes. */
+	review?: boolean;
+}): Promise<NarrationEstimate> {
 	return fetchJson(`${NARRATION}/estimate`, { method: 'POST', body: JSON.stringify(req) });
+}
+
+/** Apply `edits` to `text` and review the result (engine-side): the edit
+ *  view's starting text, and the re-check of a hand-edited transcript. */
+export function reviewNarrationText(req: { text: string; title?: string; edits?: TranscriptEdit[] }): Promise<TranscriptReview & { text: string }> {
+	return fetchJson(`${NARRATION}/review`, { method: 'POST', body: JSON.stringify(req) });
 }
 
 /** Recordings per node of the publication tree, ranked (exact version

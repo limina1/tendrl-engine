@@ -594,6 +594,10 @@ fn strip_asciidoc(s: &str) -> String {
         if t.starts_with("//") {
             continue;
         }
+        // Thematic break (`'''`) and page break (`<<<`) are not words.
+        if t.len() >= 3 && (t.chars().all(|c| c == '\'') || t.chars().all(|c| c == '<')) {
+            continue;
+        }
         if t.starts_with("image::") || t.starts_with("image:") && t.contains('[') && !t.contains(' ') {
             continue;
         }
@@ -2849,12 +2853,21 @@ pub mod handlers {
         pub text: String,
         #[serde(default)]
         pub title: String,
+        /// Applied to `text` first (skips / replacements), in Rust.
+        #[serde(default)]
+        pub edits: Vec<crate::transcript::Edit>,
     }
 
-    /// `POST /api/v1/narration/review` — flag what in a (possibly hand-
-    /// edited) transcript should not be read as-is. Pure, no IO.
+    /// `POST /api/v1/narration/review` — `{text, title, edits?}` → the text
+    /// with `edits` applied (`text`) plus the review of that text (`flags`,
+    /// `section`): the edit view's starting text, and the re-check of
+    /// whatever the narrator typed. Pure, no IO.
     pub async fn review(Json(req): Json<ReviewReq>) -> R {
-        Ok(Json(serde_json::to_value(crate::transcript::review(&req.text, &req.title))?))
+        let text = if req.edits.is_empty() { req.text } else { crate::transcript::apply_edits(&req.text, &req.edits) };
+        let review = crate::transcript::review(&text, &req.title);
+        let mut v = serde_json::to_value(review)?;
+        v["text"] = Value::String(text);
+        Ok(Json(v))
     }
 
     /// `POST /api/v1/narration/estimate` — the plan without spending.
@@ -3168,6 +3181,7 @@ mod tests {
         // line) still reads clean.
         // A footnote body keeps its number; maths subscripts read inline.
         assert_eq!(spoken_text("We know 2{plus}2=4 {amp} more.", Some(crate::mimetype::ASCIIDOC)), "We know 2+2=4 & more.");
+        assert_eq!(spoken_text("Before.\n\n'''''\n\n<<<\n\nAfter.", Some(crate::mimetype::ASCIIDOC)), "Before.\n\nAfter.");
         let t = spoken_text("*[1]* All the above.\n\nIf e~1~ precedes e~2~, x^2^ grows; __e__~1~ and E~_t_~.", Some(crate::mimetype::ASCIIDOC));
         assert_eq!(t, "[1] All the above.\n\nIf e1 precedes e2, x2 grows; e1 and Et.");
         let broken = "[.i0]#\"Past and future. +\n# [.i0]#Burn up both of them. +\n#\n";
