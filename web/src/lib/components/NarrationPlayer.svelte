@@ -11,6 +11,8 @@
 	import * as history from '$lib/history.svelte';
 	import { shell } from '$lib/wm/shell.svelte';
 	import { getAuthorDisplayName } from '$lib/discussions/authors.svelte';
+	import NarrationControls from './NarrationControls.svelte';
+	import { getActiveStore } from '$lib/wm/buffer-store.svelte';
 
 	let audio: HTMLAudioElement | undefined = $state();
 	let open = $state(true);
@@ -18,7 +20,33 @@
 	const item = $derived(nar.current());
 	const url = $derived(nar.currentUrl());
 	const narrator = $derived(item ? getAuthorDisplayName(item.recording.pubkey) : '');
-	const piece = $derived(nar.currentPiece());
+	/** The work pane is showing the reader of the loaded publication, which
+	 *  renders the controls inline above its pager: keep the audio element,
+	 *  hide the dock. Read straight off the buffer store — no counter, no
+	 *  effect writes (a host-registration effect looped the batch). */
+	const docked = $derived.by(() => {
+		const pc = nar.player.pubCoord;
+		if (!pc) return true;
+		let id: string | null = null;
+		try {
+			const store = getActiveStore();
+			const pos = store.findSlotForClass('work');
+			if (pos && store.slotStates[pos] === 'open') id = store.focusedLeaf(pos)?.buffer.id ?? null;
+		} catch {
+			return true;
+		}
+		const m = id?.match(/^reader:30040:([0-9a-f]{64}):([^?]*)/);
+		return !(m && `30040:${m[1]}:${m[2]}` === pc);
+	});
+
+	// Seeks asked for through the store (controls, inline or docked).
+	$effect(() => {
+		const v = nar.player.seekTo;
+		if (v === null || !audio) return;
+		nar.player.seekTo = null;
+		if (Number.isFinite(audio.duration)) audio.currentTime = Math.min(v, audio.duration);
+		else audio.currentTime = v;
+	});
 
 	// Drive the element from store state: src, play/pause, rate.
 	$effect(() => {
@@ -98,7 +126,7 @@
 	});
 	function closePlayer() {
 		recordListen(true);
-		nar.stop();
+		nar.close();
 	}
 
 	// Media Session: lock-screen / notification controls + metadata where
@@ -229,20 +257,10 @@
 		if (audio) audio.currentTime = 0;
 	}
 
-	function seek(e: Event) {
-		const v = Number((e.target as HTMLInputElement).value);
-		if (audio && Number.isFinite(v)) audio.currentTime = v;
-	}
-
-	const RATES = [0.8, 1, 1.25, 1.5, 1.75, 2];
-	function cycleRate() {
-		const i = RATES.indexOf(nar.player.rate);
-		nar.setRate(RATES[(i + 1) % RATES.length]);
-	}
 </script>
 
 {#if item}
-	<div class="nar-player" class:nar-player--mobile={shell.mode === 'mobile'} class:collapsed={!open} role="region" aria-label="Narration player">
+	<div class="nar-player" class:nar-player--mobile={shell.mode === 'mobile'} class:nar-player--hidden={!docked} class:collapsed={!open} role="region" aria-label="Narration player">
 		<audio
 			bind:this={audio}
 			preload="auto"
@@ -266,48 +284,9 @@
 				recordListen(true);
 			}}
 		></audio>
-		<button class="np-btn" onclick={() => nar.prev()} disabled={nar.player.index <= 0} title="Previous section" aria-label="Previous">⏮</button>
-		<button class="np-btn np-btn--main" onclick={() => nar.toggle()} title={nar.player.playing ? 'Pause' : 'Play'} aria-label={nar.player.playing ? 'Pause' : 'Play'}>
-			{nar.player.playing ? '⏸' : '▶'}
-		</button>
-		<button class="np-btn" onclick={() => nar.next()} disabled={nar.player.index + 1 >= nar.player.playlist.length} title="Next section" aria-label="Next">⏭</button>
-		{#if open}
-			<div class="np-meta">
-				<div class="np-title" title={item.title}>
-					<span class="np-idx">{nar.player.index + 1}/{nar.player.playlist.length}</span>
-					{item.title}
-					{#if piece.pieces > 1}<span class="np-idx" title="This section spans several blobs"> · part {piece.piece + 1}/{piece.pieces}</span>{/if}
-				</div>
-				<div class="np-sub">
-					{#if nar.player.pubTitle}<span class="np-pub">{nar.player.pubTitle}</span> · {/if}
-					<span title={item.recording.pubkey}>{narrator}</span>
-					{#if item.recording.voice}<span class="np-voice"> · {item.recording.voice}</span>{/if}
-					{#if item.recording.version_match !== 'exact'}
-						<span class="np-warn" title="This recording was made from a different version of the section text">· {nar.matchLabel(item.recording.version_match)}</span>
-					{/if}
-				</div>
-				<div class="np-seek">
-					<span class="np-time">{nar.fmtTime(nar.player.position)}</span>
-					<input
-						class="np-range"
-						type="range"
-						min="0"
-						max={nar.player.duration || item.recording.duration_secs || 0}
-						step="1"
-						value={nar.player.position}
-						oninput={seek}
-						aria-label="Seek"
-					/>
-					<span class="np-time">{nar.fmtTime(nar.player.duration || item.recording.duration_secs || 0)}</span>
-				</div>
-				{#if nar.player.error}
-					<div class="np-error">{nar.player.error}</div>
-				{/if}
-			</div>
-			<button class="np-btn np-rate" onclick={cycleRate} title="Playback speed">{nar.player.rate}×</button>
+		{#if docked}
+			<NarrationControls variant="dock" {open} ontoggleopen={() => (open = !open)} />
 		{/if}
-		<button class="np-btn" onclick={() => (open = !open)} title={open ? 'Collapse' : 'Expand'} aria-label={open ? 'Collapse player' : 'Expand player'}>{open ? '▾' : '▴'}</button>
-		<button class="np-btn" onclick={closePlayer} title="Stop and close the player" aria-label="Close player">×</button>
 	</div>
 {/if}
 
@@ -336,76 +315,14 @@
 		bottom: calc(56px + env(safe-area-inset-bottom));
 		max-width: 96vw;
 	}
-	.np-btn {
-		background: none;
-		border: 1px solid transparent;
-		border-radius: var(--r-sm);
-		color: var(--fg-muted);
-		cursor: pointer;
-		padding: 2px 6px;
-		font: inherit;
-		line-height: 1.4;
-	}
-	.np-btn:hover:not(:disabled) {
-		color: var(--fg);
-		border-color: var(--panel-border);
-	}
-	.np-btn:disabled {
-		opacity: 0.35;
-		cursor: default;
-	}
-	.np-btn--main {
-		font-size: 1.1em;
-		color: var(--state-online, var(--accent));
-	}
-	.np-rate {
-		min-width: 3.2em;
-	}
-	.np-meta {
-		display: flex;
-		flex-direction: column;
-		min-width: 0;
-		flex: 1 1 auto;
-		gap: 2px;
-		padding: 0 4px;
-	}
-	.np-title {
-		white-space: nowrap;
+	.nar-player--hidden {
+		/* A reader hosts the controls inline; the audio element stays mounted. */
+		visibility: hidden;
+		pointer-events: none;
+		width: 0;
+		height: 0;
+		padding: 0;
+		border: 0;
 		overflow: hidden;
-		text-overflow: ellipsis;
-	}
-	.np-idx {
-		color: var(--fg-muted);
-		margin-right: 4px;
-	}
-	.np-sub {
-		color: var(--fg-muted);
-		white-space: nowrap;
-		overflow: hidden;
-		text-overflow: ellipsis;
-	}
-	.np-warn {
-		color: var(--state-warn, var(--warning, #c90));
-	}
-	.np-seek {
-		display: flex;
-		align-items: center;
-		gap: 6px;
-	}
-	.np-range {
-		flex: 1 1 auto;
-		min-width: 80px;
-		accent-color: var(--state-online, var(--accent));
-		height: 4px;
-	}
-	.np-time {
-		color: var(--fg-muted);
-		font-variant-numeric: tabular-nums;
-	}
-	.np-error {
-		color: var(--state-error, var(--error, #c33));
-	}
-	.collapsed .np-meta {
-		display: none;
 	}
 </style>

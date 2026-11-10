@@ -37,6 +37,7 @@
 	import ReadingControls from '$lib/components/ReadingControls.svelte';
 	import HighlightList from '$lib/components/HighlightList.svelte';
 	import NarrationDrawer from '$lib/components/NarrationDrawer.svelte';
+	import NarrationControls from '$lib/components/NarrationControls.svelte';
 	import * as nar from '$lib/narration.svelte';
 	import * as history from '$lib/history.svelte';
 	import HighlightsDrawer, {
@@ -643,6 +644,13 @@
 	let drawerOpen = $state(false);
 	// Recordings drawer (kind-32176 narrations bound to this tree).
 	let narrationOpen = $state(false);
+	// The player's controls sit right above the pager (or the top of the
+	// scroll) while the loaded playlist is THIS publication's; the fixed
+	// dock (which owns the audio element) hides itself when the work pane
+	// shows this reader — it reads that off the buffer store, nothing is
+	// registered from here.
+	const readerCoord = $derived(parsedAddr?.kind === 30040 ? `30040:${parsedAddr.pubkey}:${parsedAddr.dTag}` : null);
+	const playerHere = $derived(!!readerCoord && nar.player.playlist.length > 0 && nar.player.pubCoord === readerCoord);
 	const narrationSummary = $derived(
 		parsedAddr?.kind === 30040 ? nar.summary(parsedAddr.pubkey, parsedAddr.dTag) : { sections: 0, narrated: 0, recordings: 0 }
 	);
@@ -2650,6 +2658,11 @@
 				{/if}
 			</div>
 		{/if}
+		{#if playerHere}
+			<div class="reader-player" role="region" aria-label="Narration player">
+				<NarrationControls variant="inline" />
+			</div>
+		{/if}
 		<div
 			class="content"
 			bind:this={contentWrap}
@@ -2732,6 +2745,9 @@
 						onclick={() => tocJump(i)}
 					>
 						<span class="rtoc__name">{section.title || 'Untitled section'}</span>
+						{#if nar.activeRecording(addrKey(section.addr))}
+							<span class="rtoc__speaker" title="Narrated — a recording is bound to this section" aria-label="narrated">🔈</span>
+						{/if}
 					</button>
 				{/if}
 			{/each}
@@ -2874,6 +2890,20 @@
 		overflow: hidden;
 		text-overflow: ellipsis;
 		white-space: nowrap;
+	}
+	.rtoc__speaker {
+		margin-left: auto;
+		padding-left: 6px;
+		font-size: var(--t-3xs);
+		opacity: 0.7;
+		flex-shrink: 0;
+	}
+	.reader-player {
+		margin: 0 8px 6px;
+		padding: 4px 8px;
+		border: 1px solid var(--panel-border, var(--border));
+		border-radius: var(--r-md);
+		background: var(--panel-bg, var(--bg-panel, var(--bg-surface)));
 	}
 	.toolbar button {
 		font-family: var(--font-mono);

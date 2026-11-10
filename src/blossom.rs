@@ -182,11 +182,31 @@ pub fn auth_template(
 /// event JSON; servers accept standard base64 with padding.
 pub fn auth_header(signed: &SignedEvent) -> String {
     use base64::Engine as _;
-    let json = serde_json::to_string(signed).unwrap_or_default();
+    let json = ascii_json(&serde_json::to_string(signed).unwrap_or_default());
     format!(
         "Nostr {}",
         base64::engine::general_purpose::STANDARD.encode(json.as_bytes())
     )
+}
+
+/// Escape every non-ASCII char of a JSON text as `\uXXXX` (surrogate pairs
+/// above the BMP). Still the same JSON value; the id and signature stand.
+/// blossom.band / nostr.build answer "signature mismatch" to an auth event
+/// carrying raw UTF-8 in `content` (probed 2026-11-10: a note with an em
+/// dash failed raw and passed escaped), so the header never carries any.
+pub fn ascii_json(json: &str) -> String {
+    let mut out = String::with_capacity(json.len());
+    for c in json.chars() {
+        if c.is_ascii() {
+            out.push(c);
+        } else {
+            let mut buf = [0u16; 2];
+            for unit in c.encode_utf16(&mut buf) {
+                out.push_str(&format!("\\u{unit:04x}"));
+            }
+        }
+    }
+    out
 }
 
 /// BUD-02 blob descriptor — what `/upload` and `/mirror` return.
@@ -410,22 +430,32 @@ impl BlossomClient {
 
     /// BUD-02 `PUT /upload`. `auth` is the `Authorization` header value
     /// from [`auth_header`] for an `upload` token carrying this blob's hash.
+    /// `name` rides along as `Content-Disposition: inline; filename=…` —
+    /// outside BUD-02, ignored by servers that do not keep names
+    /// (blossom.band / nostr.build returned no name in the descriptor when
+    /// probed 2026-11-10), harmless elsewhere; the blob stays addressed by
+    /// its hash.
     pub async fn upload(
         &self,
         server: &str,
         bytes: Vec<u8>,
         mime: &str,
         auth: &str,
+        name: Option<&str>,
     ) -> Result<BlobDescriptor> {
         let sha = sha256_hex(&bytes);
         let url = format!("{}/upload", server.trim_end_matches('/'));
-        let resp = self
+        let mut req = self
             .http
             .put(&url)
             .header("Authorization", auth)
             .header("Content-Type", mime)
             .header("Content-Length", bytes.len())
-            .header("X-SHA-256", &sha)
+            .header("X-SHA-256", &sha);
+        if let Some(n) = name.map(|n| n.replace(['"', '\\', '\n', '\r'], "_")).filter(|n| !n.is_empty()) {
+            req = req.header("Content-Disposition", format!("inline; filename=\"{n}\""));
+        }
+        let resp = req
             .body(bytes)
             .send()
             .await
@@ -544,6 +574,18 @@ mod tests {
         let decoded = base64::engine::general_purpose::STANDARD.decode(b64).unwrap();
         let back: Value = serde_json::from_slice(&decoded).unwrap();
         assert_eq!(back["kind"], 24242);
+    }
+
+    #[test]
+    fn auth_header_escapes_non_ascii() {
+        use base64::Engine as _;
+        let ev = json!({"id":"00","kind":24242,"tags":[],"content":"Book — §1 😀","sig":"ff"});
+        let h = auth_header(&ev);
+        let b64 = h.strip_prefix("Nostr ").unwrap();
+        let decoded = base64::engine::general_purpose::STANDARD.decode(b64).unwrap();
+        assert!(decoded.iter().all(u8::is_ascii), "header JSON must be pure ASCII");
+        let back: Value = serde_json::from_slice(&decoded).unwrap();
+        assert_eq!(back["content"], "Book — §1 😀");
     }
 
     #[test]

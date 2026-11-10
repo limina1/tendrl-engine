@@ -1279,11 +1279,18 @@ pub fn leaf_template(
     spec: &VoiceSpec,
     transcript: Option<&str>,
     relay_hint: Option<&str>,
+    title_slug: Option<&str>,
 ) -> EventTemplate {
+    // `T` = `<index-title-slug>-section-NN`: the one handle that sorts a
+    // narrator's leaves by book and position wherever only tags are
+    // searchable (a relay, a Blossom account's event list).
     let mut tags: Vec<Vec<String>> = vec![
         vec!["d".into(), mint_d_tag()],
         vec!["title".into(), title.to_string()],
     ];
+    if let Some(t) = title_slug.filter(|t| !t.is_empty()) {
+        tags.push(vec!["T".into(), t.to_string()]);
+    }
     tags.extend(binding_tags(about, about_event, relay_hint));
     for blob in blobs {
         tags.push(vec!["b".into(), blob.sha256.clone(), blob.size.to_string()]);
@@ -1325,6 +1332,7 @@ pub fn root_template(
     total_secs: f64,
     relay_hint: Option<&str>,
     d_tag: Option<&str>,
+    title_slug: Option<&str>,
 ) -> EventTemplate {
     // Reusing an earlier root's `d` replaces it (addressable): a later run
     // that narrates more sections grows the same index instead of minting
@@ -1333,6 +1341,9 @@ pub fn root_template(
         vec!["d".into(), d_tag.map(str::to_string).unwrap_or_else(mint_d_tag)],
         vec!["title".into(), title.to_string()],
     ];
+    if let Some(t) = title_slug.filter(|t| !t.is_empty()) {
+        tags.push(vec!["T".into(), t.to_string()]);
+    }
     tags.extend(binding_tags(about, about_event, relay_hint));
     tags.push(vec!["m".into(), AUDIO_MIME.into()]);
     tags.push(vec!["type".into(), "media".into()]);
@@ -2189,6 +2200,20 @@ impl<'a> NarrationEngine<'a> {
         }
 
         let relay_hint = self.engine.publish_relays().first().cloned();
+        // Book slug + 1-based position of every section in reading order:
+        // the leaf's `T` tag, the blob's suggested filename, the auth note.
+        let index_title = nodes.iter().find(|n| n.is_index && n.depth == 0).map(|n| n.title.clone()).unwrap_or_default();
+        let index_slug = crate::nostrdown::normalize(&index_title);
+        let section_no: HashMap<String, usize> = nodes
+            .iter()
+            .filter(|n| !n.is_index)
+            .enumerate()
+            .map(|(i, n)| (n.coord.clone(), i + 1))
+            .collect();
+        let slug_for = |coord: &str| -> Option<String> {
+            let n = section_no.get(coord)?;
+            Some(if index_slug.is_empty() { format!("section-{n:02}") } else { format!("{index_slug}-section-{n:02}") })
+        };
         let mut leaf_coords: HashMap<String, (String, String)> = HashMap::new(); // section coord → (leaf coord, label)
         let mut total_secs = 0.0f64;
         let mut signed_events: Vec<SignedEvent> = Vec::new();
@@ -2262,7 +2287,13 @@ impl<'a> NarrationEngine<'a> {
                         uploaded: 0,
                     }
                 } else {
-                    let auth = match self.upload_auth(signing, me, &sha, &server, "Upload narration audio").await {
+                    let note = format!(
+                        "Upload narration audio: {} - section {:02} {}",
+                        if index_title.is_empty() { "publication" } else { index_title.as_str() },
+                        section_no.get(&node.coord).copied().unwrap_or(0),
+                        node.title
+                    );
+                    let auth = match self.upload_auth(signing, me, &sha, &server, &note).await {
                         Ok(a) => a,
                         Err(e) => {
                             emit!(GenEvent::Error { message: e.to_string(), coord: Some(node.coord.clone()) });
@@ -2275,7 +2306,10 @@ impl<'a> NarrationEngine<'a> {
                         upload_failed = true;
                         break;
                     }
-                    match self.client.upload(&server, audio, AUDIO_MIME, &auth).await {
+                    let blob_name = slug_for(&node.coord).map(|t| {
+                        if blobs.is_empty() { format!("{t}.mp3") } else { format!("{t}-part{}.mp3", blobs.len() + 1) }
+                    });
+                    match self.client.upload(&server, audio, AUDIO_MIME, &auth, blob_name.as_deref()).await {
                         Ok(mut d) => {
                             if d.size == 0 {
                                 d.size = size;
@@ -2318,6 +2352,7 @@ impl<'a> NarrationEngine<'a> {
                 &spec,
                 req.transcript.then_some(text.as_str()),
                 relay_hint.as_deref(),
+                slug_for(&node.coord).as_deref(),
             );
             match self.sign_and_ingest(signing, template, me).await {
                 Ok(signed) => {
@@ -2389,6 +2424,7 @@ impl<'a> NarrationEngine<'a> {
                 total_secs,
                 relay_hint.as_deref(),
                 root_d.as_deref(),
+                (!index_slug.is_empty()).then(|| format!("{index_slug}-narration")).as_deref(),
             );
             match self.sign_and_ingest(signing, template, me).await {
                 Ok(signed) => {
@@ -3005,7 +3041,8 @@ mod tests {
         let blob = BlobDescriptor { url: "u".into(), sha256: "f".repeat(64), size: 9, mime: AUDIO_MIME.into(), uploaded: 0 };
         let spec = VoiceSpec { model: "deepgram_aura_2".into(), voice: Some("v".into()), language: Some("en".into()) };
         let blob2 = BlobDescriptor { url: "u2".into(), sha256: "e".repeat(64), size: 4, mime: AUDIO_MIME.into(), uploaded: 0 };
-        let t = leaf_template(&about, "ABC", "Ch", &[blob.clone(), blob2], &"d".repeat(64), Some(12.4), &["https://s".into()], &spec, Some("words"), Some("wss://r"));
+        let t = leaf_template(&about, "ABC", "Ch", &[blob.clone(), blob2], &"d".repeat(64), Some(12.4), &["https://s".into()], &spec, Some("words"), Some("wss://r"), Some("book-section-01"));
+        assert!(t.tags.iter().any(|x| x[0] == "T" && x[1] == "book-section-01"));
         assert_eq!(t.kind, 32176);
         let has = |k: &str, v: &str| t.tags.iter().any(|x| x[0] == k && x.get(1).map(String::as_str) == Some(v));
         assert!(has("A", "30041:pk:sec"));
@@ -3024,9 +3061,9 @@ mod tests {
         assert_eq!(n.piece_urls(&["https://m".into()]).len(), 2);
         assert_eq!(n.piece_urls(&["https://m".into()])[1][1], format!("https://m/{}.mp3", "e".repeat(64)));
 
-        let root = root_template(&NAddr::new(30040, "pk", "book"), "ROOT", "Book", &[("32176:me:x".into(), "Ch".into())], &[], &spec, 100.0, None, None);
+        let root = root_template(&NAddr::new(30040, "pk", "book"), "ROOT", "Book", &[("32176:me:x".into(), "Ch".into())], &[], &spec, 100.0, None, None, Some("book-narration"));
         assert_ne!(root.tags[0][1], "keep-me");
-        let again = root_template(&NAddr::new(30040, "pk", "book"), "ROOT", "Book", &[], &[], &spec, 1.0, None, Some("keep-me"));
+        let again = root_template(&NAddr::new(30040, "pk", "book"), "ROOT", "Book", &[], &[], &spec, 1.0, None, Some("keep-me"), None);
         assert_eq!(again.tags[0], vec!["d".to_string(), "keep-me".to_string()]);
         let r = Narration::from_event(&json!({"kind":32176,"id":"","pubkey":"me","created_at":1,"content":"","tags":root.tags})).unwrap();
         assert_eq!(r.children, vec![("32176:me:x".to_string(), "Ch".to_string())]);

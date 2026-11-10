@@ -358,7 +358,9 @@ sections and embeds new events on a 60-second interval when embeddings are enabl
   `<data_dir>/blossom.json` (ordered: first = upload target, rest = mirror
   targets; the user's 10063 is read as a *suggestion*, never auto-published).
   The 24242 is signed as the **user** through the `SigningController`, like
-  NIP-42 AUTH: short-lived, scoped to the blob hash, never stored.
+  NIP-42 AUTH: short-lived, scoped to the blob hash, never stored. The
+  `Authorization` header's JSON is pure ASCII (`ascii_json`): blossom.band
+  / nostr.build reject raw UTF-8 in `content` as a signature mismatch.
 - **`narration.rs`**: publications read aloud — kind **32176** NKBIP-07
   "Blossom piece index" trees mirroring the 30040 tree: one leaf per section
   (one `b` piece = the joined chapter MP3) under one root (`a` children in
@@ -373,8 +375,9 @@ sections and embeds new events on a 60-second interval when embeddings are enabl
   unpinned, newest replaceable wins). `NarrationEngine`: `plan` / `discover`
   (`#A` per tree node, LocalFirst, relay round Confirm-gated) / `generate`
   (ppq TTS via `ProviderRegistry::ppq_tts` → Blossom → sign+ingest per
-  section → root → optional broadcast; SSE `GenEvent`s; skips sections
-  already narrated for the same `E` + voice; the root always covers the
+  section → root → optional broadcast; SSE `GenEvent`s; leaves carry
+  `T` = `<index-slug>-section-NN`, roots `<index-slug>-narration`; skips
+  sections already narrated for the same `E` + voice; the root always covers the
   sections that have a recording by this narrator + voice, from any
   run, and a later run replaces it under the same `d`) / `mirror`. API under
   `/api/v1/narration/*` (`models`, `voices`, `servers`, `estimate`,

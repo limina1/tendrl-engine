@@ -55,8 +55,43 @@ const player = $state({
 	/** Set by the player component; drives seek/pause from outside. */
 	rate: loadRate(),
 	/** Seconds to seek to once the current item's metadata loads (resume). */
-	pendingSeek: null as number | null
+	pendingSeek: null as number | null,
+	/** A seek the controls asked for; the audio element applies and clears it. */
+	seekTo: null as number | null
 });
+
+export function seek(secs: number) {
+	if (Number.isFinite(secs)) player.seekTo = Math.max(0, secs);
+}
+
+const RATES = [0.8, 1, 1.25, 1.5, 1.75, 2];
+export function cycleRate() {
+	const i = RATES.indexOf(player.rate);
+	setRate(RATES[(i + 1) % RATES.length]);
+}
+
+/** Stop and close: flush the listening place first so ▶ resumes here. */
+export function close() {
+	const it = current();
+	const pc = player.pubCoord;
+	if (it && pc) {
+		const parts = history.parseCoord(pc);
+		history.recordListen(
+			pc,
+			{ title: player.pubTitle, author: parts?.pubkey ?? '' },
+			{
+				coord: it.coord,
+				title: it.title,
+				recording_id: it.recording.id,
+				piece: it.piece,
+				position_secs: player.position,
+				duration_secs: player.duration || it.recording.duration_secs || 0
+			},
+			true
+		);
+	}
+	stop();
+}
 
 
 export function pubKey(pubkey: string, d_tag: string): string {
@@ -385,6 +420,7 @@ export function failover(): 'retry' | 'next' | 'stop' {
 export function stop() {
 	player.playing = false;
 	player.pendingSeek = null;
+	player.seekTo = null;
 	player.playlist = [];
 	player.index = -1;
 	player.position = 0;

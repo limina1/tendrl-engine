@@ -2421,6 +2421,7 @@ curl -s "$B/attached?coord=30040:$PK:narr-book&policy=local_only" | jq '{comment
 curl -s "$B/attached?coord=30041:$PK:narr-s2&policy=local_only" | jq '.publication.tags[]|select(.[0]=="title")'   # the containing index = the menu's publication row
 curl -s "$B/attached?id=<comment or highlight id>&policy=local_only" | jq '.publication.id, (.index|length)'
 curl -s "$B/narration/node/30023/$PK/<d>?policy=local_only" | jq '.nodes[0] | {title, n:(.recordings|length)}'   # one document on its own
+curl -s -X POST $B/query -H 'content-type: application/json' -d '{"filters":[{"kinds":[32176],"authors":["'$PK'"],"#T":["the-keeper-narration-test-section-01"]}],"policy":"local_only"}' | jq '.events[].tags[]|select(.[0]=="T" or .[0]=="voice")'   # T = <index-slug>-section-NN on leaves, <index-slug>-narration on roots
 ROOT=$(curl -s "$B/narration/for/$PK/narr-book?policy=local_only" | jq -r '.nodes[0].recordings[0].d_tag')
 curl -s "$B/narration/event/$PK/$ROOT?policy=local_only" | jq '{is_root, about, about_kind, about_local, about_publication, missing, chapters:[.chapters[]|{title, about_local, m:.recording.version_match}]}'
 # provenance round: a publication fetched FROM a relay carries it; local_first asks that relay only, no intent, even in Confirm mode
@@ -2444,6 +2445,11 @@ sign one with a throwaway key whose =a= children are existing leaves —
 GUI (headless as in "Narration"; the browser caches the bundle — reload
 with a query string after =pnpm -C web build=): open the publication →
 each chapter shows the strip (▶ · you · voice · 0:18 · *recordings*);
+*▶ listen* → the transport appears right above *Prev / Next*
+(=.reader-player .npc=) and the fixed dock hides (=.nar-player--hidden=);
+switch to the feed → the dock is back; *§* → every narrated row of the
+TOC ends in 🔈; capture console with =node cdp.mjs watch 14= — zero
+=effect_update_depth_exceeded=;
 *§ menu* → PUBLICATION INDEX row + publisher/date + chips *comments 0 ·
 highlights 0 · narration index 2 · 30040 index 1 · audio 1*; the
 publication's own menu (toolbar *M*) shows *sections 2* (teal, TOC

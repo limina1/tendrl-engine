@@ -86,6 +86,41 @@ history entry (the document is the history key; a bare section is not
 remembered). The doc view feeds it with one-node discovery
 (=nar.refreshNode=), the reader with the publication's discovery.
 
+** The player sits above the pager (2026-11-09)
+
+Pressing *▶ listen* puts the transport right above *Prev / Next* in the
+paged view (the same spot, top of the scroll, in the continuous view):
+=NarrationControls= renders from the store alone, so the one =<audio>=
+stays in =NarrationPlayer='s fixed dock while the reader shows the
+controls inline, and the dock hides itself whenever the work pane's
+buffer is the reader of the loaded publication (read off the buffer
+store — a host-registration effect looped Svelte's batch and was
+dropped). Leave the reader and the dock is back; come back and it hands
+over again. Seeks go through =nar.seek= (=player.seekTo=), speed through
+=nar.cycleRate=, close through =nar.close= (flushes the listening place
+first).
+
+** Speaker badge in the table of contents
+
+A 🔈 at the right of every section row of the § drawer whose coordinate
+has a recording bound to it (the same engine ranking the strip uses).
+
+** Finding the files again: =T= slugs and blob names
+
+A narrator's leaves are hard to tell apart on a Blossom account page
+(a hash, a size, a date). Every leaf now carries
+=["T", "<index-title-slug>-section-NN"]= (NN = 1-based position in the
+publication's reading order) and the root =["T", "<index-title-slug>-narration"]=,
+so =T:the-keeper-narration-test-section-01= finds the file in tendrl and
+on any relay that indexes single-letter tags. The upload also sends
+=Content-Disposition: inline; filename="<slug>-section-NN.mp3"= and a
+descriptive note in the kind-24242 auth event, but blossom.band /
+nostr.build keep neither (probed 2026-11-10: the descriptor and =/list=
+return hash, size, type, upload time only) — what their pages show as
+"Filename" and "Description" is theirs. The auth header's JSON is now
+pure ASCII (non-ASCII escaped as =\uXXXX=): those servers answer
+"signature mismatch" to raw UTF-8 in =content=.
+
 ** The audio view (=AudiobookBuffer=, =audiobook:<pk>:<d>=)
 
 Opening a 32176 anywhere (search hit, profile tab, menu *Listen*) goes
