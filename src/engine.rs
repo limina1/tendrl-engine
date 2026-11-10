@@ -1227,6 +1227,103 @@ impl Engine {
             .await
     }
 
+    /// The provenance round: a fetch aimed only at relays the document was
+    /// already served from. Never gated (see
+    /// `NetworkActivity::begin_operation_ungated`); the caller passes the
+    /// provenance set it computed with `provenance_for`.
+    pub fn begin_provenance_fetch(
+        &self,
+        label: String,
+        steps: Vec<String>,
+        relays: Vec<String>,
+    ) -> crate::network::FetchOperation {
+        self.network.begin_operation_ungated(
+            crate::network::FetchPattern::Custom,
+            label,
+            steps,
+            relays,
+            None,
+        )
+    }
+
+    /// Run the provenance round: fetch `filters` from `relays` (a set from
+    /// `provenance_for`) without gating, store what comes back, and return
+    /// the relays asked. Empty `relays` → no-op, `[]`.
+    pub async fn provenance_round(&self, label: String, steps: Vec<String>, filters: Vec<Value>, relays: Vec<String>) -> Vec<String> {
+        if relays.is_empty() || filters.is_empty() {
+            return Vec::new();
+        }
+        let op = self.begin_provenance_fetch(label, steps, relays.clone());
+        match self
+            .get_events_with_options(filters, FetchPolicy::FetchAlways, Some(&relays), true)
+            .await
+        {
+            Ok(r) => op.complete(r.events.len()),
+            Err(e) => op.fail(e.to_string()),
+        }
+        relays
+    }
+
+    /// Relays a document is known to live on: the provenance of the newest
+    /// local event at `coord`, plus — for a publication index — the
+    /// provenance of every section and nested index it lists. Normalized,
+    /// deduped, `local`/empty dropped. Empty when nothing local has relay
+    /// provenance (a draft signed here, never accepted anywhere).
+    pub fn provenance_for(&self, coord: &str) -> Vec<String> {
+        let Some(addr) = crate::publication::NAddr::from_a_tag(coord) else {
+            return Vec::new();
+        };
+        let mut out: Vec<String> = Vec::new();
+        let mut push_relays = |ev: &Value| {
+            for r in ev.get("relays").and_then(Value::as_array).into_iter().flatten() {
+                let Some(u) = r.as_str() else { continue };
+                let n = crate::nip11::normalize_relay_url(u);
+                if n.is_empty() || n == "local" || out.iter().any(|x| x == &n) {
+                    continue;
+                }
+                out.push(n);
+            }
+        };
+        let newest = |events: Vec<Value>| -> Option<Value> {
+            events.into_iter().max_by_key(|e| e.get("created_at").and_then(Value::as_u64).unwrap_or(0))
+        };
+        let own = self
+            .query_local_only(&[json!({"kinds": [addr.kind], "authors": [addr.pubkey], "#d": [addr.d_tag], "limit": 5})])
+            .ok()
+            .and_then(|r| newest(r.events));
+        let Some(own) = own else { return out };
+        push_relays(&own);
+        if addr.kind != crate::publication::KIND_PUBLICATION_INDEX {
+            return out;
+        }
+        // Children: group by (kind, pubkey) so one filter covers a run of
+        // sections by the same author.
+        let mut groups: std::collections::BTreeMap<(u64, String), Vec<String>> = Default::default();
+        for tag in own.get("tags").and_then(Value::as_array).into_iter().flatten() {
+            let Some(arr) = tag.as_array() else { continue };
+            if arr.first().and_then(Value::as_str) != Some("a") || arr.get(3).and_then(Value::as_str) == Some("fork") {
+                continue;
+            }
+            let Some(child) = arr.get(1).and_then(Value::as_str).and_then(crate::publication::NAddr::from_a_tag) else {
+                continue;
+            };
+            groups.entry((child.kind, child.pubkey)).or_default().push(child.d_tag);
+        }
+        let filters: Vec<Value> = groups
+            .into_iter()
+            .map(|((kind, pk), ds)| json!({"kinds": [kind], "authors": [pk], "#d": ds, "limit": ds.len().max(1) * 3}))
+            .collect();
+        if filters.is_empty() {
+            return out;
+        }
+        if let Ok(r) = self.query_local_only(&filters) {
+            for ev in &r.events {
+                push_relays(ev);
+            }
+        }
+        out
+    }
+
     /// Variant of `begin_fetch_operation` that carries a structured
     /// `RequestSummary` on the emitted `Intent`. Callers that have
     /// already built filters + composition (e.g. the feed-init path

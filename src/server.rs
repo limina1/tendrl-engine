@@ -484,6 +484,17 @@ pub async fn start(opts: ServeOptions) -> anyhow::Result<RunningServer> {
             get(crate::narration::handlers::discover),
         )
         .route("/api/v1/narration/mirror", post(crate::narration::handlers::mirror))
+        .route(
+            "/api/v1/narration/node/:kind/:pubkey/:d_tag",
+            get(crate::narration::handlers::discover_node),
+        )
+        .route(
+            "/api/v1/narration/event/:pubkey/:d_tag",
+            get(crate::narration::handlers::open),
+        )
+        // Events attached to a document (comments, highlights, narrations,
+        // the containing index) — the event menu's attached row.
+        .route("/api/v1/attached", get(crate::attached::handlers::get))
         // Reading / listening history: local "where was I" per publication.
         .route(
             "/api/v1/history",

@@ -71,13 +71,42 @@ export function isLoading(pubkey: string, d_tag: string): boolean {
 	return loadingByPub[pubKey(pubkey, d_tag)] ?? false;
 }
 
-/** Recordings for one node coordinate, from whichever publication has it cached. */
+/** Recordings for one node coordinate, from whichever publication has it
+ *  cached, else from a one-node discovery (`refreshNode`). */
 export function recordingsFor(coord: string): api.NarrationRecording[] {
 	for (const d of Object.values(recordingsByPub)) {
 		const n = d.nodes.find((x) => x.coord === coord);
 		if (n) return n.recordings;
 	}
-	return [];
+	return recordingsByNode[coord]?.nodes[0]?.recordings ?? [];
+}
+
+// One-node discovery: a document opened outside a publication tree (an
+// article, a wiki page, a spec, a section on its own).
+const recordingsByNode = $state<Record<string, api.NarrationDiscovery>>({});
+const loadingByNode = $state<Record<string, boolean>>({});
+
+export function isNodeLoading(coord: string): boolean {
+	return loadingByNode[coord] ?? false;
+}
+
+export async function refreshNode(
+	coord: string,
+	policy: 'local_only' | 'local_first' | 'fetch_always' = 'local_only'
+): Promise<api.NarrationDiscovery | null> {
+	const m = coord.match(/^(\d+):([0-9a-f]{64}):(.*)$/);
+	if (!m) return null;
+	loadingByNode[coord] = true;
+	try {
+		const d = await api.getNarrationNode(Number(m[1]), m[2], m[3], policy);
+		recordingsByNode[coord] = d;
+		return d;
+	} catch (e) {
+		console.warn('[narration] node discovery failed', e);
+		return null;
+	} finally {
+		loadingByNode[coord] = false;
+	}
 }
 
 /** The recording that plays for `coord`: the user's pick, else the top rank. */
@@ -187,8 +216,16 @@ export function resumeOrPlay(pubkey: string, d_tag: string, pubTitle: string | n
 	return playPublication(pubkey, d_tag, pubTitle);
 }
 
-/** Play one specific recording for a node (from the recordings panel). */
-export function playRecording(coord: string, title: string, rec: api.NarrationRecording, pubTitle: string | null) {
+/** Play one specific recording for a node (from the recordings panel).
+ *  `opts.historyCoord` is the document coordinate the listen is recorded
+ *  under (a 30023 / 30818 played on its own); `opts.position` resumes. */
+export function playRecording(
+	coord: string,
+	title: string,
+	rec: api.NarrationRecording,
+	pubTitle: string | null,
+	opts: { historyCoord?: string | null; piece?: number; position?: number } = {}
+) {
 	choose(coord, rec.id);
 	const existing = player.playlist.findIndex((p) => p.coord === coord);
 	if (existing >= 0 && player.pubTitle === pubTitle) {
@@ -196,12 +233,70 @@ export function playRecording(coord: string, title: string, rec: api.NarrationRe
 	} else {
 		player.playlist = [{ coord, title, recording: rec, piece: 0, urlIndex: 0 }];
 		player.index = 0;
-		player.pubCoord = null;
+		player.pubCoord = opts.historyCoord ?? null;
 		player.pubTitle = pubTitle;
 	}
+	const item = player.playlist[player.index];
+	const pieces = pieceUrls(item.recording).length;
+	item.piece = opts.piece !== undefined && opts.piece < pieces ? opts.piece : 0;
 	player.error = null;
-	player.position = 0;
+	player.position = opts.position ?? 0;
+	player.pendingSeek = opts.position && opts.position > 1 ? opts.position : null;
 	player.playing = true;
+}
+
+/** Play a document's recording, resuming where its history entry left off
+ *  when the remembered recording is still the one bound to it. */
+export function resumeOrPlayRecording(
+	coord: string,
+	title: string,
+	rec: api.NarrationRecording,
+	pubTitle: string | null,
+	historyCoord: string | null
+) {
+	const h = historyCoord ? history.entryFor(historyCoord) : null;
+	const a = h?.audio;
+	if (a && a.coord === coord && a.recording_id === rec.id) {
+		playRecording(coord, title, rec, pubTitle, { historyCoord, piece: a.piece, position: a.position_secs });
+		return;
+	}
+	playRecording(coord, title, rec, pubTitle, { historyCoord });
+}
+
+/** Play an explicit chapter list (a kind-32176 opened as a book), from
+ *  `startIndex`. `historyCoord` = the publication coordinate the listen is
+ *  remembered under (null = not remembered). */
+export function playChapters(
+	items: { coord: string; title: string; recording: api.NarrationRecording }[],
+	pubTitle: string | null,
+	startIndex = 0,
+	historyCoord: string | null = null,
+	start?: { piece?: number; position?: number }
+) {
+	const list: PlaylistItem[] = items
+		.filter((i) => pieceUrls(i.recording).length > 0)
+		.map((i) => ({ coord: i.coord, title: i.title, recording: i.recording, piece: 0, urlIndex: 0 }));
+	if (list.length === 0) return false;
+	let idx = Math.min(Math.max(startIndex, 0), list.length - 1);
+	// `startIndex` counts over `items`; map it onto the playable subset.
+	if (items.length !== list.length) {
+		const want = items[startIndex]?.coord;
+		const found = list.findIndex((p) => p.coord === want);
+		idx = found >= 0 ? found : 0;
+	}
+	for (const it of list) choose(it.coord, it.recording.id);
+	const item = list[idx];
+	const pieces = pieceUrls(item.recording).length;
+	item.piece = start?.piece !== undefined && start.piece < pieces ? start.piece : 0;
+	player.playlist = list;
+	player.index = idx;
+	player.pubCoord = historyCoord;
+	player.pubTitle = pubTitle;
+	player.error = null;
+	player.position = start?.position ?? 0;
+	player.pendingSeek = start?.position && start.position > 1 ? start.position : null;
+	player.playing = true;
+	return true;
 }
 
 export function current(): PlaylistItem | null {

@@ -3182,6 +3182,96 @@ export function getNarrations(
 	return fetchJson(`${NARRATION}/for/${pubkey}/${encodeURIComponent(d_tag)}?policy=${policy}`);
 }
 
+/** Recordings bound to one document on its own (article / wiki / spec /
+ *  a section outside its publication) — one-node discovery. */
+export function getNarrationNode(
+	kind: number,
+	pubkey: string,
+	d_tag: string,
+	policy: 'local_only' | 'local_first' | 'fetch_always' = 'local_only'
+): Promise<NarrationDiscovery> {
+	return fetchJson(`${NARRATION}/node/${kind}/${pubkey}/${encodeURIComponent(d_tag)}?policy=${policy}`);
+}
+
+export interface AudiobookChapter {
+	title: string;
+	/** Coordinate of the narrated node, when the leaf is bound. */
+	about?: string;
+	/** That node is in the local store (the reader can show it). */
+	about_local: boolean;
+	recording: NarrationRecording;
+}
+
+/** A kind-32176 event opened as a book (engine `Audiobook`). */
+export interface Audiobook {
+	narration: NarrationRecording;
+	is_root: boolean;
+	about?: string;
+	about_kind?: number;
+	about_title?: string;
+	about_local: boolean;
+	/** The local 30040 listing the narrated section, if the node is one. */
+	about_publication?: string;
+	chapters: AudiobookChapter[];
+	missing: string[];
+	servers: string[];
+	fetched_from: string[];
+}
+
+export function getNarrationEvent(
+	pubkey: string,
+	d_tag: string,
+	policy: 'local_only' | 'local_first' | 'fetch_always' = 'local_only'
+): Promise<Audiobook> {
+	return fetchJson(`${NARRATION}/event/${pubkey}/${encodeURIComponent(d_tag)}?policy=${policy}`);
+}
+
+// Attached events — what hangs off a document (engine `attached.rs`): the
+// event menu's publication row + the comment / highlight / narration chips.
+
+export interface AttachedEvent {
+	id: string;
+	kind: number;
+	pubkey: string;
+	created_at: number;
+	content: string;
+	tags: string[][];
+	sig?: string;
+	relays?: string[];
+}
+
+export interface AttachedResponse {
+	target: AttachedEvent | null;
+	target_coord?: string | null;
+	target_kind?: number | null;
+	/** The publication index the target belongs to (itself for a 30040). */
+	publication: AttachedEvent | null;
+	comments: AttachedEvent[];
+	highlights: AttachedEvent[];
+	/** Kind-32176 roots bound to the publication. */
+	narration_index: AttachedEvent[];
+	/** Kind-32176 leaves bound to the target (or its sections). */
+	narration_leaves: AttachedEvent[];
+	/** 30040 indexes containing the target (empty when it is one). */
+	index: AttachedEvent[];
+	provenance: string[];
+	fetched_from: string[];
+}
+
+/** `local_first` runs the ungated provenance round (the relays the document
+ *  came from); `fetch_always` the gated widening round. */
+export function getAttached(opts: {
+	coord?: string;
+	id?: string;
+	policy?: 'local_only' | 'local_first' | 'fetch_always';
+}): Promise<AttachedResponse> {
+	const q = new URLSearchParams();
+	if (opts.coord) q.set('coord', opts.coord);
+	if (opts.id) q.set('id', opts.id);
+	q.set('policy', opts.policy ?? 'local_only');
+	return fetchJson(`/api/v1/attached?${q.toString()}`);
+}
+
 export function mirrorNarration(req: { url: string; server?: string }): Promise<{
 	results: { server: string; ok: boolean; descriptor?: unknown; error?: string }[];
 }> {

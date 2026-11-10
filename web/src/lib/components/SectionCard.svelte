@@ -8,7 +8,7 @@
 	import { registerResolveView } from '$lib/nostr/resolve-status.svelte';
 	import RichContent from './RichContent.svelte';
 	import { decideFor, ensureLoaded, spansFor, type LayerPick } from '$lib/layers/use.svelte';
-	import * as nar from '$lib/narration.svelte';
+	import NarrationStrip from './NarrationStrip.svelte';
 
 	const app = getAppState();
 
@@ -26,7 +26,9 @@
 		resolution = undefined,
 		onopenlocal = undefined,
 		layerPick = undefined,
-		forceSource = false
+		forceSource = false,
+		pubTitle = null,
+		onopenrecordings = undefined
 	}: {
 		section: LazySection;
 		truncate?: boolean;
@@ -57,30 +59,19 @@
 		/** Rendering layer picked for the enclosing buffer (see ContinuousView). */
 		layerPick?: LayerPick;
 		forceSource?: boolean;
+		/** Containing publication's title — the player strip's subtitle. */
+		pubTitle?: string | null;
+		/** Open the recordings drawer for this section's audio. */
+		onopenrecordings?: (() => void) | undefined;
 	} = $props();
 
 	const status: SectionStatus = $derived(section.status ?? 'loaded');
 
-	// Narration: a ▶ in the title when a recording is bound to this section
-	// (engine-ranked, cached per publication in narration.svelte.ts).
+	// Narration: a slim player strip under the title when a recording is
+	// bound to this section (engine-ranked, cached in narration.svelte.ts).
 	const sectionCoord = $derived(
 		section.addr ? `${section.addr.kind}:${section.addr.pubkey}:${section.addr.d_tag}` : null
 	);
-	const recording = $derived(sectionCoord ? nar.activeRecording(sectionCoord) : null);
-	const playingHere = $derived(sectionCoord ? nar.isPlayingCoord(sectionCoord) : false);
-	function togglePlay(e: MouseEvent) {
-		e.stopPropagation();
-		if (!sectionCoord || !recording) return;
-		if (playingHere) {
-			nar.pause();
-			return;
-		}
-		// Prefer the whole book from here when the enclosing publication is
-		// known; otherwise just this section.
-		const m = publicationAtag?.match(/^30040:([0-9a-f]{64}):(.+)$/);
-		if (m && nar.playPublication(m[1], m[2], null, sectionCoord)) return;
-		nar.playRecording(sectionCoord, section.title ?? 'section', recording, null);
-	}
 
 	// Rendering layer for this card: decided from the section's declared
 	// format + the user's bindings; the chunk loads lazily on first need.
@@ -233,17 +224,6 @@
 		{:else if status === 'error'}
 			<span class="status-indicator status-error">!</span>
 		{/if}
-		{#if recording && !preview}
-			<button
-				class="section-play"
-				class:section-play--on={playingHere}
-				onclick={togglePlay}
-				title={playingHere
-					? 'Pause narration'
-					: `Listen — ${recording.version_match === 'exact' ? 'recorded from this version' : 'recorded from another version'}${recording.duration_secs ? ` · ${nar.fmtTime(recording.duration_secs)}` : ''}`}
-				aria-label={playingHere ? 'Pause narration' : 'Play narration'}
-			>{playingHere ? '⏸' : '▶'}</button>
-		{/if}
 		{#if onviewjson}
 			<button
 				class="section-kebab"
@@ -255,6 +235,15 @@
 			>⋮</button>
 		{/if}
 	</h3>
+	{#if sectionCoord && !preview && status === 'loaded'}
+		<NarrationStrip
+			coord={sectionCoord}
+			title={section.title ?? `Section ${(section.position ?? 0) + 1}`}
+			{pubTitle}
+			{publicationAtag}
+			{onopenrecordings}
+		/>
+	{/if}
 	{#if status === 'loaded' && displayContent}
 		<RichContent
 			content={displayContent}
@@ -304,23 +293,6 @@
 	}
 
 	/* Scales with the reading size — see ContinuousView's twin rule. */
-	.section-play {
-		background: none;
-		border: 1px solid var(--panel-border);
-		border-radius: var(--r-sm);
-		color: var(--state-online, var(--accent));
-		cursor: pointer;
-		font-size: 0.6em;
-		line-height: 1.5;
-		padding: 0 6px;
-		margin-left: 8px;
-		vertical-align: middle;
-		opacity: 0.75;
-	}
-	.section-play:hover,
-	.section-play--on {
-		opacity: 1;
-	}
 	.section-title {
 		font-size: var(--rd-title, var(--t-sm));
 		font-weight: 600;

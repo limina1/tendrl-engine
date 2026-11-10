@@ -15,6 +15,7 @@
 	import ProfileEditBuffer from './renderers/ProfileEditBuffer.svelte';
 	import DiscussionViewBuffer from './renderers/DiscussionViewBuffer.svelte';
 	import RepositoryBuffer from './renderers/RepositoryBuffer.svelte';
+	import AudiobookBuffer from './renderers/AudiobookBuffer.svelte';
 
 	let { buffer }: { buffer: Buffer } = $props();
 </script>
@@ -50,6 +51,8 @@
 		<DiscussionViewBuffer {buffer} />
 	{:else if buffer.kind === 'repository'}
 		<RepositoryBuffer {buffer} />
+	{:else if buffer.kind === 'audiobook'}
+		<AudiobookBuffer {buffer} />
 	{:else}
 		<div class="missing">no renderer registered for kind {buffer.kind}</div>
 	{/if}

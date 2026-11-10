@@ -1521,6 +1521,44 @@ pub struct DiscoveredNode {
     pub recordings: Vec<Recording>,
 }
 
+/// A kind-32176 event opened on its own (profile tab, search hit, menu).
+#[derive(Debug, Clone, Serialize)]
+pub struct Audiobook {
+    /// The opened event itself (a root's own `b` is usually empty).
+    pub narration: Recording,
+    pub is_root: bool,
+    /// What it narrates (`A`), its kind (`K`), the local title when the
+    /// document is here, and whether it is — the UI opens the publication
+    /// reader when it is, the audio view otherwise.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub about: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub about_kind: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub about_title: Option<String>,
+    pub about_local: bool,
+    /// When the narrated node is a section, the local 30040 that lists it
+    /// (the reader to open), if any.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub about_publication: Option<String>,
+    /// Playable chapters in the root's order (a leaf alone = one chapter).
+    pub chapters: Vec<AudiobookChapter>,
+    /// Child coordinates the root lists that are not local after the
+    /// rounds.
+    pub missing: Vec<String>,
+    pub servers: Vec<String>,
+    pub fetched_from: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct AudiobookChapter {
+    pub title: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub about: Option<String>,
+    pub about_local: bool,
+    pub recording: Recording,
+}
+
 pub struct NarrationEngine<'a> {
     engine: &'a Engine,
     client: BlossomClient,
@@ -1576,18 +1614,43 @@ impl<'a> NarrationEngine<'a> {
             FetchPolicy::LocalOnly => false,
         };
         if fetch {
-            let relays = self.engine.general_relays();
-            if let Some((remote, chosen)) = self
-                .gated_fetch(
-                    format!("Recordings — {}", nodes.first().map(|n| n.title.as_str()).unwrap_or("publication")),
-                    vec!["narrations bound to this publication and its sections".into()],
-                    filters,
-                    relays,
+            let label = format!("Recordings — {}", nodes.first().map(|n| n.title.as_str()).unwrap_or("publication"));
+            // Round one, never gated: the relays this publication (index +
+            // sections) was served from already know the reader has it.
+            let provenance = self.engine.provenance_for(&addr.to_a_tag());
+            let asked = self
+                .engine
+                .provenance_round(
+                    label.clone(),
+                    vec!["narrations bound to this publication and its sections, from the relays it came from".into()],
+                    filters.clone(),
+                    provenance,
                 )
-                .await?
-            {
-                fetched_from = chosen;
-                events.extend(remote);
+                .await;
+            if !asked.is_empty() {
+                fetched_from = asked;
+                events = self
+                    .engine
+                    .get_events(filters.clone(), FetchPolicy::LocalOnly, None)
+                    .await?
+                    .events;
+            }
+            // Round two, gated: widen to the general set when the
+            // provenance round found nothing (or there was none).
+            if events.is_empty() || matches!(policy, FetchPolicy::FetchAlways) {
+                let relays = self.engine.general_relays();
+                if let Some((remote, chosen)) = self
+                    .gated_fetch(
+                        label,
+                        vec!["narrations bound to this publication and its sections".into()],
+                        filters,
+                        relays,
+                    )
+                    .await?
+                {
+                    fetched_from = crate::engine::union_relays(fetched_from, &chosen);
+                    events.extend(remote);
+                }
             }
         }
         let narrations: Vec<Narration> = events.iter().filter_map(Narration::from_event).collect();
@@ -1606,6 +1669,296 @@ impl<'a> NarrationEngine<'a> {
             .collect();
         Ok(Discovery {
             nodes: out,
+            servers,
+            fetched_from,
+        })
+    }
+
+    /// Recordings bound to one node — an article, wiki page, spec, or a
+    /// section opened on its own — ranked against the local version.
+    /// `LocalFirst` runs the ungated provenance round; `FetchAlways` the
+    /// gated general round as well.
+    pub async fn discover_node(&self, addr: &NAddr, policy: FetchPolicy, me: Option<&str>) -> Result<Discovery> {
+        let coord = addr.to_a_tag();
+        let local = self
+            .engine
+            .get_events(
+                vec![json!({"kinds": [addr.kind], "authors": [addr.pubkey], "#d": [addr.d_tag], "limit": 5})],
+                FetchPolicy::LocalOnly,
+                None,
+            )
+            .await?
+            .events;
+        let node_event = local.into_iter().max_by_key(|e| e.get("created_at").and_then(Value::as_u64).unwrap_or(0));
+        let event_id = node_event.as_ref().and_then(|e| e.get("id")).and_then(Value::as_str).map(str::to_string);
+        let title = node_event
+            .as_ref()
+            .and_then(|e| first_tag(e, "title"))
+            .unwrap_or_else(|| addr.d_tag.clone());
+        let spoken = node_event.as_ref().and_then(|e| {
+            let content = e.get("content").and_then(Value::as_str)?;
+            let mime = crate::mimetype::from_event(e).or_else(|| crate::mimetype::for_kind(addr.kind));
+            Some(spoken_text(content, mime))
+        });
+        let filters = vec![Narration::filter_for(std::slice::from_ref(&coord))];
+        let mut events = self.engine.get_events(filters.clone(), FetchPolicy::LocalOnly, None).await?.events;
+        let mut fetched_from = Vec::new();
+        if !matches!(policy, FetchPolicy::LocalOnly) {
+            let asked = self
+                .engine
+                .provenance_round(
+                    format!("Recordings — {title}"),
+                    vec!["narrations bound to this document, from the relays it came from".into()],
+                    filters.clone(),
+                    self.engine.provenance_for(&coord),
+                )
+                .await;
+            if !asked.is_empty() {
+                fetched_from = asked;
+                events = self.engine.get_events(filters.clone(), FetchPolicy::LocalOnly, None).await?.events;
+            }
+            if matches!(policy, FetchPolicy::FetchAlways) || (events.is_empty() && fetched_from.is_empty()) {
+                if let Some((remote, chosen)) = self
+                    .gated_fetch(
+                        format!("Recordings — {title}"),
+                        vec!["narrations bound to this document".into()],
+                        filters,
+                        self.engine.general_relays(),
+                    )
+                    .await?
+                {
+                    fetched_from = crate::engine::union_relays(fetched_from, &chosen);
+                    events.extend(remote);
+                }
+            }
+        }
+        let narrations: Vec<Narration> = events.iter().filter_map(Narration::from_event).collect();
+        let servers = self.store().load().servers;
+        Ok(Discovery {
+            nodes: vec![DiscoveredNode {
+                recordings: rank(&narrations, &coord, event_id.as_deref(), &servers, me),
+                coord,
+                event_id,
+                title,
+                depth: 0,
+                is_index: false,
+                spoken,
+            }],
+            servers,
+            fetched_from,
+        })
+    }
+
+    /// Open a kind-32176 event as a book: the event itself as a
+    /// `Recording`, its leaves (a root's `a` children, in order; a leaf
+    /// alone is its own single chapter), and what it narrates — so the UI
+    /// can offer the publication reader when that document is local and a
+    /// plain audio view otherwise.
+    pub async fn open(&self, addr: &NAddr, policy: FetchPolicy, me: Option<&str>) -> Result<Audiobook> {
+        let servers = self.store().load().servers;
+        let fetch_own = |policy: FetchPolicy| async move {
+            self.engine
+                .get_events(
+                    vec![json!({"kinds": [KIND_NARRATION], "authors": [addr.pubkey], "#d": [addr.d_tag], "limit": 5})],
+                    policy,
+                    None,
+                )
+                .await
+                .map(|r| r.events.into_iter().max_by_key(|e| e.get("created_at").and_then(Value::as_u64).unwrap_or(0)))
+        };
+        let mut own = fetch_own(FetchPolicy::LocalOnly).await?;
+        if own.is_none() && !matches!(policy, FetchPolicy::LocalOnly) {
+            own = fetch_own(FetchPolicy::LocalFirst).await?;
+        }
+        let own = own.ok_or_else(|| EngineError::NotFound("narration event not found".into()))?;
+        let root = Narration::from_event(&own).ok_or_else(|| EngineError::BadRequest("not a kind-32176 narration".into()))?;
+        let mut fetched_from = Vec::new();
+
+        // Children by coordinate, grouped per author.
+        let child_coords: Vec<String> = root.children.iter().map(|(c, _)| c.clone()).collect();
+        let mut groups: std::collections::BTreeMap<String, Vec<String>> = Default::default();
+        for c in &child_coords {
+            if let Some(a) = NAddr::from_a_tag(c) {
+                if a.kind == KIND_NARRATION {
+                    groups.entry(a.pubkey).or_default().push(a.d_tag);
+                }
+            }
+        }
+        let filters: Vec<Value> = groups
+            .iter()
+            .map(|(pk, ds)| json!({"kinds": [KIND_NARRATION], "authors": [pk], "#d": ds, "limit": ds.len() * 3}))
+            .collect();
+        let mut found: Vec<Value> = if filters.is_empty() {
+            Vec::new()
+        } else {
+            self.engine.get_events(filters.clone(), FetchPolicy::LocalOnly, None).await?.events
+        };
+        let have = |found: &[Value]| -> HashSet<String> {
+            found.iter().filter_map(Narration::from_event).map(|n| n.coordinate()).collect()
+        };
+        if !filters.is_empty() && !matches!(policy, FetchPolicy::LocalOnly) && have(&found).len() < groups.values().map(Vec::len).sum::<usize>() {
+            let mut provenance: Vec<String> = root.relays.iter().map(|r| crate::nip11::normalize_relay_url(r)).filter(|r| !r.is_empty()).collect();
+            if let Some(about) = &root.about {
+                provenance = crate::engine::union_relays(provenance, &self.engine.provenance_for(about));
+            }
+            let asked = self
+                .engine
+                .provenance_round(
+                    format!("Recording — {}", root.title),
+                    vec!["the chapters this recording lists, from the relays it came from".into()],
+                    filters.clone(),
+                    provenance,
+                )
+                .await;
+            if !asked.is_empty() {
+                fetched_from = asked;
+                found = self.engine.get_events(filters.clone(), FetchPolicy::LocalOnly, None).await?.events;
+            }
+            if matches!(policy, FetchPolicy::FetchAlways) || have(&found).len() < groups.values().map(Vec::len).sum::<usize>() {
+                if let Some((remote, chosen)) = self
+                    .gated_fetch(
+                        format!("Recording — {}", root.title),
+                        vec!["the chapters this recording lists".into()],
+                        filters,
+                        self.engine.general_relays(),
+                    )
+                    .await?
+                {
+                    fetched_from = crate::engine::union_relays(fetched_from, &chosen);
+                    found.extend(remote);
+                }
+            }
+        }
+        let leaves_by_coord: HashMap<String, Narration> = found
+            .iter()
+            .filter_map(Narration::from_event)
+            .fold(HashMap::new(), |mut m, n| {
+                let k = n.coordinate();
+                match m.get(&k) {
+                    Some(prev) if prev.created_at >= n.created_at => {}
+                    _ => {
+                        m.insert(k, n);
+                    }
+                }
+                m
+            });
+
+        // The local version of each narrated node, for the version pin.
+        let mut about_coords: Vec<String> = Vec::new();
+        if let Some(a) = &root.about {
+            about_coords.push(a.clone());
+        }
+        for n in leaves_by_coord.values() {
+            if let Some(a) = &n.about {
+                if !about_coords.contains(a) {
+                    about_coords.push(a.clone());
+                }
+            }
+        }
+        let mut about_groups: std::collections::BTreeMap<(u64, String), Vec<String>> = Default::default();
+        for c in &about_coords {
+            if let Some(a) = NAddr::from_a_tag(c) {
+                about_groups.entry((a.kind, a.pubkey)).or_default().push(a.d_tag);
+            }
+        }
+        let about_filters: Vec<Value> = about_groups
+            .iter()
+            .map(|((k, pk), ds)| json!({"kinds": [k], "authors": [pk], "#d": ds, "limit": ds.len() * 3}))
+            .collect();
+        let about_events: Vec<Value> = if about_filters.is_empty() {
+            Vec::new()
+        } else {
+            self.engine.get_events(about_filters, FetchPolicy::LocalOnly, None).await?.events
+        };
+        let mut local_about: HashMap<String, (String, String)> = HashMap::new(); // coord → (id, title)
+        for e in &about_events {
+            let Some(d) = first_tag(e, "d") else { continue };
+            let k = e.get("kind").and_then(Value::as_u64).unwrap_or(0);
+            let pk = e.get("pubkey").and_then(Value::as_str).unwrap_or("");
+            let coord = format!("{k}:{pk}:{d}");
+            let at = e.get("created_at").and_then(Value::as_u64).unwrap_or(0);
+            let id = e.get("id").and_then(Value::as_str).unwrap_or("").to_string();
+            let title = first_tag(e, "title").unwrap_or(d);
+            let newer = about_events
+                .iter()
+                .filter(|o| first_tag(o, "d").as_deref() == Some(coord.rsplit(':').next().unwrap_or("")) && o.get("pubkey").and_then(Value::as_str) == Some(pk) && o.get("kind").and_then(Value::as_u64) == Some(k))
+                .any(|o| o.get("created_at").and_then(Value::as_u64).unwrap_or(0) > at);
+            if !newer {
+                local_about.insert(coord, (id, title));
+            }
+        }
+        let to_recording = |n: &Narration| -> Recording {
+            let loaded = n.about.as_ref().and_then(|a| local_about.get(a)).map(|(id, _)| id.as_str());
+            rank(std::slice::from_ref(n), n.about.as_deref().unwrap_or(""), loaded, &servers, me)
+                .into_iter()
+                .next()
+                .unwrap_or_else(|| Recording {
+                    urls: n.urls(&servers),
+                    piece_urls: n.piece_urls(&servers),
+                    mine: me.map(|m| m == n.pubkey).unwrap_or(false),
+                    narration: n.clone(),
+                    version_match: VersionMatch::Unpinned,
+                })
+        };
+        let mut chapters: Vec<AudiobookChapter> = Vec::new();
+        let mut missing: Vec<String> = Vec::new();
+        if root.children.is_empty() {
+            chapters.push(AudiobookChapter {
+                title: root
+                    .about
+                    .as_ref()
+                    .and_then(|a| local_about.get(a))
+                    .map(|(_, t)| t.clone())
+                    .unwrap_or_else(|| root.title.clone()),
+                about: root.about.clone(),
+                about_local: root.about.as_ref().map(|a| local_about.contains_key(a)).unwrap_or(false),
+                recording: to_recording(&root),
+            });
+        } else {
+            for (coord, label) in &root.children {
+                match leaves_by_coord.get(coord) {
+                    Some(n) => chapters.push(AudiobookChapter {
+                        title: if label.is_empty() {
+                            n.about
+                                .as_ref()
+                                .and_then(|a| local_about.get(a))
+                                .map(|(_, t)| t.clone())
+                                .unwrap_or_else(|| n.title.clone())
+                        } else {
+                            label.clone()
+                        },
+                        about: n.about.clone(),
+                        about_local: n.about.as_ref().map(|a| local_about.contains_key(a)).unwrap_or(false),
+                        recording: to_recording(n),
+                    }),
+                    None => missing.push(coord.clone()),
+                }
+            }
+        }
+        let about_title = root.about.as_ref().and_then(|a| local_about.get(a)).map(|(_, t)| t.clone());
+        let about_local = root.about.as_ref().map(|a| local_about.contains_key(a)).unwrap_or(false);
+        let about_kind = root.about_kind.or_else(|| root.about.as_ref().and_then(|a| NAddr::from_a_tag(a)).map(|a| a.kind));
+        let about_publication = match (&root.about, about_kind) {
+            (Some(a), Some(k)) if k != KIND_PUBLICATION_INDEX => self
+                .engine
+                .get_events(vec![json!({"kinds": [KIND_PUBLICATION_INDEX], "#a": [a], "limit": 10})], FetchPolicy::LocalOnly, None)
+                .await?
+                .events
+                .iter()
+                .max_by_key(|e| e.get("created_at").and_then(Value::as_u64).unwrap_or(0))
+                .and_then(crate::attached::coord_of),
+            _ => None,
+        };
+        Ok(Audiobook {
+            narration: to_recording(&root),
+            is_root: !root.children.is_empty(),
+            about: root.about.clone(),
+            about_kind,
+            about_title,
+            about_local,
+            about_publication,
+            chapters,
+            missing,
             servers,
             fetched_from,
         })
@@ -2375,6 +2728,45 @@ pub mod handlers {
         let addr = NAddr::new(KIND_PUBLICATION_INDEX, &pubkey, &d_tag);
         let d = ne.discover(&addr, policy, me.as_deref()).await?;
         Ok(Json(serde_json::to_value(d)?))
+    }
+
+    /// `GET /api/v1/narration/node/:kind/:pubkey/:d_tag?policy=` —
+    /// recordings bound to one document (article / wiki / spec / a section
+    /// on its own), ranked.
+    pub async fn discover_node(
+        State(st): State<ChatAppState>,
+        Extension(signing): Extension<crate::signing::SigningController>,
+        AxPath((kind, pubkey, d_tag)): AxPath<(u64, String, String)>,
+        Query(q): Query<ForQuery>,
+    ) -> R {
+        let policy = match q.policy.as_deref() {
+            Some(p) => p.parse()?,
+            None => FetchPolicy::LocalFirst,
+        };
+        let me = signing.active_pubkey().await;
+        let ne = NarrationEngine::new(&st.engine);
+        let addr = NAddr::new(kind, &pubkey, &d_tag);
+        let d = ne.discover_node(&addr, policy, me.as_deref()).await?;
+        Ok(Json(serde_json::to_value(d)?))
+    }
+
+    /// `GET /api/v1/narration/event/:pubkey/:d_tag?policy=` — a kind-32176
+    /// opened as a book: its chapters and what it narrates.
+    pub async fn open(
+        State(st): State<ChatAppState>,
+        Extension(signing): Extension<crate::signing::SigningController>,
+        AxPath((pubkey, d_tag)): AxPath<(String, String)>,
+        Query(q): Query<ForQuery>,
+    ) -> R {
+        let policy = match q.policy.as_deref() {
+            Some(p) => p.parse()?,
+            None => FetchPolicy::LocalFirst,
+        };
+        let me = signing.active_pubkey().await;
+        let ne = NarrationEngine::new(&st.engine);
+        let addr = NAddr::new(KIND_NARRATION, &pubkey, &d_tag);
+        let book = ne.open(&addr, policy, me.as_deref()).await?;
+        Ok(Json(serde_json::to_value(book)?))
     }
 
     #[derive(Deserialize)]

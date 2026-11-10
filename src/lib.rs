@@ -51,6 +51,7 @@
 //! ```
 
 pub mod api;
+pub mod attached;
 pub mod blossom;
 pub mod bookshelf;
 pub mod bunker;

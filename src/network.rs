@@ -436,6 +436,38 @@ impl NetworkActivity {
         })
     }
 
+    /// Open a fetch operation that is **never gated**, in either mode: the
+    /// provenance round. The relays passed are ones the target document was
+    /// already served from (nostrdb provenance), so asking them for what is
+    /// attached to it discloses nothing new — Confirm mode's promise is that
+    /// no relay learns of an interest it was not told about, and these
+    /// already know. The intent is still emitted (with
+    /// `needs_confirmation: false`) so the activity log shows the round.
+    pub fn begin_operation_ungated(
+        self: &std::sync::Arc<Self>,
+        pattern: FetchPattern,
+        label: String,
+        steps: Vec<String>,
+        relays: Vec<String>,
+        summary: Option<RequestSummary>,
+    ) -> FetchOperation {
+        let operation_id = next_operation_id();
+        self.emit(FetchEvent::Intent {
+            operation_id: operation_id.clone(),
+            pattern,
+            label,
+            steps,
+            relays: relays.clone(),
+            needs_confirmation: false,
+            summary,
+        });
+        FetchOperation {
+            activity: std::sync::Arc::clone(self),
+            operation_id,
+            relays,
+        }
+    }
+
     /// Open a publish operation. Mirrors `begin_operation` but emits a
     /// `PublishIntent` event (carries the event IDs being published so
     /// the UI can correlate per-relay `Accepted`/`Rejected` status).

@@ -2,10 +2,12 @@
 	import ProfileView from '$lib/components/ProfileView.svelte';
 	import { getActiveStore } from '../buffer-store.svelte';
 	import type { Buffer } from '../types';
+	import { getAppState } from '$lib/state.svelte';
 
 	let { buffer }: { buffer: Buffer } = $props();
 
 	const store = getActiveStore();
+	const app = getAppState();
 
 	const pubkey = $derived(parsePubkey(buffer.id));
 
@@ -68,6 +70,14 @@
 		});
 	}
 
+	function openNarration(event: { pubkey: string; tags: string[][] }) {
+		// A kind-32176 recording: the publication reader when the narrated
+		// document is local, else the audio view of the recording tree.
+		const d = event.tags.find((t) => t[0] === 'd')?.[1] ?? '';
+		const title = event.tags.find((t) => t[0] === 'title')?.[1] ?? null;
+		void app.openNarrationEvent(event.pubkey, d, title);
+	}
+
 	function openComment(event: { id: string; content: string; kind?: number }) {
 		// A NIP-22 comment or NIP-84 highlight isn't a standalone reader
 		// destination — route it to the DiscussionViewBuffer, which resolves
@@ -95,6 +105,7 @@
 			onopenaddr={openAddr}
 			oncomment={openComment}
 			onopenrepo={openRepo}
+			onopennarration={openNarration}
 			onback={() => store.killFocused()}
 		/>
 	{:else}

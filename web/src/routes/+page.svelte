@@ -311,6 +311,17 @@
 				}
 			});
 		},
+		onAudiobook: (buffer_id, kicker) => {
+			store.openBuffer({
+				className: 'work',
+				buffer: {
+					id: buffer_id,
+					kind: 'audiobook',
+					label: 'audio',
+					kicker
+				}
+			});
+		},
 		onSearch: (kicker) => {
 			store.openBuffer({
 				className: 'research',

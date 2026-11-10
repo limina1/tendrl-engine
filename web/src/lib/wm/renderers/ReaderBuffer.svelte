@@ -1032,6 +1032,9 @@
 		// (paginated/continuous, highlights, comments) works uniformly.
 		if (parsedAddr.kind !== 30040) {
 			await loadAddressable(parsedAddr.kind, parsedAddr.pubkey, parsedAddr.dTag);
+			// A document on its own: one-node discovery feeds its player strip
+			// (the relays it came from are asked, ungated).
+			void nar.refreshNode(`${parsedAddr.kind}:${parsedAddr.pubkey}:${parsedAddr.dTag}`, 'local_first');
 			return;
 		}
 		// Seed the focus stack with the buffer's own publication on first
@@ -2666,6 +2669,7 @@
 					publicationAtag={`${publication.addr.kind}:${publication.addr.pubkey}:${publication.addr.d_tag}`}
 					onload={isDraftMode ? undefined : handleLoadSection}
 					onviewjson={openSectionJsonBySection}
+					onopenrecordings={parsedAddr?.kind === 30040 ? () => (narrationOpen = true) : undefined}
 					highlightsFor={highlightsForSection}
 					focusedHighlightId={parsedHighlightId}
 					{layerPick}
@@ -2682,6 +2686,8 @@
 					onrefocus={refocus}
 					onload={isDraftMode ? undefined : handleLoadSection}
 					onsectionjson={openSectionJsonByIndex}
+					pubTitle={publication?.title ?? null}
+					onopenrecordings={parsedAddr?.kind === 30040 ? () => (narrationOpen = true) : undefined}
 					highlightsFor={highlightsForSection}
 					focusedHighlightId={parsedHighlightId}
 					{layerPick}

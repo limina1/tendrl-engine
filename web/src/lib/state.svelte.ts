@@ -3065,6 +3065,36 @@ function _createAppState() {
 		navigateToDoc(`doc:${kind}:${pubkey}:${d_tag}`, short);
 	}
 
+	/** Open a kind-32176 narration: the publication reader when the
+	 *  narrated document (or the publication its section belongs to) is
+	 *  local, else the audio view of the recording tree — "like a book,
+	 *  each file playable". */
+	async function openNarrationEvent(pubkey: string, d_tag: string, title?: string | null) {
+		let kicker = title ?? (d_tag.length > 24 ? d_tag.slice(0, 24) + '…' : d_tag);
+		try {
+			const book = await api.getNarrationEvent(pubkey, d_tag, 'local_only');
+			kicker = book.about_title ?? book.narration.title ?? kicker;
+			const target = book.about_publication ?? (book.about_local ? book.about : undefined);
+			if (target) {
+				const i1 = target.indexOf(':');
+				const i2 = target.indexOf(':', i1 + 1);
+				const kind = parseInt(target.slice(0, i1), 10);
+				if (kind === 30040) {
+					navigateToPublication(target.slice(i1 + 1, i2), target.slice(i2 + 1));
+					return;
+				}
+				if (kind === 30023 || kind === 30818 || kind === 30817) {
+					openCoord(target);
+					return;
+				}
+			}
+		} catch (e) {
+			console.warn('openNarrationEvent: lookup failed, opening the audio view', e);
+		}
+		docMode = 'reading';
+		navHandlers?.onAudiobook?.(`audiobook:${pubkey}:${d_tag}`, kicker);
+	}
+
 	async function getEventForModal(eventId: string) {
 		const id = eventId.toLowerCase();
 		try {
@@ -3681,6 +3711,8 @@ function _createAppState() {
 		if (!result.addr) return;
 		if (result.kind === 30040) {
 			navigateToPublication(result.addr.pubkey, result.addr.d_tag);
+		} else if (result.kind === 32176) {
+			await openNarrationEvent(result.addr.pubkey, result.addr.d_tag, result.title);
 		} else if (result.kind === 30041) {
 			try {
 				const resp = await api.getEvent(result.event_id);
@@ -4430,6 +4462,9 @@ function _createAppState() {
 		/** Open a doc buffer (`doc:kind:pubkey:d_tag[?marker]`) — the
 		 *  canonical single-document view for non-30040 addressables. */
 		onDoc?: (buffer_id: string, kicker: string) => void;
+		/** Open a kind-32176 recording as a book (`audiobook:pubkey:d_tag`)
+		 *  when the narrated document is not local. */
+		onAudiobook?: (buffer_id: string, kicker: string) => void;
 		/** Reveal/focus the search buffer (the query itself is seeded separately by
 		 *  `searchFor`). Used when a reference resolves to "go look for it" — e.g.
 		 *  an unresolved wiki link. */
@@ -5523,6 +5558,7 @@ function _createAppState() {
 		pushHistoryEntry,
 		getEventForModal,
 		openAddressableInModal,
+		openNarrationEvent,
 		openCoord,
 		findContainingIndexes,
 		containingByCoord,

@@ -28,10 +28,16 @@
 		siblings = undefined,
 		resolution = undefined,
 		layerPick = undefined,
-		forceSource = false
+		forceSource = false,
+		pubTitle = null,
+		onopenrecordings = undefined
 	}: {
 		sections: LazySection[];
 		currentSection?: number;
+		/** Containing publication's title (player strip subtitle). */
+		pubTitle?: string | null;
+		/** Open the recordings drawer (the section player strip's button). */
+		onopenrecordings?: (() => void) | undefined;
 		onnavigate: (index: number) => void;
 		onload?: (index: number) => void;
 		/** Refocus the reader on a nested 30040 index. When set, a 30040
@@ -172,6 +178,8 @@
 				{resolution}
 				{layerPick}
 				{forceSource}
+				{pubTitle}
+				{onopenrecordings}
 				onopenlocal={openLocalSection}
 			/>
 			{#if threads.length > 0}

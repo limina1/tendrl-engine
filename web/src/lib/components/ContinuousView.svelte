@@ -7,6 +7,7 @@
 	import CommentThread from './CommentThread.svelte';
 	import PoolStateBadges from './PoolStateBadges.svelte';
 	import RichContent from './RichContent.svelte';
+	import NarrationStrip from './NarrationStrip.svelte';
 	import { threadContainsId, type ThreadNode } from '$lib/discussions/thread';
 	import { type Highlight, type HighlightSpan } from '$lib/discussions/highlights';
 	import { coordMatchesAddr, type ResolvedRef, type ParsedToken } from '$lib/nostr/nostrdown';
@@ -33,7 +34,8 @@
 		layerPick = undefined,
 		forceSource = false,
 		expanded = $bindable<Record<string, boolean>>({}),
-		onscroll = undefined
+		onscroll = undefined,
+		onopenrecordings = undefined
 	}: {
 		sections: LazySection[];
 		publication?: { title: string | null; summary: string | null } | null;
@@ -58,6 +60,8 @@
 		siblings?: { title?: string; d_tag: string }[] | undefined;
 		/** The reader's resolution-progress tracker (threaded, not context). */
 		resolution?: ResolutionTracker;
+		/** Open the recordings drawer (the per-section player strip's button). */
+		onopenrecordings?: (() => void) | undefined;
 		/** Rendering layer the reader picked for this buffer (undefined = let the
 		 *  section's declared format + the user's bindings decide; null = source). */
 		layerPick?: LayerPick;
@@ -570,6 +574,15 @@
 							>menu</button>
 						{/if}
 					</h3>
+				{/if}
+				{#if !isCompanion(section) && section.status === 'loaded' && section.addr}
+					<NarrationStrip
+						coord={addrKey(section.addr)}
+						title={section.title ?? ''}
+						pubTitle={publication?.title ?? null}
+						{publicationAtag}
+						{onopenrecordings}
+					/>
 				{/if}
 				{#if section.status === 'loaded'}
 					<!-- Loaded-and-empty renders nothing. It used to fall through
