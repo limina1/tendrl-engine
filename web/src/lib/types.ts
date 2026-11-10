@@ -742,6 +742,9 @@ export type FetchEvent =
 			status: RelayStatusValue;
 	  }
 	| { type: 'completed'; operation_id: string; event_count: number }
+	/** Events landed in the local store (relay fetch or local save).
+	 *  Views re-read their local query when a kind they show appears. */
+	| { type: 'ingested'; kinds: number[]; count: number; profiles?: string[] }
 	| { type: 'failed'; operation_id: string; error: string };
 
 export interface FetchRecord {

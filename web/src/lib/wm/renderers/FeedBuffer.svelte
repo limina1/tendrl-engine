@@ -607,10 +607,12 @@
 				{/if}
 			</div>
 		{/if}
-	{:else if app.feedLoading}
+	{:else if app.feedLoading && app.feed.length === 0}
 		<div class="empty"><p>Loading publications…</p></div>
 	{:else if app.feed.length > 0}
-		<div class="feed-list" bind:this={listEl}>
+		<!-- While a (local) read is pending the previous rows stay up,
+		     dimmed, rather than blanking to "Loading…". -->
+		<div class="feed-list" class:feed-list--pending={app.feedLoading} bind:this={listEl}>
 			{#each app.feed as pub_item, i (`${pub_item.addr.pubkey}:${pub_item.addr.d_tag}`)}
 				{@render pubRow(pub_item, i)}
 			{/each}
@@ -645,6 +647,7 @@
 	.hist-btn { background: none; border: 1px solid var(--panel-border); border-radius: var(--r-sm); color: var(--fg-muted); font: inherit; font-size: var(--t-xs); padding: 1px 6px; cursor: pointer; }
 	.hist-btn:hover { color: var(--fg); }
 	.feed-list { flex: 1; overflow-y: auto; }
+	.feed-list--pending { opacity: 0.55; }
 	.feed-header {
 		flex-shrink: 0;
 		background: var(--panel-bg);

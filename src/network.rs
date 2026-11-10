@@ -204,6 +204,17 @@ impl NetworkActivity {
         }
     }
 
+    /// Announce a batch of events that just entered the local store.
+    pub fn notify_ingested(&self, kinds: Vec<u64>, count: usize, profiles: Vec<String>) {
+        if count > 0 {
+            self.emit(FetchEvent::Ingested {
+                kinds,
+                count,
+                profiles,
+            });
+        }
+    }
+
     /// This session's relay overrides (owned clone).
     pub fn session_relays(&self) -> SessionRelays {
         self.session.lock().unwrap().clone()
@@ -1434,6 +1445,18 @@ pub enum FetchEvent {
     Completed {
         operation_id: String,
         event_count: usize,
+    },
+    /// Events landed in the local store — from a relay fetch or a local
+    /// save. Not tied to an operation: this is the signal views react
+    /// to, re-reading their **local** query when a kind they show
+    /// changed, so no request ever has to wait on a relay to learn the
+    /// result. `profiles` lists the authors of the kind-0 events in the
+    /// batch (capped), so profile caches refresh exactly those.
+    Ingested {
+        kinds: Vec<u64>,
+        count: usize,
+        #[serde(skip_serializing_if = "Vec::is_empty")]
+        profiles: Vec<String>,
     },
     Failed {
         operation_id: String,

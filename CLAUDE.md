@@ -111,6 +111,19 @@ fetch). `begin_operation` applies them in Auto and lists them in Confirm
 clears them; `NetworkStatus.session` shows them. Durable config is relay
 management only — the modal never writes `relays.json`.
 
+**Local-first, reactive (the display rule)**: a view renders from its local
+query and re-reads when the engine announces `FetchEvent::Ingested { kinds,
+count, profiles }` on the fetch-events stream (emitted from
+`Engine::note_ingest_batch`, the single ingest funnel — relay fetches and local
+saves alike). Web: `$lib/network/ingest.ts` (`onIngested` / `onKindsIngested`,
+a leaf module). Relay-bound work that fires on its own must **not** hold its
+HTTP request open — a browser has ~6 connections per origin, two of them
+permanent SSE streams, and held requests queue every local read behind slow
+relays. `POST /profiles/fetch` without `force` detaches (returns at once);
+feed, timeline picker, bookshelf and the profile cache react to ingests.
+Still request-held (user-initiated): feed sync, bookshelf sync, discussions,
+wiki resolve, pull-user-data — convert them the same way when touched.
+
 Pending intents and live fetch activity are pushed to clients over an SSE
 `fetch-events` stream; the UI approves an intent via a confirm endpoint. The
 `FetchGuard` RAII type tracks active relay fetches for the activity log.

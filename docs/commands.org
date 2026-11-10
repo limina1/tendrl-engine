@@ -2465,3 +2465,20 @@ curl -s -X POST localhost:3141/api/v1/network/session/reset
 GUI: the fetch modal shows *invert*, the session note, *reset session* once
 anything is off, and tags (=search=, =not in your relays=); the relays screen
 has no Discovery section and parked relays sit under *Inactive*.
+
+** Local-first, reactive display (same branch)
+
+#+begin_src bash
+cargo test --lib -- test_ingest_announces
+# isolated engine in Auto mode, then:
+curl -sN localhost:3142/api/v1/network/fetch-events > /tmp/sse.log &
+PK=<a pubkey the store does not hold>
+curl -s -o /dev/null -w "%{time_total}s\n" localhost:3142/api/v1/profiles/fetch \
+  -H 'content-type: application/json' -d "{\"pubkeys\":[\"$PK\"]}"      # ~0.003s, not seconds
+sleep 6; grep -o '"type":"ingested"[^}]*' /tmp/sse.log                   # kinds [0], profiles [PK]
+curl -s localhost:3142/api/v1/profile/$PK | jq .found                    # true
+#+end_src
+
+In the browser: DevTools → Network → no =/api/= request should sit in
+"Stalled"; switching the feed's relay timeline keeps the rows up (dimmed) and
+never shows "Loading publications…" unless the list is empty.

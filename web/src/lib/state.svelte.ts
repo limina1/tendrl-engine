@@ -1,3 +1,4 @@
+import { onKindsIngested } from '$lib/network/ingest';
 import { DEFAULT_COMPOSE_FORMAT } from '$lib/layers/registry';
 import { goto } from '$app/navigation';
 import {
@@ -1512,6 +1513,43 @@ function _createAppState() {
 		}
 	}
 
+	/** Re-read the feed's first page from the local store without the
+	 *  loading state — the reaction to publication indexes landing
+	 *  (`ingested`). Rows the user already paged in below the first page
+	 *  are kept; new ones merge in on top by recency. */
+	async function refreshFeedFromLocal() {
+		if (feedLoading) return;
+		const forTimeline = feedTimeline;
+		try {
+			const resp = await api.listPublications(20, 'local_only', undefined, feedGeneral, forTimeline);
+			if (forTimeline !== feedTimeline || feedLoading) return;
+			const key = (p: PublicationSummary) => `${p.addr.pubkey}:${p.addr.d_tag}`;
+			const firstPage = new Map(resp.publications.map((p) => [key(p), p]));
+			const older = feed.length > 20 ? feed.filter((p) => !firstPage.has(key(p))) : [];
+			const next = [...resp.publications, ...older].sort((a, b) => b.created_at - a.created_at);
+			// Idle guard: identical rows must not invalidate the list.
+			const sig = (l: PublicationSummary[]) => l.map((p) => `${key(p)}@${p.created_at}`).join('|');
+			if (sig(next) === sig(feed)) return;
+			feed = next;
+			if (feed.length <= 20) feedHasMore = resp.count >= 20;
+			api.prefetchProfiles([...new Set(resp.publications.map((p) => p.author_pubkey))]);
+		} catch {
+			// engine unavailable — keep what is shown
+		}
+	}
+
+	// Local-first, reactive: the engine announces what lands in the store
+	// and the views that show those kinds re-read locally. Nothing here
+	// waits on a relay.
+	onKindsIngested([30040], () => {
+		void refreshFeedFromLocal();
+		void loadFeedRelays();
+		if (bookshelf) void loadBookshelf();
+	});
+	onKindsIngested([30045], () => {
+		if (bookshelf || bookshelfError) void loadBookshelf();
+	});
+
 	/** Refresh the relay-timeline picker rows. Cheap engine scan of the
 	 *  local 30040s; never touches relays. */
 	async function loadFeedRelays() {
@@ -1673,7 +1711,8 @@ function _createAppState() {
 		const next = timeline || null;
 		if (next === feedTimeline) return;
 		feedTimeline = next;
-		feed = [];
+		// Keep the rows on screen (dimmed, see FeedBuffer) until the new
+		// timeline's local read replaces them — no blank "Loading…" gap.
 		feedHasMore = true;
 		await loadFeed();
 	}

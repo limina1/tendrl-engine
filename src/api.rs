@@ -2646,16 +2646,46 @@ pub async fn fetch_profiles_handler(
     // events, and emits Completed at the end.
     let filter = json!({"kinds": [0], "authors": targets, "limit": targets.len()});
     let composition = engine.compose_for_filters(std::slice::from_ref(&filter));
+    let label = format!(
+        "Fetch {} profile{}",
+        targets.len(),
+        if targets.len() == 1 { "" } else { "s" }
+    );
+
+    // The background prefetch (every feed / reader load fires one) must
+    // not hold its HTTP request open while relays answer: a browser has
+    // only a handful of connections per origin, and a few slow relays
+    // would queue every *local* read behind them. So it detaches — the
+    // response returns at once and the profiles reach the UI through
+    // the `ingested` event on the fetch-events stream. Only an explicit
+    // refresh (`force`) waits, because its caller shows the result.
+    if !req.force {
+        let started = targets.len();
+        let engine = Arc::clone(&engine);
+        tokio::spawn(async move {
+            engine
+                .fetch_with_composition(
+                    &composition,
+                    &[filter],
+                    label,
+                    crate::network::FetchPattern::Profile,
+                    false,
+                )
+                .await;
+        });
+        return Ok(Json(json!({
+            "fetched": 0,
+            "started": started,
+            "detached": true,
+            "total": req.pubkeys.len()
+        })));
+    }
 
     let events = engine
         .fetch_with_composition(
             &composition,
             &[filter],
-            format!(
-                "Fetch {} profile{}",
-                targets.len(),
-                if targets.len() == 1 { "" } else { "s" }
-            ),
+            label,
             crate::network::FetchPattern::Profile,
             req.force,
         )

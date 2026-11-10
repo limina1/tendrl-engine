@@ -1,3 +1,4 @@
+import { onIngested } from './network/ingest';
 import type {
 	BunkerConnectResponse,
 	BunkerStatus,
@@ -2170,6 +2171,7 @@ export async function refreshProfiles(pubkeys: string[]): Promise<void> {
 }
 
 export async function getProfile(pubkey: string): Promise<Profile> {
+	wantedProfiles.add(pubkey);
 	const cached = profileCache.get(pubkey);
 	if (cached) return cached;
 
@@ -2195,12 +2197,37 @@ export async function getProfile(pubkey: string): Promise<Profile> {
 	return promise;
 }
 
+// Profiles someone on the page has asked for. When the engine announces
+// a kind-0 for one of them (`ingested`), it is re-read from the local
+// store — that is how a detached relay prefetch reaches the UI, and how
+// a newer profile replaces a cached one.
+const wantedProfiles = new Set<string>();
+const profileRefreshQueue = new Set<string>();
+let profileRefreshTimer: ReturnType<typeof setTimeout> | null = null;
+
+onIngested((n) => {
+	for (const pk of n.profiles) {
+		if (wantedProfiles.has(pk)) profileRefreshQueue.add(pk);
+	}
+	if (profileRefreshQueue.size === 0 || profileRefreshTimer) return;
+	// nostrdb finishes writing a moment after the announcement.
+	profileRefreshTimer = setTimeout(async () => {
+		profileRefreshTimer = null;
+		const batch = [...profileRefreshQueue];
+		profileRefreshQueue.clear();
+		for (const pk of batch) profileCache.delete(pk);
+		await Promise.all(batch.map((pk) => getProfile(pk)));
+		notifyProfileUpdate();
+	}, 400);
+});
+
 /// Debounced profile prefetch — collects pubkeys over 300ms then fires once
 let prefetchQueue: Set<string> = new Set();
 let prefetchTimer: ReturnType<typeof setTimeout> | null = null;
 
 export function prefetchProfiles(pubkeys: string[]) {
 	for (const pk of pubkeys) {
+		if (pk.length === 64) wantedProfiles.add(pk);
 		if (!profileCache.has(pk) && pk.length === 64) prefetchQueue.add(pk);
 	}
 	if (prefetchQueue.size === 0) return;
@@ -2214,15 +2241,19 @@ async function flushPrefetch() {
 	prefetchTimer = null;
 	if (batch.length === 0) return;
 
+	// Local first: show whatever the store already holds…
+	await Promise.all(batch.map((pk) => getProfile(pk)));
+	notifyProfileUpdate();
+
+	// …then ask the relays for the ones it doesn't. The engine detaches
+	// this fetch and answers at once; the profiles arrive through the
+	// `ingested` announcement handled above.
 	try {
 		await fetchJson<{ fetched: number }>('/api/v1/profiles/fetch', {
 			method: 'POST',
 			body: JSON.stringify({ pubkeys: batch })
 		});
 	} catch { /* ignore */ }
-
-	await Promise.all(batch.map(pk => getProfile(pk)));
-	notifyProfileUpdate();
 }
 
 // Ignore List API

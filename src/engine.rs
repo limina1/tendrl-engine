@@ -1556,6 +1556,31 @@ impl Engine {
         if events.is_empty() {
             return;
         }
+        // Tell the UI what landed, so views re-read their local query
+        // instead of waiting on the request that triggered the fetch.
+        {
+            /// Cap on the kind-0 author list carried by one announcement.
+            const PROFILE_CAP: usize = 256;
+            let mut kinds: Vec<u64> = Vec::new();
+            let mut profiles: Vec<String> = Vec::new();
+            for event in events {
+                let Some(kind) = event.get("kind").and_then(|v| v.as_u64()) else {
+                    continue;
+                };
+                if !kinds.contains(&kind) {
+                    kinds.push(kind);
+                }
+                if kind == 0 && profiles.len() < PROFILE_CAP {
+                    if let Some(pk) = event.get("pubkey").and_then(|v| v.as_str()) {
+                        if !profiles.iter().any(|p| p == pk) {
+                            profiles.push(pk.to_string());
+                        }
+                    }
+                }
+            }
+            kinds.sort_unstable();
+            self.network.notify_ingested(kinds, events.len(), profiles);
+        }
         let embed_kinds = self.embed_kinds();
         let mut dirty = self.embed_dirty.lock().unwrap();
         for event in events {
@@ -4461,5 +4486,38 @@ mod tests {
         assert!(!engine
             .relays_for_kinds(Some(&[30818]))
             .contains(&"wss://docs.example".to_string()));
+    }
+
+    /// Anything entering the store is announced on the fetch-events
+    /// stream, so views re-read locally instead of waiting on a request.
+    #[tokio::test]
+    async fn test_ingest_announces_kinds_and_profile_authors() {
+        use crate::network::FetchEvent;
+        let dir = tempdir().unwrap();
+        let engine = Engine::with_config(dir.path(), &[], 1000).unwrap();
+        let mut rx = engine.subscribe_fetch_events();
+
+        let events = vec![
+            json!({ "kind": 30040, "pubkey": "aa" }),
+            json!({ "kind": 0, "pubkey": "bb" }),
+            json!({ "kind": 0, "pubkey": "bb" }),
+            json!({ "kind": 30040, "pubkey": "cc" }),
+        ];
+        engine.note_ingest_batch(&events);
+        match rx.try_recv().expect("an ingest announcement") {
+            FetchEvent::Ingested {
+                kinds,
+                count,
+                profiles,
+            } => {
+                assert_eq!(kinds, vec![0, 30040]);
+                assert_eq!(count, 4);
+                assert_eq!(profiles, vec!["bb".to_string()]);
+            }
+            other => panic!("unexpected event: {other:?}"),
+        }
+        // An empty batch announces nothing.
+        engine.note_ingest_batch(&[]);
+        assert!(rx.try_recv().is_err());
     }
 }
