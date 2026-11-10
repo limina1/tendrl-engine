@@ -489,10 +489,83 @@
 			(n.kind >= 10000 && n.kind < 20000) ||
 			(n.kind >= 30000 && n.kind < 40000)
 	);
-	const canEdit = $derived(isOwnEvent && isReplaceableKind && n.kind !== 30040 && n.kind !== 30041);
+	// Publications, sections and articles open in the composer instead —
+	// for anyone signed in: your own republish in place, someone else's
+	// become a fork + kind-818 merge request (Sign shows which).
+	const COMPOSER_KINDS = new Set([30040, 30041, 30023, 30818, 30817]);
+	const composerEdit = $derived(COMPOSER_KINDS.has(n.kind) && !!app.identityStatus?.pubkey);
+	const canEdit = $derived(
+		composerEdit || (isOwnEvent && isReplaceableKind && n.kind !== 30040 && n.kind !== 30041)
+	);
+	const editLabel = $derived(
+		n.kind === 30041 ? 'Edit section' : n.kind === 30040 ? 'Edit publication' : 'Edit'
+	);
+	const editTitle = $derived(
+		!composerEdit
+			? "Edit this replaceable event's tags and content in the composer and publish the replacement (yours only)"
+			: n.kind === 30041
+				? isOwnEvent
+					? 'Edit this section in place, in its publication — Sign republishes it'
+					: 'Edit this section in its publication — Sign publishes your copy and sends the author a merge request'
+				: n.kind === 30040
+					? 'Edit the whole publication, every section unlocked'
+					: isOwnEvent
+						? 'Edit in the composer — Sign republishes it (same d)'
+						: 'Edit in the composer — Sign publishes your copy (same d, NIP-54 fork) and sends the author a merge request'
+	);
 	let editLoading = $state(false);
+
+	async function fullEvent(id: string): Promise<api.AttachedEvent | null> {
+		try {
+			const ev = (await api.getEvent(id, { policy: 'local_only' })).event as api.AttachedEvent | null;
+			return ev && Array.isArray(ev.tags) && typeof ev.content === 'string' ? ev : null;
+		} catch {
+			return null;
+		}
+	}
+
+	async function onComposerEdit() {
+		editLoading = true;
+		try {
+			const ev = await fullEvent(n.id);
+			if (!ev) {
+				app.pushToast("This event isn't in your local store yet — fetch it first", 'info');
+				return;
+			}
+			if (ev.kind === 30041) {
+				let pub = attached?.publication && !attIsSelf ? attached.publication : null;
+				if (!pub) {
+					try {
+						pub = (await api.getAttached({ id: ev.id, policy: 'local_only' })).publication;
+					} catch {
+						pub = null;
+					}
+				}
+				const index = pub ? await fullEvent(pub.id) : null;
+				if (!index || index.kind !== 30040) {
+					app.pushToast(
+						"This section's publication isn't local — open the publication, then edit the section",
+						'info'
+					);
+					return;
+				}
+				onclose();
+				await app.editPublicationInComposer(index, { focus: ev });
+			} else if (ev.kind === 30040) {
+				onclose();
+				await app.editPublicationInComposer(ev);
+			} else {
+				onclose();
+				app.editAtomicInComposer(ev);
+			}
+		} finally {
+			editLoading = false;
+		}
+	}
+
 	async function onEditAction() {
 		if (!canEdit || editLoading) return;
+		if (composerEdit) return onComposerEdit();
 		// Snapshot before closing (see the note above onReadAction). The
 		// menu may hold a search result whose `content` is the truncated
 		// preview, so the full event is fetched from the engine first.
@@ -1172,10 +1245,10 @@
 						class="evm__action"
 						onclick={onEditAction}
 						disabled={editLoading}
-						title="Edit this replaceable event's tags and content in the composer and publish the replacement (yours only)"
+						title={editTitle}
 					>
 						<span class="evm__key">e</span>
-						<span class="evm__action-label">{editLoading ? 'Loading…' : 'Edit'}</span>
+						<span class="evm__action-label">{editLoading ? 'Loading…' : editLabel}</span>
 					</button>
 				{/if}
 				{#if isOwnEvent}

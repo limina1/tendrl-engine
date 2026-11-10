@@ -4,8 +4,10 @@
 	import { shell } from '$lib/wm/shell.svelte';
 	import { CANONICAL_MIMETYPES, FORMAT_LABEL } from '$lib/layers/registry';
 	import type { ComposeState, ContextItem, TagEntry, SyncMode } from '$lib/types';
+	import { wireTag } from '$lib/types';
 	import type { DraftSummary } from '$lib/api';
 	import { resolveNostrdown, search } from '$lib/api';
+	import type * as api from '$lib/api';
 	import { EditorView } from '@codemirror/view';
 	import { Compartment } from '@codemirror/state';
 	import {
@@ -968,8 +970,13 @@
 		const view = plainCmView;
 		if (!view || mode !== 'plain') return;
 		void knownSectionFp;
-		const text = plainText;
+		// Re-run on every editor update (edVersion), and read the editor's own
+		// doc: the host's text reaches the editor in a later effect, so
+		// ranges computed from `plainText` could land on the old doc.
+		void edVersion;
+		void plainText;
 		untrack(() => {
+			const text = view.state.doc.toString();
 			const parsed = parseAll(text);
 			const lineStarts: number[] = [0];
 			for (let i = 0; i < text.length; i++) if (text[i] === '\n') lineStarts.push(i + 1);
@@ -1011,7 +1018,71 @@
 				: ['d', 'title', 'a × ' + detectedSections.length, 'auto-update']
 	);
 
+	// --- Edit from an event menu: Sign opens the review (EditReviewModal) ---
+
+	const edit = $derived(app.composeEdit);
+
+	/** The section-edit requests a Sign makes for the current edit, or null
+	 *  when the edit is better published as a whole (own publication with a
+	 *  changed structure — the normal republish path handles that). */
+	function editRequests(): api.SectionEditRequest[] | null {
+		const e = edit;
+		if (!e) return null;
+		if (e.mode === 'atomic') {
+			if (!e.baseId) return null;
+			return [
+				{
+					section: e.baseId,
+					content: atomicParsed.content,
+					title: atomicParsed.title,
+					format: composeFormat,
+					tags: compose.tags.map(wireTag)
+				}
+			];
+		}
+		const { sections } = handlePlainFullEdit(plainText);
+		const placed = sections.filter((s) => s.source_event_id);
+		const added = sections.filter((s) => !s.source_event_id && !s.slot);
+		const reordered =
+			placed.map((s) => s.source_event_id).join() !==
+			compose.sections.filter((s) => s.source_event_id).map((s) => s.source_event_id).join();
+		if (e.own && (added.length > 0 || reordered)) return null;
+		if (!e.own && added.length > 0) {
+			app.pushToast(
+				"New sections can't go into someone else's publication yet — only the edited sections are sent",
+				'info'
+			);
+		}
+		const tagKey = (ts: TagEntry[] | undefined) => JSON.stringify((ts ?? []).map(wireTag));
+		return placed
+			.filter(
+				(s) =>
+					s.content !== s.original_content ||
+					s.title !== (s.original_title ?? s.title) ||
+					tagKey(s.tags) !== tagKey(s.original_tags)
+			)
+			.map((s) => ({
+				section: s.source_event_id!,
+				index: e.indexCoord,
+				content: s.content,
+				title: s.title,
+				format: s.format ?? composeFormat,
+				tags: s.tags.map(wireTag)
+			}));
+	}
+
 	function publishAll() {
+		if (edit) {
+			const reqs = editRequests();
+			if (reqs) {
+				if (reqs.length === 0) {
+					app.pushToast('Nothing changed yet — edit a section, then sign', 'info');
+					return;
+				}
+				app.editReview = reqs;
+				return;
+			}
+		}
 		if (isAtomic) {
 			onpublish([], atomicMeta());
 			return;
@@ -1234,6 +1305,24 @@
 			aria-label="Composer help"
 		>?</button>
 	</div>
+
+	{#if edit}
+		<div class="edit-banner" class:edit-banner--fork={!edit.own} data-tour="compose-edit">
+			<span class="edit-pill">{edit.own ? 'yours' : 'fork'}</span>
+			<span>
+				{#if edit.mode === 'section'}
+					Editing “{edit.title || 'section'}” in its publication — the other sections are locked.
+				{:else if edit.mode === 'publication'}
+					Editing the whole publication.
+				{:else}
+					Editing “{edit.title}”.
+				{/if}
+				{edit.own
+					? 'Sign republishes your changes in place (same d).'
+					: 'Sign publishes your copy and sends the author a merge request; their version is untouched until they merge.'}
+			</span>
+		</div>
+	{/if}
 
 	{#snippet tagsRail(sectionTabs: boolean)}
 		<div class="rail-tags" data-tour="compose-tags">
@@ -1479,7 +1568,7 @@
 							: compose.source_publication_addr
 								? 'No structural change since the source publication — nothing to sign'
 								: 'Add or modify a section to enable signing'}
-			>Sign</button>
+			>{edit ? (edit.own ? 'Republish…' : 'Fork + request merge…') : 'Sign'}</button>
 		{/if}
 		<button onclick={oncancel}>Cancel</button>
 	</div>
@@ -1746,6 +1835,34 @@
 		overflow: hidden;
 		display: flex;
 		flex-direction: column;
+	}
+	.edit-banner {
+		display: flex;
+		gap: 10px;
+		align-items: baseline;
+		padding: 8px 12px;
+		margin-bottom: 8px;
+		font-size: var(--t-sm);
+		border: 1px solid color-mix(in srgb, var(--id-yours) 45%, var(--border));
+		background: color-mix(in srgb, var(--id-yours) 8%, transparent);
+		border-radius: var(--radius);
+	}
+	.edit-banner--fork {
+		border-color: color-mix(in srgb, var(--id-forked, #b294bb) 55%, var(--border));
+		background: color-mix(in srgb, var(--id-forked, #b294bb) 8%, transparent);
+	}
+	.edit-pill {
+		font-size: var(--t-2xs);
+		text-transform: uppercase;
+		letter-spacing: 0.05em;
+		padding: 1px 7px;
+		border-radius: 999px;
+		border: 1px solid currentColor;
+		color: var(--id-yours);
+		flex-shrink: 0;
+	}
+	.edit-banner--fork .edit-pill {
+		color: var(--id-forked, #b294bb);
 	}
 	.rail-tags {
 		padding: 10px;

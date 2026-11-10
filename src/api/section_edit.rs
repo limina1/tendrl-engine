@@ -36,6 +36,10 @@ pub struct SectionEditRequest {
     /// Declared format (`markdown` / `text/org` / …); default: the base's.
     #[serde(default)]
     pub format: Option<String>,
+    /// The author's tags (the tags panel): replace the base's own tags;
+    /// engine-set and reference tags are kept. Absent = keep the base's.
+    #[serde(default)]
+    pub tags: Option<Vec<crate::publication::compose::WireTag>>,
     /// Request route only: also publish the editor's copy of the index.
     #[serde(default)]
     pub with_derivative: bool,
@@ -128,6 +132,10 @@ async fn prepare(
         content: req.content.clone(),
         title: req.title.clone(),
         format: req.format.clone(),
+        tags: req.tags.as_ref().map(|ts| {
+            let entries: Vec<crate::publication::compose::TagEntry> = ts.iter().map(Into::into).collect();
+            crate::publication::compose::ComposeState::tags_to_nostr_format(&entries)
+        }),
     };
     let now = super::unix_now_i64();
     let p = plan(

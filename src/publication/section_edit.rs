@@ -41,7 +41,19 @@ pub struct SectionEdit {
     /// Declared mimetype (any alias `mimetype::canonical` knows); `None`
     /// keeps the base's `m`.
     pub format: Option<String>,
+    /// The author's own tags (the composer's tags panel): when set, they
+    /// replace the base's — engine-set and reference tags (`ENGINE_TAGS`)
+    /// stay as the engine manages them. `None` keeps the base's tags.
+    pub tags: Option<Vec<Vec<String>>>,
 }
+
+/// Tags the engine sets or derives (identity, placement, format, fork
+/// lineage, and the reference tags recomputed from the content): an edit's
+/// own `tags` never replace these.
+pub const ENGINE_TAGS: &[&str] = &[
+    "d", "title", "a", "e", "p", "m", "format", "client", "T", "N", "auto-update", "alt", "E", "A",
+    "K", "P", "published_at", "w", "q", "ref",
+];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -94,6 +106,14 @@ fn edited_tags(
     format: Option<&str>,
 ) -> Vec<Vec<String>> {
     tags.retain(|t| tag_name(t) != "client");
+    if let Some(own) = &edit.tags {
+        tags.retain(|t| ENGINE_TAGS.contains(&tag_name(t)));
+        for t in own {
+            if !t.is_empty() && !ENGINE_TAGS.contains(&tag_name(t)) && !tags.contains(t) {
+                tags.push(t.clone());
+            }
+        }
+    }
     // reference tags the old content produced → out; the new content's → in
     let old_refs = crate::nostrdown::reference_tags(old_content);
     let new_refs = crate::nostrdown::reference_tags(&edit.content);
@@ -499,6 +519,7 @@ mod tests {
                 content: "text".into(),
                 title: Some("Uno".into()),
                 format: None,
+                tags: None,
             },
             "",
             false,
@@ -582,6 +603,7 @@ mod tests {
                 content: "y".into(),
                 title: None,
                 format: Some("org".into()),
+                tags: Some(vec![vec!["t".into(), "fungi".into()], vec!["d".into(), "nope".into()]]),
             },
             "",
             false,
@@ -594,6 +616,10 @@ mod tests {
             "s9 is not in the index → not my place to swap"
         );
         assert_eq!(tag(&p.section, "m")[0][1], "text/org");
+        // the author's tags come in; an engine tag in them (`d`) does not
+        assert_eq!(tag(&p.section, "t"), vec![&vec!["t".to_string(), "fungi".into()]]);
+        assert_eq!(tag(&p.section, "d").len(), 1);
+        assert_ne!(tag(&p.section, "d")[0][1], "nope");
         let same = plan(&section(ALICE, "x"), None, ALICE, &edit("x"), "", false, 1).unwrap();
         assert!(same.unchanged);
     }

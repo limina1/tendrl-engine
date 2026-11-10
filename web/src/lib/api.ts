@@ -3495,3 +3495,165 @@ export function updateHistory(up: HistoryUpdate) {
 export function removeHistory(coord: string) {
 	return fetchJson<{ removed: boolean }>('/api/v1/history/remove', { method: 'POST', body: JSON.stringify({ coord }) });
 }
+
+// ── Section edit + merge requests (kind 818) ───────────────────────────────
+// `/api/v1/section-edit/*` edits one 30041 in place (or one 30023 / 30818 /
+// 30817): own → republish under the same d; someone else's → a fork under
+// the editor's key + a kind-818 merge request to the owner.
+
+export type EditRoute = 'republish' | 'fork_into_index' | 'fork_and_request';
+
+export interface DiffHunkLine {
+	kind: 'context' | 'removed' | 'added';
+	line: string;
+	n_before?: number;
+	n_after?: number;
+}
+
+export interface UnsignedEvent {
+	kind: number;
+	content: string;
+	tags: string[][];
+	created_at?: number;
+	pubkey?: string;
+}
+
+export interface MergeDestination {
+	url: string;
+	reasons: ('inbox' | 'found_on' | 'hint' | 'mine')[];
+}
+
+export interface MergeDestinations {
+	target: string;
+	owner: string;
+	destinations: MergeDestination[];
+	deliverable: boolean;
+	inbox_known: boolean;
+	provenance_known: boolean;
+	note?: string;
+}
+
+export interface SectionEditRequest {
+	/** The edited version's id (pins the base) or its coordinate. */
+	section: string;
+	/** The containing index (`30040:pk:d`) the edit was placed in. */
+	index?: string;
+	content: string;
+	title?: string;
+	format?: string;
+	/** The author's tags (the tags panel) — replace the base's own tags. */
+	tags?: WireTag[];
+	with_derivative?: boolean;
+	message?: string;
+	broadcast?: boolean;
+	relays?: string[];
+	mode_confirm?: boolean;
+}
+
+export interface SectionEditPreview {
+	route: EditRoute;
+	kind: number;
+	base_coordinate: string;
+	base_id: string;
+	owner: string;
+	section: UnsignedEvent;
+	section_coordinate: string;
+	index?: UnsignedEvent | null;
+	hunks: DiffHunkLine[][];
+	title_changed: boolean;
+	format: string;
+	unchanged: boolean;
+	moved_on: boolean;
+	merge_request?: UnsignedEvent;
+	destinations?: MergeDestinations;
+	index_coordinate: string | null;
+	overwrites?: string;
+}
+
+export interface SectionEditPublished extends PublishResponse {
+	route: EditRoute;
+	section: { id: string } & UnsignedEvent;
+	section_coordinate: string;
+	index?: unknown;
+	merge_request?: { id: string } & UnsignedEvent;
+	relays_used: string[];
+}
+
+export function sectionEditPreview(req: SectionEditRequest): Promise<SectionEditPreview> {
+	return fetchJson('/api/v1/section-edit/preview', { method: 'POST', body: JSON.stringify(req) });
+}
+
+export function sectionEditPublish(req: SectionEditRequest): Promise<SectionEditPublished> {
+	return fetchJson('/api/v1/section-edit/publish', { method: 'POST', body: JSON.stringify(req) });
+}
+
+export type MergeStatus = 'open' | 'merged' | 'declined';
+
+export interface MergeRequestRow {
+	id: string;
+	pubkey: string;
+	created_at: number;
+	content: string;
+	target: string;
+	target_kind: number;
+	base?: string;
+	source?: string;
+	owner: string;
+	status: MergeStatus;
+	role: 'owner' | 'requester' | 'both';
+	verdict?: unknown;
+	event: unknown;
+}
+
+export function listMergeRequests(opts: {
+	role?: 'owner' | 'requester' | 'all';
+	status?: 'open' | 'all';
+} = {}): Promise<{ pubkey: string; requests: MergeRequestRow[]; open: number }> {
+	const q = new URLSearchParams();
+	if (opts.role) q.set('role', opts.role);
+	if (opts.status) q.set('status', opts.status);
+	return fetchJson(`/api/v1/merge-requests?${q.toString()}`);
+}
+
+export interface MergeReview {
+	merge_request: MergeRequestRow;
+	status: MergeStatus;
+	role: string;
+	base: { coordinate: string; base_id?: string; current_id: string; moved_on: boolean };
+	source: { coordinate: string; id: string };
+	sections: {
+		original: string;
+		derivative: string;
+		title: string;
+		format: string;
+		hunks: DiffHunkLine[][];
+		tags_added: string[][];
+		tags_removed: string[][];
+		next: UnsignedEvent;
+	}[];
+	note?: string;
+}
+
+export function reviewMergeRequest(id: string): Promise<MergeReview> {
+	return fetchJson(`/api/v1/merge-requests/${encodeURIComponent(id)}/diff`);
+}
+
+export function mergeMergeRequest(
+	id: string,
+	opts: { broadcast?: boolean } = {}
+): Promise<{ merged: boolean; status: MergeStatus; relays_used: string[] }> {
+	return fetchJson(`/api/v1/merge-requests/${encodeURIComponent(id)}/merge`, {
+		method: 'POST',
+		body: JSON.stringify({ broadcast: !!opts.broadcast })
+	});
+}
+
+export function declineMergeRequest(
+	id: string,
+	opts: { reason?: string; broadcast?: boolean } = {}
+): Promise<{ status: MergeStatus }> {
+	return fetchJson(`/api/v1/merge-requests/${encodeURIComponent(id)}/decline`, {
+		method: 'POST',
+		body: JSON.stringify({ reason: opts.reason, broadcast: !!opts.broadcast })
+	});
+}

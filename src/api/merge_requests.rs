@@ -882,7 +882,7 @@ mod tests {
         let (iid, ix_ev) = signed(OWNER_SEC, 30040, "", ix_tags, 901);
         ingest(&engine, &ix_ev, &iid).await;
 
-        let edit = SectionEdit { content: "first line\nsecond line, sharper".into(), title: Some("Uno".into()), format: None };
+        let edit = SectionEdit { content: "first line\nsecond line, sharper".into(), title: Some("Uno".into()), format: None, tags: None };
         let p = plan(&s_ev, Some(&ix_ev), &me, &edit, "", false, 950).unwrap();
         assert_eq!(p.route, EditRoute::ForkAndRequest);
         let (fid, f_ev) = signed(ME_SEC, 30041, &p.section.content, p.section.tags.clone(), 950);
