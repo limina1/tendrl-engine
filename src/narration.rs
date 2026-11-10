@@ -537,6 +537,10 @@ fn strip_asciidoc(s: &str) -> String {
     let mut out = Vec::new();
     let mut in_block: Option<&str> = None;
     let mut skip_next_block = false;
+    // `[verse]` before a `____` block: each line is read as its own
+    // paragraph so TTS pauses at the line ends instead of running on.
+    let mut verse_next_block = false;
+    let mut in_verse = false;
     for raw in s.lines() {
         let t = raw.trim_start();
         // Delimited blocks: ---- (listing) .... (literal) ++++ (passthrough)
@@ -549,11 +553,17 @@ fn strip_asciidoc(s: &str) -> String {
                         in_block = None;
                         skip_next_block = false;
                     }
+                    None if in_verse && delim == "____" => {
+                        in_verse = false;
+                    }
                     None => {
                         if !read || skip_next_block {
                             in_block = Some(delim);
+                        } else if delim == "____" && verse_next_block {
+                            in_verse = true;
                         }
                         skip_next_block = false;
+                        verse_next_block = false;
                     }
                     _ => {}
                 }
@@ -572,6 +582,10 @@ fn strip_asciidoc(s: &str) -> String {
         }
         if t.starts_with("[source") || t.starts_with("[listing") || t.starts_with("[literal") {
             skip_next_block = true;
+            continue;
+        }
+        if t.starts_with("[verse") {
+            verse_next_block = true;
             continue;
         }
         if t.starts_with('[') && t.ends_with(']') {
@@ -611,12 +625,101 @@ fn strip_asciidoc(s: &str) -> String {
                 .collect::<Vec<_>>()
                 .join(", ");
         }
+        // ` +` at a line end is a hard line break, not a word.
+        if let Some(r) = line.strip_suffix(" +") {
+            line = r.to_string();
+        } else if line == "+" {
+            line.clear();
+        }
+        line = strip_adoc_footnote_refs(&line);
+        line = strip_adoc_span_attrs(&line);
         line = strip_adoc_macros(&line);
         line = strip_inline_common(&line);
-        line = strip_emphasis(&line, &["*", "_", "`", "#", "^", "~"]);
+        line = strip_emphasis(&line, &["**", "__", "##", "*", "_", "`", "#", "^", "~"]);
+        line = strip_stray_hashes(&line);
         out.push(line);
+        if in_verse {
+            out.push(String::new());
+        }
     }
     out.join("\n")
+}
+
+/// Footnote references are not read: `^[5]^` (a superscript bracketed
+/// number) and a bracketed number glued to the end of a word or quote,
+/// `Intuition[3]` / `reed?"[5]` (plain-text Gutenberg footnote markers).
+/// A free-standing `[5]` after a space is left alone.
+fn strip_adoc_footnote_refs(s: &str) -> String {
+    let bytes = s.as_bytes();
+    let mut out = String::with_capacity(s.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        let sup = bytes[i] == b'^' && bytes.get(i + 1) == Some(&b'[');
+        let open = if sup { i + 1 } else { i };
+        if bytes[open] == b'[' {
+            let digits = bytes[open + 1..].iter().take_while(|b| b.is_ascii_digit()).count();
+            let close = open + 1 + digits;
+            if (1..=3).contains(&digits) && bytes.get(close) == Some(&b']') {
+                if sup && bytes.get(close + 1) == Some(&b'^') {
+                    i = close + 2;
+                    continue;
+                }
+                let glued = !sup && i > 0 && !bytes[i - 1].is_ascii_whitespace();
+                if glued {
+                    i = close + 1;
+                    continue;
+                }
+            }
+        }
+        // `i` is always at a char boundary: every skip above ends on ASCII.
+        let ch = s[i..].chars().next().unwrap();
+        out.push(ch);
+        i += ch.len_utf8();
+    }
+    out
+}
+
+/// Inline attribute lists on a span — `[.sc]#London#`, `[.a.b]##x##`,
+/// `[#id.role]#y#`, legacy `[underline]#z#` — are presentation only: drop
+/// the `[…]` so the `#` span is unwrapped by `strip_emphasis`.
+fn strip_adoc_span_attrs(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut rest = s;
+    while let Some(open) = rest.find('[') {
+        let Some(close_rel) = rest[open..].find(']') else { break };
+        let close = open + close_rel;
+        let inner = &rest[open + 1..close];
+        let attr_like = !inner.is_empty()
+            && inner
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '#' | '_' | '-'));
+        out.push_str(&rest[..open]);
+        if !(attr_like && rest[close + 1..].starts_with('#')) {
+            out.push_str(&rest[open..=close]);
+        }
+        rest = &rest[close + 1..];
+    }
+    out.push_str(rest);
+    out
+}
+
+/// A `#` left over after span unwrapping (a malformed span, a mark that
+/// straddled a line break) is markup, never prose: drop a lone `#` token
+/// and a `#` glued to the front of a word. `#1` (a number) is kept.
+fn strip_stray_hashes(s: &str) -> String {
+    s.split(' ')
+        .filter_map(|tok| {
+            if tok.chars().all(|c| c == '#') && !tok.is_empty() {
+                return None;
+            }
+            let lead = tok.trim_start_matches('#');
+            let keep_lead = lead.len() == tok.len() || lead.starts_with(|c: char| c.is_ascii_digit());
+            let tok = if keep_lead { tok } else { lead };
+            let trail = tok.trim_end_matches('#');
+            Some(if trail.is_empty() { tok } else { trail })
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 /// `link:url[text]` / `https://x[text]` / `xref:id[text]` → `text` (or the
@@ -2455,6 +2558,24 @@ mod tests {
         let t = spoken_text(adoc, Some(crate::mimetype::ASCIIDOC));
         assert_eq!(t, "Doc Title\n\nSection\n\nA bold word, a the site, and https://z.q.\n\nBlock title\nbullet".replace("Block title\nbullet", "Block title bullet"));
         assert!(!t.contains("fn x"));
+    }
+
+    /// Gutenberg-derived AsciiDoc (pandoc role spans, hard breaks, footnote
+    /// markers, verse) reads as prose — the "III. Time" leak from
+    /// Russell's *Mysticism and Logic*.
+    #[test]
+    fn spoken_text_asciidoc_spans_breaks_footnotes_verse() {
+        let adoc = "A Persian Sufi poet says:\n\n[verse]\n____\n\"Past and future are what veil God from our sight.\nBurn up both of them with fire! How long\nWilt thou be partitioned by these segments as a reed?\"^[5]^\n____\n\n[.sc]#London,# +\n_September, 1917_\n\n\"[.sc]#Causality.# (1) The necessary connection.\n\n== I. REASON AND INTUITION[3]\n\nItem #1 stays.";
+        let t = spoken_text(adoc, Some(crate::mimetype::ASCIIDOC));
+        assert_eq!(
+            t,
+            "A Persian Sufi poet says:\n\n\"Past and future are what veil God from our sight.\n\nBurn up both of them with fire! How long\n\nWilt thou be partitioned by these segments as a reed?\"\n\nLondon, September, 1917\n\n\"Causality. (1) The necessary connection.\n\nI. REASON AND INTUITION\n\nItem #1 stays."
+        );
+        // The malformed form already published (span closers on the next
+        // line) still reads clean.
+        let broken = "[.i0]#\"Past and future. +\n# [.i0]#Burn up both of them. +\n#\n";
+        let t = spoken_text(broken, Some(crate::mimetype::ASCIIDOC));
+        assert_eq!(t, "\"Past and future. Burn up both of them.");
     }
 
     #[test]
