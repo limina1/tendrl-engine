@@ -2535,3 +2535,52 @@ curl -s localhost:3142/api/v1/profile/$PK | jq .found                    # true
 In the browser: DevTools → Network → no =/api/= request should sit in
 "Stalled"; switching the feed's relay timeline keeps the rows up (dimmed) and
 never shows "Loading publications…" unless the list is empty.
+
+* Edit section + merge requests + Composer v2 (branch =feat/edit-section=)
+
+Engine: =src/publication/section_edit.rs=, =src/publication/merge_request.rs=,
+=src/api/{section_edit,merge_requests}.rs=. Web: composer
+(=ComposeView=, =editor/wysiwyg.ts=, =editor/markup.ts=), =EditReviewModal=,
+=MergeRequestsModal=. Live-verified 2026-11-10 on an isolated :3131 with two
+throwaway keys — no keyring, nothing broadcast.
+
+#+begin_src bash
+cargo test --lib section_edit merge_request wire_tags   # planner, 818 core, WireTag
+pnpm -C web test                                        # incl. editor/markup.test.ts
+
+# Two throwaway identities (no keyring): "me" signs through a NIP-07-style
+# external signer answered by nak; "mara" only authors fixtures.
+ME=$(nak key generate </dev/null); MARA=$(nak key generate </dev/null)
+MPK=$(nak key public $MARA </dev/null)
+# fixtures: mara's 30040 + three 30041 (m text/markdown), a 30818 — sign with
+#   echo '{"kind":…,"content":…,"tags":[…],"created_at":…}' | nak event --sec $MARA
+# then: curl -X POST localhost:3131/api/v1/ingest -H 'Content-Type: application/x-ndjson' --data-binary @fx.jsonl
+
+# external signer: register + use (pubkey!) + answer sign_request over SSE
+SID=$(curl -s -X POST localhost:3131/api/v1/identity/signer-register -H 'Content-Type: application/json' \
+  -d "{\"kind\":\"nip07\",\"pubkey\":\"$(nak key public $ME </dev/null)\"}" | jq -r .signer_id)
+curl -s -X POST localhost:3131/api/v1/identity/use -H 'Content-Type: application/json' \
+  -d "{\"source\":\"nip07\",\"signer_id\":\"$SID\",\"pubkey\":\"$(nak key public $ME </dev/null)\"}"
+#   (a node loop on /identity/signer-channel?token=… pipes each template through
+#    `nak event --sec $ME` and POSTs /identity/sign-response {signer_id, req_id, signed_event})
+
+# preview an edit of mara's section, placed in her publication
+curl -s -X POST localhost:3131/api/v1/section-edit/preview -H 'Content-Type: application/json' \
+  -d "{\"section\":\"<30041 id>\",\"index\":\"30040:$MPK:<d>\",\"content\":\"…\",\"title\":\"…\"}"
+#   → route fork_and_request, the fork (minted d, E, p), the 818, destinations
+curl -s 'localhost:3131/api/v1/merge-requests?role=owner&status=all'   # as mara
+curl -s localhost:3131/api/v1/merge-requests/<818 id>/diff
+curl -s -X POST localhost:3131/api/v1/merge-requests/<818 id>/decline -H 'Content-Type: application/json' -d '{"reason":"…"}'
+#+end_src
+
+GUI (headless CDP): reader § menu → =Edit section= → composer placed in the
+publication, siblings dimmed + uneditable → edit → =Fork + request merge…= →
+review (diff, 818 message, destination chips) → armed sign → toast; feed
+menu on an own 30040 → =Edit publication= (all unlocked) → =Republish…=;
+search a 30023 / 30818 → menu → =Edit=. As the owner: menu → =Merge
+requests= (a publication's list includes its sections) → diff → Merge
+(armed) / Decline…. Gotchas: the merge-request routes need axum 0.7 =:id=
+syntax (={id}= silently falls through to the SPA); =pkill -f= on a pattern
+your own command line contains kills the shell — select PIDs with a
+=[t]endrl= bracket pattern.
+

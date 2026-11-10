@@ -403,6 +403,33 @@ sections and embeds new events on a 60-second interval when embeddings are enabl
   `POST /api/v1/narration/review` = apply + re-check. Web: the narrate
   modal's step 2 (`TranscriptReview.svelte`, decisions as view state in
   `narration-review.ts`).
+- **`publication/section_edit.rs`** + **`publication/merge_request.rs`**: edit
+  one 30041 (placed in its publication) or one 30023 / 30818 / 30817, pure.
+  `plan` picks the route — own → **Republish** (same `d`); someone else's
+  section in my index → **ForkIntoIndex**; otherwise → **ForkAndRequest**: a
+  fork under the editor's key (a 30041 gets a minted `d` + `E`/`p`; an atomic
+  kind keeps the `d` with NIP-54 `a`/`e` `fork` markers) plus a kind-818
+  merge request (`a` target, `e` base, `e … source`, `p` owner). Reference
+  tags are recomputed from the content; `SectionEdit.tags` (the composer's
+  tags panel) replace the base's own tags, never `ENGINE_TAGS`. Status of an
+  818 = the owner's newest kind-7 (`+` merged, `−` declined). API:
+  `POST /api/v1/section-edit/{preview,publish}`, `GET /api/v1/merge-requests`,
+  `…/destinations`, `…/react`, `…/:id/diff`, `…/:id/merge`, `…/:id/decline`
+  (destinations = owner's inbox ∪ found-on ∪ hints ∪ mine). Web: event-menu
+  Edit section / Edit publication / Edit → the composer (`app.composeEdit`),
+  Sign → `EditReviewModal`; `MergeRequestsModal` (M-x
+  `tendrl-merge-requests`, menu `Merge requests`). Compose tags travel as
+  `WireTag` — the legacy `[name, value]` pair or `{name, values}` (emitted
+  verbatim, `TagEntry.verbatim`).
+- **Composer v2** (`web/src/lib/components/ComposeView.svelte`,
+  `web/src/lib/editor/{wysiwyg,markup}.ts`): one CodeMirror editor over the
+  real source; the layer bases' style spans become decorations (Rendered
+  hides markup except on the cursor's line · Show markers · Source). Type
+  (Publication / Notes / Wiki / Spec / Blog / custom kind) + Style (the `m`
+  tag; a change re-reads, never converts). Headings in the style's own
+  syntax are the structure: H1 title, H2 section, H3 nests, H4+ text. Tags
+  live in the rail (name + values), not in the text. Locked sections are
+  read-only editor ranges (`lockedRanges`).
 - **`chat.rs`**: Pure state logic for LLM chat fragments, edit mode, context
   injection, message serialization (no IO)
 - **`llm.rs`**: Async `LLMProvider` trait — `NoopProvider` (testing) and
