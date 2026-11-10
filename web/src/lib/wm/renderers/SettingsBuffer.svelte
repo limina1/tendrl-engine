@@ -1966,7 +1966,7 @@
 				class="settings-action settings-action--danger"
 				onclick={requestPurge}
 				disabled={purgeLoading}
-				title="Delete cached events, profiles, and ingest queue; engine restarts in ~1s. Useful for testing the indexer-fallback flow from a cold cache."
+				title="Delete cached events, profiles, and ingest queue; engine restarts in ~1s. Useful for testing relay fetches from a cold cache."
 			>
 				{purgeLoading ? 'Purging…' : 'Purge…'}
 			</button>
@@ -1974,8 +1974,7 @@
 		<p class="settings-hint">
 			Deletes the local <code>nostrdb</code> cache (events, profiles, ingest
 			queue) and re-execs the engine in place. The next "Pull from your
-			profile" walks the full read → indexer.default → indexer.fallback
-			chain from a cold cache. <code>relays.json</code>, <code>config.toml</code>,
+			profile" then fetches from a cold cache. <code>relays.json</code>, <code>config.toml</code>,
 			and the identity ncryptsec are preserved.
 		</p>
 		</div>

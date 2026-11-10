@@ -101,6 +101,16 @@ Engine-level `NetworkMode` toggle and a ring buffer of recent relay fetch activi
 - **`Confirm`** — every user-initiated relay fetch emits an *intent* the UI must
   approve before the engine proceeds (the former "Offline").
 
+**Session relay overrides** (`SessionRelays`, in memory — the session is the
+engine process, i.e. one app launch on Android): a confirm decision is folded
+in whole — listed relays left unpicked go `off` (skipped by *every* later
+fetch, Auto and Confirm, background included, via the `tracked_fetch` funnel),
+relays picked but not listed go `on` (joined to every later user-initiated
+fetch). `begin_operation` applies them in Auto and lists them in Confirm
+(`Intent.session_off` = start unchecked). `POST /network/session/reset`
+clears them; `NetworkStatus.session` shows them. Durable config is relay
+management only — the modal never writes `relays.json`.
+
 Pending intents and live fetch activity are pushed to clients over an SSE
 `fetch-events` stream; the UI approves an intent via a confirm endpoint. The
 `FetchGuard` RAII type tracks active relay fetches for the activity log.
@@ -435,9 +445,20 @@ stored `whats-up` — no need to hand-normalize; quote values containing spaces.
 
 - **Error handling**: `EngineError` (thiserror) with variants for Database, Relay,
   NotFound, etc. `Result<T>` is aliased to `Result<T, EngineError>`.
+- **Relay selection (one rule)**: a fetch for kinds K goes to the **read relays ∪
+  the search relays serving K** (`Engine::relays_for_kinds` / `relays_for_filters`
+  / `plan_resolve_fetch`), plus relay hints (local `e`/`a` tag hints, an
+  `nevent`/`naddr`'s own relay TLVs via `search::entity_relay_hints` or the
+  `relays=` query param), then session overrides. A relay is one row with five
+  flags — auth, read, write, search, broadcast. **Search kinds**
+  (`search_kinds`, formerly `resolve_kinds`) narrow the search flag: none
+  listed = any kind; a kindless filter reaches only unrestricted search relays.
+  There is no indexer class, no default/fallback tier, no `exclusive` flag —
+  a profile relay is a search relay with `relay_store::INDEXER_KINDS`
+  (generation-2 migration in `RelaySets::apply_default_upgrades`).
 - **Relay sets**: The TOML config carries only `initial_relays` (a bootstrap seed
   list used **once** on first boot). The live working sets — `general` / `fetch` /
-  `publish` / `broadcast` / `auth` (NIP-42 opt-in) — live in `<data_dir>/relays.json`, mutated by `engine.add_relay` /
+  `publish` / `broadcast` / `auth` (NIP-42 opt-in) / `search` — live in `<data_dir>/relays.json`, mutated by `engine.add_relay` /
   `engine.remove_relay` and the `POST /api/v1/config/update` handler. The state
   file is **never** broadcast as a Nostr event (no auto-publishing kind 10002 /
   30002 from UI edits — see `project_publishing_philosophy`).

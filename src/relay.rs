@@ -47,9 +47,9 @@ pub const DEFAULT_READ_ONLY: &[&str] = &[
     "wss://mercury-relay.imwald.eu/relay",
 ];
 
-/// Default per-relay resolve-kind claims (see `RelaySets::resolve_kinds`):
-/// targeted resolution of these kinds routes to the claimant instead of
-/// the read set. Mercury serves the publication/wiki kinds tendrl
+/// Default search-kind relays (see `RelaySets::search_kinds`):
+/// fetches of these kinds also go to the listed relay, alongside the
+/// read set. Mercury serves the publication/wiki kinds tendrl
 /// resolves most — 30040 (index), 30041 (section), 30818 (wiki).
 pub const DEFAULT_RESOLVE_CLAIMS: &[(&str, &[u64])] =
     &[("wss://mercury-relay.imwald.eu/relay", &[30040, 30041, 30818])];
@@ -72,15 +72,15 @@ const PUBLISH_IDLE: Duration = Duration::from_secs(5);
 /// How long to wait for the relay's `OK` to our `AUTH` event.
 const AUTH_OK_TIMEOUT: Duration = Duration::from_secs(10);
 
-/// Default indexer (profile / kind-10002 discovery) relays. Used to
-/// seed `indexer.default` on first boot so a fresh install can fall
-/// back from the read set without manual configuration. Well-known
+/// Default profile / relay-list relays (the former "indexers"). Seeded
+/// on first boot as search relays narrowed to
+/// `relay_store::INDEXER_KINDS`, so a fresh install can find profiles
+/// without manual configuration. Well-known
 /// purpose-built profile relays:
 ///   - purplepag.es: pubkey-indexed profile + relay-list mirror
 ///   - user.kindpag.es: kind-10002 / 10003 / 10006 / 10007 indexer
-/// Users can clear them via the Discovery section in RelaysBuffer
-/// if they prefer a tighter set; new entries persist to relays.json
-/// after first save so they won't be re-seeded.
+/// Users can remove them on the relays screen; removals persist to
+/// relays.json so they won't be re-seeded.
 pub const DEFAULT_INDEXERS: &[&str] = &[
     "wss://purplepag.es",
     "wss://user.kindpag.es",

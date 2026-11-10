@@ -10,7 +10,7 @@
 	import type { FetchEvent, NipFilter, CompositionShape, Phase } from '$lib/types';
 	import { completeTip } from '$lib/wm/discovery.svelte';
 	import { resolveConfirm, reissueConfirm } from '$lib/network/fetch-events.svelte';
-	import { addRelay, removeRelay, getRelayConfig } from '$lib/api';
+	import { getRelayConfig, resetSessionRelays } from '$lib/api';
 	import { getAppState } from '$lib/state.svelte';
 
 	const app = getAppState();
@@ -63,8 +63,13 @@
 		return parts.join(' ');
 	}
 
-	// Every proposed relay starts selected; the user can drop any for
-	// this one operation, or append an extra.
+	// The selection is SESSION state, owned by the engine: a relay
+	// unchecked here stays out of every later fetch, and one added here
+	// joins every later fetch, until the engine restarts or the session
+	// is reset. So each intent arrives pre-shaped — session-added relays
+	// are already in `intent.relays`, session-off ones are listed in
+	// `intent.session_off` and start unchecked. Durable changes belong
+	// to relay management.
 	let deselected = $state<Set<string>>(new Set());
 	let extras = $state<string[]>([]);
 	// Proposed relays the user deleted outright (× on the row) — unlike a
@@ -147,12 +152,56 @@
 					}
 				}
 			}
+			// `intent.relays` can carry more than the composition names:
+			// relay hints and relays added earlier this session.
+			for (const u of intent.relays) {
+				if (!seen.has(u)) {
+					seen.add(u);
+					out.push(u);
+				}
+			}
 			return out;
 		}
 		return intent.relays;
 	});
 
+	/** Relays the composition marks as search relays — they joined
+	 *  because they serve this fetch's kinds. */
+	const searchRelays = $derived.by(() => {
+		// Callers that pass a flat relay list (no per-phase composition)
+		// still get the tag: a search relay that is not a read relay.
+		const out = new Set<string>(configSearchOnly);
+		for (const stage of intent.summary?.composition?.phases ?? []) {
+			for (const [phase, urls] of stage.members) {
+				if (phase === 'search') for (const u of urls) out.add(u);
+			}
+		}
+		return out;
+	});
+
 	const allRelays = $derived([...proposedRelays.filter((r) => !removed.has(r)), ...extras]);
+
+	/** Flip every listed relay: checked ↔ unchecked. */
+	function invertSelection() {
+		deselected = new Set(allRelays.filter((r) => !deselected.has(r)));
+	}
+
+	const hasSessionState = $derived((intent.session_off?.length ?? 0) > 0);
+	let sessionResetting = $state(false);
+	/** Forget the session's relay choices: everything proposed is
+	 *  checked again, here and in later fetches. */
+	async function resetSession() {
+		sessionResetting = true;
+		try {
+			await resetSessionRelays();
+			deselected = new Set();
+			app.pushToast('Session relay choices cleared', 'success', 2500);
+		} catch {
+			app.pushToast("Couldn't clear session relay choices", 'error');
+		} finally {
+			sessionResetting = false;
+		}
+	}
 
 	// Parked (inactive) relays: kept in the user's config but in no
 	// working set, so the engine never proposes them. Surface them here
@@ -160,10 +209,27 @@
 	// per-op only; making one active again lives in relay management.
 	let inactiveUrls = $state<string[]>([]);
 	let optedIn = $state<Set<string>>(new Set());
+	// Every relay the user has configured, in any role. A listed relay
+	// outside this set came from somewhere else — a hint inside an
+	// nevent/naddr, a `relay:` token, or one typed in earlier this
+	// session — and is tagged so it's never mistaken for their own.
+	let configuredUrls = $state<Set<string> | null>(null);
+	let configSearchOnly = $state<string[]>([]);
 	$effect(() => {
 		getRelayConfig()
 			.then((cfg) => {
 				inactiveUrls = Object.keys(cfg.inactive ?? {});
+				const read = new Set([...cfg.fetch.urls, ...cfg.general.urls]);
+				configSearchOnly = cfg.search.urls.filter((u) => !read.has(u));
+				configuredUrls = new Set([
+					...cfg.general.urls,
+					...cfg.fetch.urls,
+					...cfg.publish.urls,
+					...cfg.broadcast.urls,
+					...cfg.auth.urls,
+					...cfg.search.urls,
+					...Object.keys(cfg.inactive ?? {})
+				]);
 			})
 			.catch(() => {});
 	});
@@ -173,6 +239,17 @@
 		if (!next.delete(url)) next.add(url);
 		optedIn = next;
 	}
+
+	// Re-seed the selection whenever a different intent takes the slot
+	// (queued intents, or an in-place reissue). `pre` so the first paint
+	// already shows session-off relays unchecked.
+	$effect.pre(() => {
+		void intent.operation_id;
+		deselected = new Set(intent.session_off ?? []);
+		extras = [];
+		removed = new Set();
+		optedIn = new Set();
+	});
 
 	const selectedRelays = $derived([
 		...allRelays.filter((r) => !deselected.has(r)),
@@ -194,10 +271,7 @@
 			case 'write': return 'Write';
 			case 'publish': return 'Publish';
 			case 'broadcast': return 'Broadcast';
-			case 'search.default': return 'Search · default';
-			case 'search.fallback': return 'Search · fallback';
-			case 'indexer.default': return 'Indexer · default';
-			case 'indexer.fallback': return 'Indexer · fallback';
+			case 'search': return 'Search';
 		}
 	}
 
@@ -228,16 +302,9 @@
 		}
 		appendInput = '';
 		appendError = null;
-		// For a feed sync, "Add relay" is a persistent edit to the read set —
-		// not a one-shot for this fetch. Persist immediately so closing the
-		// modal (Cancel / ×) keeps it and the next sync proposes it too. Feed
-		// pulls compose from the `fetch` set (engine.relays()). Other patterns
-		// (search/thread/event) keep the addition ephemeral — their relay set
-		// is ambiguous, so we don't write it through.
-		if (isFeedIntent) {
-			addRelay('fetch', v).catch(() => {});
-			app.pushToast(`Saved ${v.replace(/^wss?:\/\//, '')} to your read set`, 'success', 2500);
-		}
+		// The addition is session-scoped: once approved, the engine
+		// keeps this relay in every later fetch until the session ends.
+		// Adding a relay for good is done in relay management.
 	}
 
 	function removeUrl(url: string) {
@@ -250,13 +317,6 @@
 		if (deselected.has(url)) {
 			deselected.delete(url);
 			deselected = new Set(deselected);
-		}
-		// Mirror addExtra: a feed sync composes from the persistent read
-		// (`fetch`) set, so × writes the removal through; other patterns'
-		// relay sets are ambiguous, so removal stays one-shot.
-		if (isFeedIntent) {
-			removeRelay('fetch', url).catch(() => {});
-			app.pushToast(`Removed ${url.replace(/^wss?:\/\//, '')} from your read set`, 'success', 2500);
 		}
 	}
 
@@ -274,10 +334,10 @@
 		// Walkthrough: approving is what the first-run "approve the first fetch" card asked for.
 		completeTip('feed-sync');
 		if (selectedRelays.length === 0) return;
-		// Appended relays were already persisted to the read set at Add-relay
-		// time (see addExtra), so a plain confirm just fires the fetch. The
-		// broad "general feed" pull (when on) is already part of this intent's
-		// composed query.
+		// The engine folds this choice into the session: listed relays
+		// left out are off, relays added here are on, for every later
+		// fetch. The broad "general feed" pull (when on) is already part
+		// of this intent's composed query.
 		resolveConfirm(true, selectedRelays);
 	}
 	function cancel() {
@@ -316,7 +376,29 @@
 		     (DSL / filters / composition) are in a collapsed
 		     section below for users who want to inspect them. -->
 		<div class="rf-section">
-			<div class="rf-section-head">Relays</div>
+			<div class="rf-section-head rf-relays-head">
+				<span>Relays</span>
+				<span class="rf-relays-tools">
+					{#if hasSessionState}
+						<button
+							class="rf-copy"
+							onclick={resetSession}
+							disabled={sessionResetting}
+							title="Forget this session's relay choices — everything proposed is checked again, here and in later fetches."
+						>reset session</button>
+					{/if}
+					<button
+						class="rf-copy"
+						onclick={invertSelection}
+						disabled={allRelays.length === 0}
+						title="Invert the selection: checked relays become unchecked and the other way round."
+					>invert</button>
+				</span>
+			</div>
+			<p class="rf-session-note">
+				Your selection sticks for this session — every later fetch uses it until you change it or
+				restart. Relay management makes a change permanent.
+			</p>
 			{#if allRelays.length === 0}
 				<p class="rf-empty">No relays proposed — add one below.</p>
 			{:else}
@@ -330,14 +412,26 @@
 									onchange={() => toggle(url)}
 								/>
 								<code class="rf-url">{url}</code>
+								{#if searchRelays.has(url)}
+									<span
+										class="rf-tag"
+										title="A search relay — included because it serves the kinds in this fetch."
+										>search</span
+									>
+								{/if}
+								{#if configuredUrls && !configuredUrls.has(url)}
+									<span
+										class="rf-tag rf-tag--outside"
+										title="Not one of your configured relays — it came from a hint inside the event reference, a relay: token, or was added earlier this session."
+										>not in your relays</span
+									>
+								{/if}
 							</label>
 							<button
 								class="rf-remove"
 								onclick={() => removeUrl(url)}
 								aria-label="Remove {url}"
-								title={isFeedIntent
-									? 'Remove this relay from your read set'
-									: 'Remove this relay from the list for this fetch'}
+								title="Drop this relay from the list — it stays off for the rest of the session"
 							>×</button>
 						</li>
 					{/each}
@@ -355,7 +449,7 @@
 									onchange={() => toggleOptIn(url)}
 								/>
 								<code class="rf-url">{url}</code>
-								<span class="rf-inactive-tag" title="Deactivated in relay management — check to include it for this operation only.">inactive</span>
+								<span class="rf-inactive-tag" title="Deactivated in relay management — check to include it for the rest of this session.">inactive</span>
 							</label>
 						</li>
 					{/each}
@@ -615,6 +709,37 @@
 		color: var(--id-yours);
 		margin-bottom: 6px;
 		font-size: calc(var(--t-xs) - 1px);
+	}
+	.rf-relays-head {
+		display: flex;
+		justify-content: space-between;
+		align-items: center;
+		gap: 8px;
+	}
+	.rf-relays-tools {
+		display: flex;
+		gap: 6px;
+		text-transform: none;
+		letter-spacing: 0;
+	}
+	.rf-session-note {
+		margin: 0 0 8px;
+		color: var(--base5);
+		font-size: calc(var(--t-xs) - 1px);
+		line-height: 1.4;
+	}
+	.rf-tag {
+		font-size: calc(var(--t-xs) - 1px);
+		color: var(--base5);
+		border: 1px solid var(--panel-border);
+		padding: 0 5px;
+		border-radius: 2px;
+		margin-left: 6px;
+		white-space: nowrap;
+	}
+	.rf-tag--outside {
+		color: var(--orange, #cb4b16);
+		border-color: currentColor;
 	}
 	.rf-section-head--inactive {
 		margin-top: 10px;

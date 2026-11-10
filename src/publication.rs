@@ -1152,10 +1152,9 @@ impl<'a> PublicationEngine<'a> {
         }
         let read_relays = self.engine.relays();
         // Addressable coordinates carry their kind, so `addr_filters`
-        // yields single-kind filters and claims can route each one —
-        // a claimed kind goes to its claimants, everything else to the
-        // read set. No claims = every filter to every read relay, the
-        // shape this had before routing existed.
+        // yields single-kind filters: every filter goes to the read
+        // relays, and each also goes to the search relays serving its
+        // kind.
         let plan = self.engine.plan_resolve_fetch(&filters, &read_relays);
         if plan.is_empty() {
             return;
@@ -1401,10 +1400,8 @@ impl<'a> PublicationEngine<'a> {
 
         // 4. Open the operation with a structured summary so the
         //    confirm modal shows the DSL + filter list + composition.
-        //    Filters are single-kind by construction above, so claims can
-        //    route each one: a claimed kind goes to its claimants, the
-        //    rest to the read set. With no claims anywhere the plan is
-        //    every filter to every read relay — exactly the old shape.
+        //    Every filter goes to the read relays; each also goes to the
+        //    search relays serving its kind.
         let read_relays = self.engine.relays();
         let plan = self.engine.plan_resolve_fetch(&filters, &read_relays);
         let relays: Vec<String> = plan.iter().map(|(r, _)| r.clone()).collect();
@@ -2175,10 +2172,11 @@ impl<'a> PublicationEngine<'a> {
         let response = match policy {
             FetchPolicy::FetchAlways => {
                 // A relay timeline syncs from its own relay only; the
-                // composite feed and the local timeline use the read set.
+                // composite feed and the local timeline use the read set
+                // plus the search relays serving publication indexes.
                 let relays: Vec<String> = match &timeline {
                     RelayTimeline::Relay(url) => vec![url.clone()],
-                    _ => self.engine.relays(),
+                    _ => self.engine.relays_for_kinds(Some(&[30040])),
                 };
                 let label = match &timeline {
                     RelayTimeline::Relay(url) => format!("Feed sync — {url}"),
@@ -2991,14 +2989,11 @@ impl<'a> PublicationEngine<'a> {
                 resolved.coord = Some(addr.to_a_tag());
                 // Route through `get_events` (not `get_addressable`) so a
                 // FetchAlways fetch goes through the Confirm intent flow.
-                // The kind is known here, so resolve-kind claims apply:
-                // a claimed kind fetches from its claimants (mercury for
-                // publication/wiki kinds by default), everything else
-                // from the read set. This used to override with the
-                // `search` relay class — a misnomer; that class now
-                // serves actual search.
-                let claimed = self.engine.resolve_relays_for_kind(kind_int as u64);
-                let over = claimed.as_deref();
+                // No override: the engine composes the set from the
+                // filter's kind — the read relays plus the search relays
+                // serving it (mercury for publication/wiki kinds by
+                // default).
+                let over: Option<&[String]> = None;
                 let filter = serde_json::json!({
                     "kinds": [kind_int], "authors": [pubkey], "#d": [d_tag], "limit": 1,
                 });
@@ -3100,16 +3095,10 @@ impl<'a> PublicationEngine<'a> {
             let created = e.get("created_at").and_then(Value::as_i64).unwrap_or(0);
             (author_match as u8, created)
         };
-        // Wikilinks resolve to 30818 only, so the target kind is known
-        // exactly — which means the relay set is knowable exactly. If any
-        // relay claims 30818, ask the claimants instead of the whole read
-        // set (an explicit `relays` override still wins). See
+        // Wikilinks resolve to 30818 only. With no explicit `relays`
+        // override the engine composes the set from that kind: the read
+        // relays plus the search relays serving 30818. See
         // `docs/zettel/idea-relay-kind-routing.org`.
-        let claimed = relays
-            .is_none()
-            .then(|| self.engine.resolve_relays_for_kind(30818))
-            .flatten();
-        let relays = relays.or(claimed.as_deref());
         let mut best: std::collections::HashMap<String, Value> = std::collections::HashMap::new();
         // Merge one query pass's events into `best`, scored per topic.
         // Chunked so a link-dense article can't mint a filter with hundreds

@@ -93,6 +93,21 @@ pub async fn query_handler(
 pub struct EventQuery {
     pub policy: Option<String>,
     pub confirm: Option<bool>,
+    /// Comma-separated relay hints — the relays an `nevent` / `naddr`
+    /// names in its own TLVs. They join the proposed set for this fetch.
+    pub relays: Option<String>,
+}
+
+/// Parse a comma-separated `relays=` hint list into normalized URLs.
+fn parse_relay_hints(raw: Option<&str>) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for part in raw.unwrap_or_default().split(',') {
+        let url = crate::relay_url::normalize_relay_url(part.trim());
+        if !url.is_empty() && !out.contains(&url) {
+            out.push(url);
+        }
+    }
+    out
 }
 
 /// A single-event fetch is a user-initiated operation when
@@ -167,19 +182,24 @@ pub async fn get_event_handler(
     // lives on — often the only place a foreign thread's root can be
     // found. Hints join the proposed set (so the Confirm modal shows
     // them) and, ungated, the fetch set.
-    let hints = engine.relay_hints_for_target(&event_id);
+    let hints = crate::engine::union_relays(
+        parse_relay_hints(query.relays.as_deref()),
+        &engine.relay_hints_for_target(&event_id),
+    );
     let (policy, op, mode_confirm) = begin_single_fetch_gate(
         &engine,
         query.confirm.unwrap_or(false),
         policy,
         format!("Fetch event {}…", &event_id[..8]),
         vec![format!("Query the relays for event id {event_id}")],
-        crate::engine::union_relays(engine.relay_config().all_urls(), &hints),
+        crate::engine::union_relays(engine.relays_for_kinds(None), &hints),
     )
     .await;
     let chosen: Option<Vec<String>> = match &op {
         Some(o) => Some(o.relays().to_vec()),
-        None if !hints.is_empty() => Some(crate::engine::union_relays(engine.relays(), &hints)),
+        None if !hints.is_empty() => {
+            Some(crate::engine::union_relays(engine.relays_for_kinds(None), &hints))
+        }
         None => None,
     };
 
@@ -214,6 +234,8 @@ pub struct AddressablePath {
 pub struct AddressableQuery {
     pub policy: Option<String>,
     pub confirm: Option<bool>,
+    /// Comma-separated relay hints (an `naddr`'s own relay TLVs).
+    pub relays: Option<String>,
 }
 
 /// GET /api/v1/addressable/:kind/:pubkey/:d_tag
@@ -242,10 +264,13 @@ pub async fn get_addressable_handler(
     };
     // Same relay-hint treatment as the event endpoint, keyed by coordinate
     // (`A`/`a` tags on locally stored comments/highlights/bookshelves).
-    let hints = engine.relay_hints_for_target(&format!(
-        "{}:{}:{}",
-        params.kind, params.pubkey, params.d_tag
-    ));
+    let hints = crate::engine::union_relays(
+        parse_relay_hints(query.relays.as_deref()),
+        &engine.relay_hints_for_target(&format!(
+            "{}:{}:{}",
+            params.kind, params.pubkey, params.d_tag
+        )),
+    );
     let (policy, op, mode_confirm) = begin_single_fetch_gate(
         &engine,
         query.confirm.unwrap_or(false),
@@ -257,12 +282,15 @@ pub async fn get_addressable_handler(
             &params.pubkey[..8],
             params.d_tag
         )],
-        crate::engine::union_relays(engine.relay_config().all_urls(), &hints),
+        crate::engine::union_relays(engine.relays_for_kinds(Some(&[params.kind])), &hints),
     )
     .await;
     let chosen: Option<Vec<String>> = match &op {
         Some(o) => Some(o.relays().to_vec()),
-        None if !hints.is_empty() => Some(crate::engine::union_relays(engine.relays(), &hints)),
+        None if !hints.is_empty() => Some(crate::engine::union_relays(
+            engine.relays_for_kinds(Some(&[params.kind])),
+            &hints,
+        )),
         None => None,
     };
 
@@ -547,9 +575,22 @@ pub async fn search_handler(
         // Base list: explicit request relays, else the configured union;
         // `relay:` tokens always join so the modal shows everything the
         // query intends to touch.
+        // The composed set is the read relays plus the search relays
+        // serving each branch's kinds; an `nevent` / `naddr` / `nprofile`
+        // in the query adds the relays it names.
         let mut relays = req.relays.clone().unwrap_or_else(|| {
             if token_relays.is_empty() {
-                engine.relay_config().all_urls()
+                let mut composed: Vec<String> = Vec::new();
+                for branch in &branches {
+                    composed = crate::engine::union_relays(
+                        composed,
+                        &engine.relays_for_kinds(branch.kind_filter.as_deref()),
+                    );
+                }
+                crate::engine::union_relays(
+                    composed,
+                    &crate::search::entity_relay_hints(&req.query),
+                )
             } else {
                 Vec::new()
             }
@@ -591,15 +632,10 @@ pub async fn search_handler(
         }
     }
 
-    // Persist any user-introduced search relays into the fetch set so they
-    // stick for the session + across restarts (mirrors to config.toml too).
-    // No-op for relays already known — only brand-new ones are added.
-    if let Some(relays) = override_relays.as_deref() {
-        engine.persist_discovered_relays(relays);
-    }
-    if !token_relays.is_empty() {
-        engine.persist_discovered_relays(&token_relays);
-    }
+    // Relays the user brings into a search (typed in the modal, a
+    // `relay:` token, an entity's hint) are NOT written to the read set:
+    // a modal choice sticks for the session (`network::SessionRelays`),
+    // and a durable relay is added in relay management.
 
     // Once the user has approved a relay set in the confirm modal, that
     // set wins even over per-branch `relay:` tokens (they were already in
@@ -912,7 +948,7 @@ pub async fn resolve_nostrdown_handler(
             "Look up unresolved [[wikilink]] / {{wiki:}} topics on the relays".to_string(),
             "Ingest matches; links flip to resolved".to_string(),
         ],
-        engine.relay_config().all_urls(),
+        engine.relays_for_kinds(Some(&[30818])),
     )
     .await;
     let chosen: Option<Vec<String>> = op.as_ref().map(|o| o.relays().to_vec());
@@ -2603,15 +2639,13 @@ pub async fn fetch_profiles_handler(
         return Ok(Json(json!({ "fetched": 0, "total": req.pubkeys.len() })));
     }
 
-    // Phase 4: profile lookups now walk the indexer composition —
-    // primary (read [∪ indexer.default]) → indexer.fallback if zero.
-    // fetch_with_composition opens the SSE op (carrying the
-    // RequestSummary so the toast renders the structured query),
-    // streams per-relay RelayStatus events, and emits Completed at
-    // the end. The whole chain shows up as one toast with phases
-    // visible in the expanded modal.
-    let composition = engine.compose_discovery_phases("indexer");
+    // Profile lookups go to the read relays plus the search relays
+    // serving kind 0 (the former indexers). fetch_with_composition
+    // opens the SSE op (carrying the RequestSummary so the toast
+    // renders the structured query), streams per-relay RelayStatus
+    // events, and emits Completed at the end.
     let filter = json!({"kinds": [0], "authors": targets, "limit": targets.len()});
+    let composition = engine.compose_for_filters(std::slice::from_ref(&filter));
 
     let events = engine
         .fetch_with_composition(
@@ -2683,7 +2717,6 @@ pub async fn pull_user_data_handler(
     // local nostrdb.
     let kinds = [10002u64, 10007, 10086, 10088, 30002];
 
-    let composition = engine.compose_discovery_phases("indexer");
     // One filter for the 100xx replaceable kinds (1 event per
     // {author, kind}) and one for kind 30002 addressable (many per
     // author). We send them as a single REQ subscription with two
@@ -2699,10 +2732,12 @@ pub async fn pull_user_data_handler(
         "limit": 64,
     });
 
+    let filters = [filter_replaceable, filter_addressable];
+    let composition = engine.compose_for_filters(&filters);
     let events = engine
         .fetch_with_composition(
             &composition,
-            &[filter_replaceable, filter_addressable],
+            &filters,
             format!("Pull relay lists for @{}", short_id(&req.pubkey)),
             crate::network::FetchPattern::Profile,
             req.mode_confirm,
@@ -2778,25 +2813,12 @@ pub async fn fetch_relay_handler(
         Vec::new()
     };
 
-    // A search-typed fetch composes the `search` relay class — the
-    // class's actual purpose (it was historically consulted only by
-    // entity resolution, which now routes via resolve-kind claims).
-    // Per its documented semantics: `search.default` JOINS the caller's
-    // set, or REPLACES it when `exclusive.search` is on. Non-search
-    // fetches are untouched.
+    // A search-typed fetch (NIP-50 `search` filter) also goes to the
+    // search relays serving its kinds. Non-search fetches are untouched:
+    // the caller named its relays.
     if req.search.as_deref().is_some_and(|s| !s.is_empty()) {
-        let sd = engine.search_relays();
-        if !sd.is_empty() {
-            if engine.discovery_exclusive("search") {
-                targets = sd;
-            } else {
-                for url in sd {
-                    if !targets.contains(&url) {
-                        targets.push(url);
-                    }
-                }
-            }
-        }
+        let kinds = (!req.kinds.is_empty()).then_some(req.kinds.as_slice());
+        targets = crate::engine::union_relays(targets, &engine.search_relays_for_kinds(kinds));
     }
     if targets.is_empty() {
         return Err(EngineError::InvalidFilter("no relay specified".into()));
@@ -2869,10 +2891,6 @@ pub async fn fetch_relay_handler(
         Some(o) => o.relays().to_vec(),
         None => targets,
     };
-
-    // A relay the user brought into this fetch should stick: add any new ones
-    // to the working fetch set (persists to relays.json + config.toml).
-    engine.persist_discovered_relays(&fetch_relays);
 
     let mut count = 0usize;
     for relay_url in &fetch_relays {
@@ -3160,6 +3178,13 @@ pub struct FetchConfirmResponse {
     pub resolved: bool,
 }
 
+/// POST /api/v1/network/session/reset — forget this session's relay
+/// overrides (the confirm-modal choices that stick until restart).
+pub async fn reset_session_relays_handler(State(engine): State<AppState>) -> Json<Value> {
+    let had = engine.network().reset_session_relays();
+    Json(json!({ "reset": had, "session": engine.network().session_relays() }))
+}
+
 /// POST /api/v1/network/fetch-confirm
 ///
 /// The UI's reply to a confirm intent — body is a `ConfirmDecision`
@@ -3197,38 +3222,21 @@ pub struct ConfigUpdateRequest {
     pub add_to_named_set: Option<NamedSetMember>,
     /// Remove a relay URL from a named set.
     pub remove_from_named_set: Option<NamedSetMember>,
-    /// Replace a relay's resolve-kind claims (empty list clears them).
+    /// Replace a relay's search kinds (empty list clears them).
     /// See `docs/zettel/idea-relay-kind-routing.org`.
     pub set_relay_kinds: Option<SetRelayKinds>,
     /// Park (`active: false`) or unpark (`active: true`) a relay across
     /// all working sets, keeping its URL/roles/claims on file. The
     /// persistent counterpart of unchecking a relay in a confirm modal.
     pub set_relay_active: Option<SetRelayActive>,
-    /// Toggle the `exclusive` flag for a discovery class
-    /// (`"search"` or `"indexer"`). When ON, the engine bypasses read
-    /// relays for that class's lookup type and uses the class's
-    /// `.default` / `.fallback` sets only.
-    pub set_exclusive: Option<SetExclusive>,
-    /// `true` → merge the engine's well-known indexer/search default
-    /// URLs (`crate::relay::DEFAULT_INDEXERS` / `DEFAULT_SEARCH`)
-    /// into the current `default` tiers. Idempotent. Lets existing
-    /// users opt into the same set a fresh install gets.
-    pub restore_discovery_defaults: Option<bool>,
     /// `true` → reset ALL relay working sets to the first-boot default
     /// configuration (re-seed from `initial_relays`, broadcast cleared,
-    /// discovery classes back to built-ins). Named sets are preserved.
+    /// search relays + search kinds back to built-ins). Named sets are preserved.
     /// Local-only — never touches published relay-list events.
     pub reset_relays: Option<bool>,
 }
 
-#[derive(Debug, Deserialize)]
-pub struct SetExclusive {
-    /// `"search"` or `"indexer"`.
-    pub class: String,
-    pub value: bool,
-}
-
-/// Replace one relay's resolve-kind claims wholesale — the UI edits a
+/// Replace one relay's search kinds wholesale — the UI edits a
 /// list, so a full replacement avoids add/remove round trips and makes
 /// "clear all claims" expressible as an empty list.
 #[derive(Debug, Deserialize)]
@@ -3323,23 +3331,12 @@ pub async fn config_update_handler(
         }
     }
     if let Some(sk) = &req.set_relay_kinds {
-        if engine.set_relay_resolve_kinds(&sk.url, &sk.kinds) {
+        if engine.set_relay_search_kinds(&sk.url, &sk.kinds) {
             changed = true;
         }
     }
     if let Some(sa) = &req.set_relay_active {
         if engine.set_relay_active(&sa.url, sa.active) {
-            changed = true;
-        }
-    }
-    if let Some(ex) = &req.set_exclusive {
-        if engine.set_discovery_exclusive(&ex.class, ex.value) {
-            changed = true;
-        }
-    }
-    if req.restore_discovery_defaults.unwrap_or(false) {
-        let added = engine.merge_discovery_defaults();
-        if added > 0 {
             changed = true;
         }
     }
@@ -3723,27 +3720,14 @@ pub async fn relay_config_handler(State(engine): State<AppState>) -> Json<Value>
         "fetch": { "urls": rc.fetch.urls, "kinds": rc.fetch.kinds },
         "broadcast": { "urls": rc.broadcast.urls, "kinds": rc.broadcast.kinds },
         "auth": { "urls": rc.auth.urls, "kinds": rc.auth.kinds },
-        // Discovery classes split into default/fallback tiers. Add/remove
-        // them through /config/update with the dotted set names
-        // `search.default`, `search.fallback`, `indexer.default`,
-        // `indexer.fallback`.
-        "search": {
-            "default": rc.search.default,
-            "fallback": rc.search.fallback,
-        },
-        "indexer": {
-            "default": rc.indexer.default,
-            "fallback": rc.indexer.fallback,
-        },
-        "exclusive": {
-            "search": rc.exclusive.search,
-            "indexer": rc.exclusive.indexer,
-        },
+        // Search relays — a per-relay flag like the sets above (set
+        // name `search` in /config/update add_relay / remove_relay).
+        "search": { "urls": rc.search },
         "named_sets": rc.named_sets,
-        // Per-relay resolve-kind claims, keyed by normalized URL. Absent
-        // keys = no claims = resolution uses the read set. Edit through
+        // Per-relay search kinds, keyed by normalized URL: the kinds a
+        // search relay is asked for (absent = any kind). Edit through
         // /config/update with `set_relay_kinds`.
-        "resolve_kinds": rc.resolve_kinds,
+        "search_kinds": rc.search_kinds,
         // Parked relays: URL → the set memberships held when the relay
         // was deactivated. Presence = inactive. Toggle through
         // /config/update with `set_relay_active`.
@@ -4110,7 +4094,7 @@ pub async fn discussion_counts_handler(
         let proposed = req
             .relays
             .clone()
-            .unwrap_or_else(|| engine.relay_config().all_urls());
+            .unwrap_or_else(|| engine.relays_for_kinds(Some(&[1111, 9802])));
         match engine
             .begin_fetch_operation(
                 crate::network::FetchPattern::Thread,
@@ -4475,7 +4459,7 @@ pub async fn discussions_list_handler(
         };
         let proposed = crate::engine::union_relays(
             if relays_vec.is_empty() {
-                engine.relay_config().all_urls()
+                engine.relays_for_kinds(Some(&kinds))
             } else {
                 relays_vec.clone()
             },
@@ -4542,7 +4526,7 @@ pub async fn discussions_list_handler(
     let chosen_relays: Vec<String> = match &op {
         Some(o) => o.relays().to_vec(),
         None if relays_vec.is_empty() && !hints.is_empty() => {
-            crate::engine::union_relays(engine.relays(), &hints)
+            crate::engine::union_relays(engine.relays_for_kinds(Some(&kinds)), &hints)
         }
         None => relays_vec.clone(),
     };

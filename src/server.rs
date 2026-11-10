@@ -765,6 +765,10 @@ pub async fn start(opts: ServeOptions) -> anyhow::Result<RunningServer> {
             get(api::fetch_events_handler),
         )
         .route(
+            "/api/v1/network/session/reset",
+            post(api::reset_session_relays_handler),
+        )
+        .route(
             "/api/v1/network/fetch-confirm",
             post(api::fetch_confirm_handler),
         )

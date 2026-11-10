@@ -488,9 +488,10 @@ impl Engine {
         self.relay_config.read().unwrap().clone()
     }
 
-    /// Get fetch relay URLs (owned clone).
+    /// Get the read relay URLs (owned clone): the `fetch` set plus the
+    /// legacy `general` set, which the UI presents as read+write.
     pub fn relays(&self) -> Vec<String> {
-        self.relay_config.read().unwrap().fetch.urls.clone()
+        self.relay_config.read().unwrap().read_urls()
     }
 
     /// Get publish relay URLs (owned clone).
@@ -511,77 +512,80 @@ impl Engine {
         self.relay_config.read().unwrap().broadcast.urls.clone()
     }
 
-    /// Get search.default relay URLs (owned clone). The primary tier
-    /// for `~:` queries — joined into the fan-out (or replaces read
-    /// relays when `exclusive.search` is true).
+    /// Every search relay (owned clone), whatever its search kinds.
     pub fn search_relays(&self) -> Vec<String> {
-        self.relay_config.read().unwrap().search.default.clone()
+        self.relay_config.read().unwrap().search.clone()
     }
 
-    /// Get search.fallback relay URLs (owned clone). Consulted only
-    /// when the primary `~:` phase returns zero events.
-    pub fn search_fallback_relays(&self) -> Vec<String> {
-        self.relay_config.read().unwrap().search.fallback.clone()
+    /// Every relay's search kinds, keyed by normalized URL (owned clone).
+    pub fn relay_search_kinds(&self) -> std::collections::BTreeMap<String, Vec<u64>> {
+        self.relay_config.read().unwrap().search_kinds.clone()
     }
 
-    /// Get indexer.default relay URLs (owned clone). Discovery primary
-    /// for kind 0 / 10002 / metadata lookups (joins or replaces read
-    /// relays per `exclusive.indexer`).
-    pub fn indexer_relays(&self) -> Vec<String> {
-        self.relay_config.read().unwrap().indexer.default.clone()
+    /// The search relays that serve a fetch for `kinds`: those listing
+    /// one of them, plus every search relay with no kinds listed.
+    /// `None` is a filter naming no kind (an id lookup, a `#e` thread) —
+    /// only the unrestricted search relays qualify.
+    pub fn search_relays_for_kinds(&self, kinds: Option<&[u64]>) -> Vec<String> {
+        self.relay_config
+            .read()
+            .unwrap()
+            .search_relays_for_kinds(kinds)
     }
 
-    /// Get indexer.fallback relay URLs (owned clone). Consulted only
-    /// after the indexer.default phase returns zero events.
-    pub fn indexer_fallback_relays(&self) -> Vec<String> {
-        self.relay_config.read().unwrap().indexer.fallback.clone()
-    }
-
-    /// Every relay's resolve-kind claims, keyed by normalized URL (owned
-    /// clone). Empty map = nothing claimed = resolution behaves exactly
-    /// as it did before routing existed.
-    pub fn relay_resolve_kinds(&self) -> std::collections::BTreeMap<String, Vec<u64>> {
-        self.relay_config.read().unwrap().resolve_kinds.clone()
-    }
-
-    /// The relays claiming `kind`. Empty means nobody claimed it and the
-    /// caller should fall back to its usual set — that fallback is what
-    /// makes an unconfigured install a no-op. A claim is exclusive per
-    /// kind: when this returns non-empty, it IS the set to ask, whatever
-    /// the claimants' read/write policy.
-    ///
-    /// See `docs/zettel/idea-relay-kind-routing.org`.
-    pub fn relays_claiming_kind(&self, kind: u64) -> Vec<String> {
+    /// The relays to ask for `kinds` — **the** relay-selection rule: the
+    /// read relays plus the search relays serving those kinds. A union;
+    /// nothing is excluded. Session overrides are layered on top where a
+    /// fetch actually opens (`NetworkActivity::apply_session`).
+    pub fn relays_for_kinds(&self, kinds: Option<&[u64]>) -> Vec<String> {
         let rc = self.relay_config.read().unwrap();
-        rc.resolve_kinds
-            .iter()
-            .filter(|(url, kinds)| kinds.contains(&kind) && !rc.inactive.contains_key(*url))
-            .map(|(url, _)| url.clone())
-            .collect()
+        union_relays(rc.read_urls(), &rc.search_relays_for_kinds(kinds))
     }
 
-    /// Relays to ask when *resolving* events of `kind` — targeted
-    /// retrieval of a known coordinate or entity. `None` means nobody
-    /// claimed the kind and the caller keeps whatever set it would have
-    /// used, which is what makes an install with no claims a no-op.
-    ///
-    /// Deliberately NOT consulted for open-ended discovery (feeds,
-    /// searches, profile lookups): claims are specificity layered on the
-    /// read/write policy, not a replacement for it.
-    pub fn resolve_relays_for_kind(&self, kind: u64) -> Option<Vec<String>> {
-        let claimants = self.relays_claiming_kind(kind);
-        (!claimants.is_empty()).then_some(claimants)
+    /// [`Self::relays_for_kinds`] over already-built NIP-01 filters: the
+    /// read relays plus, per filter, the search relays serving its kinds.
+    pub fn relays_for_filters(&self, filters: &[Value]) -> Vec<String> {
+        let rc = self.relay_config.read().unwrap();
+        let mut out = rc.read_urls();
+        for filter in filters {
+            let kinds = filter_kinds(filter);
+            out = union_relays(out, &rc.search_relays_for_kinds(kinds.as_deref()));
+        }
+        out
+    }
+
+    /// The one-stage composition for a fetch of `filters`: the read
+    /// relays and, alongside them, the search relays serving the
+    /// filters' kinds (those not already in the read set).
+    pub fn compose_for_filters(&self, filters: &[Value]) -> crate::network::CompositionShape {
+        use crate::network::{Phase, PhaseStage};
+        let read = self.relays();
+        let search: Vec<String> = self
+            .relays_for_filters(filters)
+            .into_iter()
+            .filter(|u| !read.contains(u))
+            .collect();
+        let mut members = vec![(Phase::Read, read)];
+        if !search.is_empty() {
+            members.push((Phase::Search, search));
+        }
+        crate::network::CompositionShape {
+            phases: vec![PhaseStage {
+                label: "primary".into(),
+                members,
+                start_delay_ms: 0,
+            }],
+        }
     }
 
     /// Split already-built filters into the relays that should receive
     /// them, so one resolve pass can send different filters to different
     /// relays (a single REQ each — NIP-01 ORs filters).
     ///
-    /// A filter naming exactly one kind routes to that kind's claimants
-    /// when it has any. Everything else — multi-kind filters, filters
-    /// with no `kinds` at all (id lookups, `#e` threads), and unclaimed
-    /// kinds — goes to `fallback` untouched. Conservative on purpose: a
-    /// filter we can't attribute to one kind must not be narrowed.
+    /// Every filter goes to all of `fallback` (the caller's read set, or
+    /// an explicit override) and, in addition, to the search relays
+    /// serving its kinds — so a kind-narrowed search relay only ever
+    /// sees the filters it was listed for.
     ///
     /// Relay order is first-seen so the confirm modal's composition
     /// reads the way the work was planned.
@@ -598,13 +602,11 @@ impl Engine {
             }
         };
         for filter in filters {
-            let single_kind = match filter.get("kinds").and_then(Value::as_array) {
-                Some(kinds) if kinds.len() == 1 => kinds[0].as_u64(),
-                _ => None,
-            };
-            let targets = single_kind
-                .and_then(|k| self.resolve_relays_for_kind(k))
-                .unwrap_or_else(|| fallback.to_vec());
+            let kinds = filter_kinds(filter);
+            let targets = union_relays(
+                fallback.to_vec(),
+                &self.search_relays_for_kinds(kinds.as_deref()),
+            );
             for relay in &targets {
                 push(relay, filter);
             }
@@ -612,42 +614,38 @@ impl Engine {
         plan
     }
 
-    /// Replace a relay's resolve-kind claims and write through to
+    /// Replace a relay's search kinds and write through to
     /// `relays.json`. An empty slice clears them. Returns whether
-    /// anything changed.
-    ///
-    /// Claims are independent of set membership by design — a relay can
-    /// carry claims with no read/write/broadcast policy at all (the
-    /// resolution-only target), so this is the only thing that clears
-    /// them; leaving a working set does not.
-    pub fn set_relay_resolve_kinds(&self, url: &str, kinds: &[u64]) -> bool {
+    /// anything changed. Kinds only route while the relay has the
+    /// search flag, but are stored independently of it.
+    pub fn set_relay_search_kinds(&self, url: &str, kinds: &[u64]) -> bool {
         let url = crate::relay_url::normalize_relay_url(url);
         if url.is_empty() {
             return false;
         }
         let (changed, snapshot) = {
             let mut rc = self.relay_config.write().unwrap();
-            let before = rc.resolve_kinds.get(&url).cloned();
+            let before = rc.search_kinds.get(&url).cloned();
             if kinds.is_empty() {
-                rc.resolve_kinds.remove(&url);
+                rc.search_kinds.remove(&url);
             } else {
                 let mut k = kinds.to_vec();
                 k.sort_unstable();
                 k.dedup();
-                rc.resolve_kinds.insert(url.clone(), k);
+                rc.search_kinds.insert(url.clone(), k);
             }
-            let changed = before.as_deref() != rc.resolve_kinds.get(&url).map(|v| v.as_slice());
+            let changed = before.as_deref() != rc.search_kinds.get(&url).map(|v| v.as_slice());
             (changed, self.relay_sets_snapshot_locked(&rc))
         };
         if !changed {
             return false;
         }
         if let Err(e) = self.relay_store.save(&snapshot) {
-            warn!("Failed to persist resolve kinds ({url}): {e}");
+            warn!("Failed to persist search kinds ({url}): {e}");
         }
-        // A newly claimed kind changes where resolution looks, so sections
-        // we'd written off as unreachable (and wiki topics we memoized as
-        // missing) deserve another pass against the claimed relays.
+        // Changed kinds change where fetches look, so sections we'd
+        // written off as unreachable (and wiki topics we memoized as
+        // missing) deserve another pass.
         if let Ok(mut skip) = self.unreachable_sections.lock() {
             skip.clear();
         }
@@ -657,157 +655,6 @@ impl Engine {
         self.sections_dirty
             .store(true, std::sync::atomic::Ordering::Relaxed);
         true
-    }
-
-    /// Merge the engine's well-known default discovery URLs into the
-    /// current live config + persist. Idempotent — URLs already
-    /// present skip. Returns how many were added. Useful for existing
-    /// users whose relays.json predates the discovery defaults.
-    pub fn merge_discovery_defaults(&self) -> usize {
-        let mut snapshot = {
-            let cfg = self.relay_config.read().unwrap();
-            self.relay_sets_snapshot_locked(&cfg)
-        };
-        let added = snapshot.merge_discovery_defaults();
-        if added == 0 {
-            return 0;
-        }
-        // Apply back to in-memory config so the change is live.
-        {
-            let mut cfg = self.relay_config.write().unwrap();
-            cfg.search = snapshot.search.clone();
-            cfg.indexer = snapshot.indexer.clone();
-        }
-        if let Err(e) = self.relay_store.save(&snapshot) {
-            warn!("Failed to persist discovery defaults: {e}");
-        }
-        added
-    }
-
-    /// Read whether a discovery class is in `exclusive` mode (bypasses
-    /// read relays for that lookup type). `class` is `"search"` or
-    /// `"indexer"`. Unknown classes return false.
-    pub fn discovery_exclusive(&self, class: &str) -> bool {
-        let cfg = self.relay_config.read().unwrap();
-        match class {
-            "search" => cfg.exclusive.search,
-            "indexer" => cfg.exclusive.indexer,
-            _ => false,
-        }
-    }
-
-    /// Toggle the `exclusive` flag for a discovery class. Persists
-    /// through `relays.json` like other relay mutations. Returns true
-    /// if the value changed.
-    pub fn set_discovery_exclusive(&self, class: &str, value: bool) -> bool {
-        let snapshot = {
-            let mut cfg = self.relay_config.write().unwrap();
-            let slot = match class {
-                "search" => &mut cfg.exclusive.search,
-                "indexer" => &mut cfg.exclusive.indexer,
-                _ => return false,
-            };
-            if *slot == value {
-                return false;
-            }
-            *slot = value;
-            self.relay_sets_snapshot_locked(&cfg)
-        };
-        if let Err(e) = self.relay_store.save(&snapshot) {
-            warn!("Failed to persist exclusive flag ({class}={value}): {e}");
-        }
-        true
-    }
-
-    /// Build the execution composition for a discovery-class lookup
-    /// (`class = "indexer"` for profile / kind 10002 / addressable;
-    /// `class = "search"` for `~:`). Returns a `CompositionShape`
-    /// matching the per-class exclusive × default × fallback matrix in
-    /// the relay-management plan:
-    ///
-    /// - `exclusive=OFF` + `default` empty + `fallback` empty: one
-    ///   stage with `(Read, fetch_urls)`.
-    /// - `exclusive=OFF` + `default` non-empty: one stage with
-    ///   `[(Read, fetch_urls), (Class.Default, default_urls)]` —
-    ///   fired concurrently.
-    /// - `exclusive=OFF` + `fallback` non-empty: a SECOND stage with
-    ///   `(Class.Fallback, fallback_urls)` after primary returns 0.
-    /// - `exclusive=ON`: read relays are excluded; primary stage is
-    ///   `(Class.Default, default_urls)` (or fallback if default is
-    ///   empty); fallback stage follows.
-    pub fn compose_discovery_phases(&self, class: &str) -> crate::network::CompositionShape {
-        use crate::network::{Phase, PhaseStage};
-        let cfg = self.relay_config.read().unwrap();
-        let read_urls = cfg.fetch.urls.clone();
-        let (default_urls, fallback_urls, default_phase, fallback_phase, exclusive) = match class {
-            "search" => (
-                cfg.search.default.clone(),
-                cfg.search.fallback.clone(),
-                Phase::SearchDefault,
-                Phase::SearchFallback,
-                cfg.exclusive.search,
-            ),
-            "indexer" => (
-                cfg.indexer.default.clone(),
-                cfg.indexer.fallback.clone(),
-                Phase::IndexerDefault,
-                Phase::IndexerFallback,
-                cfg.exclusive.indexer,
-            ),
-            _ => {
-                return crate::network::CompositionShape {
-                    phases: vec![PhaseStage {
-                        label: "primary".into(),
-                        members: vec![(Phase::Read, read_urls)],
-                        start_delay_ms: 0,
-                    }],
-                };
-            }
-        };
-        drop(cfg);
-
-        let mut phases = Vec::new();
-        // Track whether the fallback set has already been consumed by
-        // the primary stage (the degenerate exclusive+empty-default
-        // case) so we don't re-add it as a second stage.
-        let mut fallback_consumed = false;
-
-        let primary_members: Vec<(Phase, Vec<String>)> = if exclusive {
-            // Read relays bypassed entirely.
-            if !default_urls.is_empty() {
-                vec![(default_phase, default_urls)]
-            } else if !fallback_urls.is_empty() {
-                fallback_consumed = true;
-                vec![(fallback_phase, fallback_urls.clone())]
-            } else {
-                // ON with nothing configured — degrade to read so
-                // the lookup still runs.
-                vec![(Phase::Read, read_urls.clone())]
-            }
-        } else {
-            // OFF: read is the floor; default joins concurrently.
-            let mut m = vec![(Phase::Read, read_urls.clone())];
-            if !default_urls.is_empty() {
-                m.push((default_phase, default_urls));
-            }
-            m
-        };
-
-        phases.push(PhaseStage {
-            label: "primary".into(),
-            members: primary_members,
-            start_delay_ms: 0,
-        });
-
-        if !fallback_urls.is_empty() && !fallback_consumed {
-            phases.push(PhaseStage {
-                label: "fallback".into(),
-                members: vec![(fallback_phase, fallback_urls)],
-                start_delay_ms: 0,
-            });
-        }
-
-        crate::network::CompositionShape { phases }
     }
 
     /// Execute a multi-phase fetch against a composition. Each phase
@@ -1104,14 +951,13 @@ impl Engine {
             broadcast: rc.broadcast.urls.clone(),
             auth: rc.auth.urls.clone(),
             search: rc.search.clone(),
-            indexer: rc.indexer.clone(),
+            legacy_indexer: Vec::new(),
             named: rc.named_sets.clone(),
-            resolve_kinds: rc.resolve_kinds.clone(),
+            search_kinds: rc.search_kinds.clone(),
             inactive: rc.inactive.clone(),
             // Snapshots come from a build that knows the current
             // defaults, so they always carry the current stamp.
             seed_version: crate::relay_store::CURRENT_SEED_VERSION,
-            exclusive: rc.exclusive.clone(),
         }
     }
 
@@ -1409,26 +1255,11 @@ impl Engine {
                 sets.set_active(&url, true);
                 rc.apply_persisted(&sets);
             }
-            // Per-URL mutual exclusion within a discovery class —
-            // moving a URL from default to fallback (or vice versa) is
-            // a single add() call.
-            if let Some(sibling) = crate::relay_store::discovery_sibling(set) {
-                if let Some(list) = rc.urls_mut(sibling) {
-                    list.retain(|u| u != &url);
-                }
-            }
             let urls = match rc.urls_mut(set) {
                 Some(urls) => urls,
                 None => return false,
             };
             if urls.iter().any(|u| u == &url) {
-                // Already a member — but the sibling-strip above may
-                // have changed state. Persist anyway so disk matches.
-                let snap = self.relay_sets_snapshot_locked(&rc);
-                drop(rc);
-                if let Err(e) = self.relay_store.save(&snap) {
-                    warn!("Failed to persist relay add ({set}/{url}): {e}");
-                }
                 return false;
             }
             urls.push(url.clone());
@@ -1453,7 +1284,7 @@ impl Engine {
     }
 
     /// Remove a relay URL from a working set. Mirror of `add_relay` —
-    /// accepts the same flat and dotted set names; mutates the
+    /// accepts the same set names; mutates the
     /// in-memory config and writes through to `relays.json`.
     pub fn remove_relay(&self, set: &str, url: &str) -> bool {
         let url = crate::relay_url::normalize_relay_url(url);
@@ -1482,8 +1313,8 @@ impl Engine {
 
     /// Reset the relay working sets to their first-boot default
     /// configuration: general/fetch/publish re-seeded from the config's
-    /// bootstrap `initial_relays`, broadcast emptied, discovery classes
-    /// back to the engine's well-known defaults, exclusive flags off.
+    /// bootstrap `initial_relays`, broadcast emptied, the search set and
+    /// search kinds back to the engine's well-known defaults.
     /// Named sets are PRESERVED — they're user-curated groupings, not
     /// functional configuration. Local-only like every relay mutation:
     /// writes through to `relays.json`, never touches published lists.
@@ -1501,14 +1332,12 @@ impl Engine {
             // a reset drops them like broadcast.
             rc.auth.urls = sets.auth.clone();
             rc.search = sets.search.clone();
-            rc.indexer = sets.indexer.clone();
-            rc.exclusive = sets.exclusive.clone();
-            // Claims are functional routing config: a reset returns them
-            // to the seeded defaults (mercury's publication/wiki claims),
-            // dropping any user-added ones — unlike named sets, which are
-            // user-curated groupings and survive. Mirror the seeded map
-            // into the live config so memory matches disk.
-            rc.resolve_kinds = sets.resolve_kinds.clone();
+            // Search kinds are functional routing config: a reset returns
+            // them to the seeded defaults, dropping any user-added ones —
+            // unlike named sets, which are user-curated groupings and
+            // survive. Mirror the seeded map into the live config so
+            // memory matches disk.
+            rc.search_kinds = sets.search_kinds.clone();
             sets
         };
         if let Err(e) = self.relay_store.save(&snapshot) {
@@ -1582,57 +1411,6 @@ impl Engine {
         }
     }
 
-    /// Add user-introduced relays (those brand new to general/fetch/publish)
-    /// into the working `fetch` set, persisting once to relays.json **and**
-    /// config.toml. Called from the fetch/search/confirm entry points so a
-    /// relay a user brings into a single operation sticks for the session and
-    /// across restarts, rather than being used once and discarded. Relays
-    /// already known to any set are left as-is (no set churn). Returns the
-    /// number newly added.
-    pub fn persist_discovered_relays(&self, urls: &[String]) -> usize {
-        let mut added = 0usize;
-        let snapshot = {
-            let mut rc = self.relay_config.write().unwrap();
-            let known: std::collections::HashSet<String> = rc
-                .general
-                .urls
-                .iter()
-                .chain(&rc.fetch.urls)
-                .chain(&rc.publish.urls)
-                .cloned()
-                .collect();
-            for url in urls {
-                let url = crate::relay_url::normalize_relay_url(url);
-                if url.is_empty() || known.contains(&url) {
-                    continue;
-                }
-                if let Some(list) = rc.urls_mut("fetch") {
-                    if !list.iter().any(|u| u == &url) {
-                        list.push(url);
-                        added += 1;
-                    }
-                }
-            }
-            if added == 0 {
-                return 0;
-            }
-            self.relay_sets_snapshot_locked(&rc)
-        };
-        if let Err(e) = self.relay_store.save(&snapshot) {
-            warn!("Failed to persist discovered relays: {e}");
-        }
-        self.persist_relay_sets_to_config();
-        if let Ok(mut skip) = self.unreachable_sections.lock() {
-            skip.clear();
-        }
-        if let Ok(mut misses) = self.wiki_topic_misses.lock() {
-            misses.clear();
-        }
-        self.sections_dirty
-            .store(true, std::sync::atomic::Ordering::Relaxed);
-        added
-    }
-
     /// Add an author to the follow list
     pub fn add_author(&mut self, author: &str) {
         let mut rc = self.relay_config.write().unwrap();
@@ -1701,6 +1479,13 @@ impl Engine {
         mode_confirm: bool,
     ) -> Result<Vec<Value>> {
         if !mode_confirm && !self.is_auto() {
+            return Ok(vec![]);
+        }
+        // A relay the user turned off this session is not contacted by
+        // any fetch — every relay read funnels through here, so this
+        // covers background passes too. (A confirm decision that
+        // re-checks the relay clears the override before its fetch runs.)
+        if self.network.session_excludes(relay_url) {
             return Ok(vec![]);
         }
         let summary = network::summarize_filters(filters);
@@ -2479,7 +2264,7 @@ impl Engine {
                 .push(d_tag.clone());
         }
 
-        let relays = self.relays();
+        let relays = self.relays_for_kinds(Some(&[30041]));
         let mut total_fetched = 0usize;
 
         // Per-chunk: ask the first relay, ingest, then re-check the
@@ -2638,11 +2423,16 @@ impl Engine {
         // Snapshot the fetch URLs once so the lock is released before
         // any .await. `override_relays` keeps borrowed semantics; the
         // local Vec lives long enough for the downstream call.
+        // With no override the engine composes the set itself: the read
+        // relays plus the search relays serving these filters' kinds,
+        // with this session's overrides on top.
         let owned_fetch: Vec<String>;
         let relays: &[String] = if let Some(o) = override_relays {
             o
         } else {
-            owned_fetch = self.relays();
+            owned_fetch = self
+                .network
+                .apply_session(self.relays_for_filters(&filters));
             &owned_fetch
         };
         let policy = if mode_confirm || self.is_auto() {
@@ -2749,15 +2539,11 @@ impl Engine {
             "#d": [d_tag],
             "limit": 1
         })];
-        // Resolving a coordinate is targeted retrieval of a known kind, so
-        // claims apply: if any relay claims this kind, it IS the set to
-        // ask. An explicit override wins over a claim (the caller said
-        // where — a `relay:` token or an entity's own TLV hint).
-        let claimed = override_relays
-            .is_none()
-            .then(|| self.resolve_relays_for_kind(kind))
-            .flatten();
-        let relays = override_relays.or(claimed.as_deref());
+        // No override → `get_events` composes the set from the filter's
+        // kind (read relays + the search relays serving it). An explicit
+        // override wins (the caller said where — a `relay:` token or an
+        // entity's own TLV hint).
+        let relays = override_relays;
         let response = self
             .get_events_with_options(filters, policy, relays, mode_confirm)
             .await?;
@@ -3119,32 +2905,12 @@ impl Engine {
             return 0;
         }
 
-        // Profiles can live on any configured relay — query the union of
-        // the general / fetch / publish sets so an empty `general` set
-        // doesn't silently disable the backfill. With `exclusive.indexer`
-        // ON the indexers REPLACE that set for profile lookups, which is
-        // what the flag has always meant.
-        let (relays, indexer_tiers) = {
-            let rc = self.relay_config.read().unwrap();
-            let primary = if rc.exclusive.indexer && !rc.indexer.default.is_empty() {
-                rc.indexer.default.clone()
-            } else {
-                rc.all_urls()
-            };
-            // The index role in one line: profile metadata to drop to
-            // when the primary set misses. Tiers are consulted in order
-            // and only while authors are still missing.
-            let tiers: Vec<Vec<String>> = [rc.indexer.default.clone(), rc.indexer.fallback.clone()]
-                .into_iter()
-                .map(|tier| {
-                    tier.into_iter()
-                        .filter(|u| !primary.contains(u))
-                        .collect::<Vec<_>>()
-                })
-                .filter(|tier: &Vec<String>| !tier.is_empty())
-                .collect();
-            (primary, tiers)
-        };
+        // Profiles come from the read relays plus the search relays
+        // serving kind 0 (purplepag.es and friends by default), with
+        // this session's overrides on top.
+        let relays = self
+            .network
+            .apply_session(self.relays_for_kinds(Some(&[0])));
         if relays.is_empty() {
             warn!(
                 "Profile backfill: {} author(s) missing a kind-0, but no relays are configured",
@@ -3192,28 +2958,7 @@ impl Engine {
                 .fold(0usize, |acc, n| async move { acc + n })
                 .await
         };
-        let mut fetched = fanout(relays, filter).await;
-
-        // Still missing? Drop to the index. Each tier runs only while
-        // authors remain unresolved, so a hit in `default` means
-        // `fallback` is never contacted.
-        for tier in indexer_tiers {
-            let still_missing = query::profiles_missing(&self.ndb, &missing);
-            if still_missing.is_empty() {
-                break;
-            }
-            debug!(
-                "Profile backfill: {} author(s) still missing — dropping to {} indexer relay(s)",
-                still_missing.len(),
-                tier.len()
-            );
-            let filter = serde_json::json!({
-                "kinds": [0],
-                "authors": still_missing,
-                "limit": still_missing.len(),
-            });
-            fetched += fanout(tier, filter).await;
-        }
+        let fetched = fanout(relays, filter).await;
 
         info!(
             "Profile backfill: ingested {} kind-0 event(s) for {} missing author(s)",
@@ -3776,6 +3521,18 @@ pub fn relay_hints_in_events(events: &[Value], names: &[&str], target: &str) -> 
         }
     }
     out
+}
+
+/// The kinds a NIP-01 filter names, or `None` when it names none (an id
+/// lookup, a `#e` thread) — the input to the search-kinds rule.
+pub fn filter_kinds(filter: &Value) -> Option<Vec<u64>> {
+    let kinds: Vec<u64> = filter
+        .get("kinds")?
+        .as_array()?
+        .iter()
+        .filter_map(Value::as_u64)
+        .collect();
+    (!kinds.is_empty()).then_some(kinds)
 }
 
 /// `base` followed by every `extra` not already present (normalized
@@ -4554,7 +4311,10 @@ mod tests {
         let sets = store.load().expect("load");
         assert_eq!(sets.general, vec!["wss://seed.relay".to_string()]);
         assert!(sets.broadcast.is_empty());
-        assert!(!sets.indexer.default.is_empty(), "built-in indexers restored");
+        assert!(
+            sets.search.contains(&"wss://purplepag.es".to_string()),
+            "built-in profile relays restored as search relays"
+        );
         assert_eq!(sets.named.len(), 1);
         assert_eq!(sets.named[0].d_tag, "research");
         assert_eq!(sets.named[0].urls, vec!["wss://curated.relay".to_string()]);
@@ -4591,23 +4351,25 @@ mod tests {
         assert!(!engine.has_cached_profile(&unknown));
     }
 
-    /// With no claims anywhere, planning is the identity: every filter to
-    /// every read relay. This is the compat floor the whole routing
-    /// feature rests on — an unconfigured install must fetch exactly what
-    /// it fetched before.
+    /// Drop the seeded search relays so a test starts from read relays
+    /// only.
+    fn clear_search_relays(engine: &Engine) {
+        for url in engine.search_relays() {
+            engine.remove_relay("search", &url);
+        }
+    }
+
+    /// With no search relays, planning is the identity: every filter to
+    /// every read relay.
     #[tokio::test]
-    async fn test_plan_resolve_fetch_is_a_noop_without_claims() {
+    async fn test_plan_resolve_fetch_is_the_read_set_without_search_relays() {
         let temp_dir = tempdir().expect("temp dir");
         let cfg = RelayConfig {
             initial_relays: vec!["wss://a.relay".to_string(), "wss://b.relay".to_string()],
             ..RelayConfig::default()
         };
         let engine = Engine::with_relay_config(temp_dir.path(), &cfg).expect("engine");
-        // First boot seeds mercury's default claims — drop them so this
-        // test exercises the genuinely-unclaimed baseline.
-        for (url, _) in crate::relay::DEFAULT_RESOLVE_CLAIMS {
-            engine.set_relay_resolve_kinds(url, &[]);
-        }
+        clear_search_relays(&engine);
 
         let filters = vec![
             json!({ "kinds": [30818], "#d": ["ada-lovelace"] }),
@@ -4620,37 +4382,53 @@ mod tests {
         for (_, fs) in &plan {
             assert_eq!(fs.len(), 2, "every relay still receives every filter");
         }
-        assert!(engine.resolve_relays_for_kind(30818).is_none());
+        assert_eq!(engine.relays_for_kinds(Some(&[30818])), read);
     }
 
-    /// A claim is exclusive per kind: the claimed filter goes to the
-    /// claimant ONLY (the read relays drop out of that filter), while an
-    /// unclaimed kind in the same pass still fans out to the read set.
+    /// Search kinds are a union with the read set: a search relay joins
+    /// for the kinds it lists and sees only those filters, while the
+    /// read relays keep receiving everything.
     #[tokio::test]
-    async fn test_claimed_kind_routes_to_claimants_only() {
+    async fn test_search_kinds_join_the_read_set() {
         let temp_dir = tempdir().expect("temp dir");
         let cfg = RelayConfig {
             initial_relays: vec!["wss://a.relay".to_string(), "wss://b.relay".to_string()],
             ..RelayConfig::default()
         };
         let engine = Engine::with_relay_config(temp_dir.path(), &cfg).expect("engine");
-        // Drop the seeded default claims (mercury) — this test isolates a
-        // single claimant.
-        for (url, _) in crate::relay::DEFAULT_RESOLVE_CLAIMS {
-            engine.set_relay_resolve_kinds(url, &[]);
-        }
+        clear_search_relays(&engine);
 
-        // The document relay: claims wiki articles, joins no working set.
-        assert!(engine.set_relay_resolve_kinds("wss://docs.example", &[30818]));
+        // Kinds alone route nothing — the search flag is what counts.
+        assert!(engine.set_relay_search_kinds("wss://docs.example", &[30818]));
+        assert_eq!(engine.relays_for_kinds(Some(&[30818])), engine.relays());
+        assert!(engine.add_relay("search", "wss://docs.example"));
+        // An unrestricted search relay serves any kind, and kindless filters.
+        assert!(engine.add_relay("search", "wss://any.example"));
+
         assert_eq!(
-            engine.resolve_relays_for_kind(30818),
-            Some(vec!["wss://docs.example".to_string()])
+            engine.relays_for_kinds(Some(&[30818])),
+            vec![
+                "wss://a.relay".to_string(),
+                "wss://b.relay".to_string(),
+                "wss://docs.example".to_string(),
+                "wss://any.example".to_string(),
+            ]
+        );
+        assert_eq!(
+            engine.relays_for_kinds(None),
+            vec![
+                "wss://a.relay".to_string(),
+                "wss://b.relay".to_string(),
+                "wss://any.example".to_string(),
+            ]
         );
 
         let wiki = json!({ "kinds": [30818], "#d": ["ada-lovelace"] });
         let section = json!({ "kinds": [30041], "authors": ["abc"] });
+        let by_id = json!({ "ids": ["deadbeef"] });
         let read = engine.relays();
-        let plan = engine.plan_resolve_fetch(&[wiki.clone(), section.clone()], &read);
+        let filters = [wiki.clone(), section.clone(), by_id.clone()];
+        let plan = engine.plan_resolve_fetch(&filters, &read);
 
         let for_relay = |url: &str| -> Vec<Value> {
             plan.iter()
@@ -4658,37 +4436,30 @@ mod tests {
                 .map(|(_, fs)| fs.clone())
                 .unwrap_or_default()
         };
-        assert_eq!(for_relay("wss://docs.example"), vec![wiki]);
-        // The read relays are asked for the unclaimed section kind, and
-        // NOT for the claimed wiki kind — that is the narrowing.
-        assert_eq!(for_relay("wss://a.relay"), vec![section.clone()]);
-        assert_eq!(for_relay("wss://b.relay"), vec![section]);
+        assert_eq!(for_relay("wss://docs.example"), vec![wiki.clone()]);
+        let all = vec![wiki, section, by_id];
+        assert_eq!(for_relay("wss://a.relay"), all);
+        assert_eq!(for_relay("wss://b.relay"), all);
+        assert_eq!(for_relay("wss://any.example"), all);
+        // The whole-operation set is the same union.
+        assert_eq!(engine.relays_for_filters(&filters).len(), 4);
 
-        // Clearing the claim restores the previous behavior exactly.
-        assert!(engine.set_relay_resolve_kinds("wss://docs.example", &[]));
-        assert!(engine.resolve_relays_for_kind(30818).is_none());
-    }
+        // The composition shows the search relays as their own member.
+        let comp = engine.compose_for_filters(&filters[..1]);
+        assert_eq!(comp.phases.len(), 1);
+        assert_eq!(comp.phases[0].members[0].0, crate::network::Phase::Read);
+        assert_eq!(
+            comp.phases[0].members[1],
+            (
+                crate::network::Phase::Search,
+                vec!["wss://docs.example".to_string(), "wss://any.example".to_string()]
+            )
+        );
 
-    /// Filters we can't attribute to a single kind are never narrowed:
-    /// multi-kind filters and kindless ones (id lookups, `#e` threads)
-    /// keep going to the fallback set even when a claim exists.
-    #[tokio::test]
-    async fn test_unattributable_filters_are_never_narrowed() {
-        let temp_dir = tempdir().expect("temp dir");
-        let cfg = RelayConfig {
-            initial_relays: vec!["wss://a.relay".to_string()],
-            ..RelayConfig::default()
-        };
-        let engine = Engine::with_relay_config(temp_dir.path(), &cfg).expect("engine");
-        assert!(engine.set_relay_resolve_kinds("wss://docs.example", &[30818]));
-
-        let multi = json!({ "kinds": [30818, 30041] });
-        let kindless = json!({ "ids": ["deadbeef"] });
-        let read = engine.relays();
-        let plan = engine.plan_resolve_fetch(&[multi.clone(), kindless.clone()], &read);
-
-        assert_eq!(plan.len(), 1, "only the fallback relay is targeted");
-        assert_eq!(plan[0].0, "wss://a.relay");
-        assert_eq!(plan[0].1, vec![multi, kindless]);
+        // Parking the search relay takes it out of every fetch.
+        assert!(engine.set_relay_active("wss://docs.example", false));
+        assert!(!engine
+            .relays_for_kinds(Some(&[30818]))
+            .contains(&"wss://docs.example".to_string()));
     }
 }

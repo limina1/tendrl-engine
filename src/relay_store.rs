@@ -37,7 +37,12 @@ pub enum RelayStoreError {
 /// Current default-seed generation. Bump when new engine defaults
 /// should reach existing installs; add the corresponding merge step in
 /// [`RelaySets::apply_default_upgrades`].
-pub const CURRENT_SEED_VERSION: u32 = 1;
+pub const CURRENT_SEED_VERSION: u32 = 2;
+
+/// The kinds a former *indexer* relay (purplepag.es etc.) is asked for
+/// now that the indexer class is gone: an indexer is just a search relay
+/// narrowed to profile metadata and relay lists.
+pub const INDEXER_KINDS: &[u64] = &[0, 3, 10002, 10007, 10088, 30002];
 
 /// The working relay URL lists. Serialized as
 /// `{"general":[…],"fetch":[…],"publish":[…],"search":{"default":[…],"fallback":[…]},…}`
@@ -63,21 +68,23 @@ pub struct RelaySets {
     /// See `docs/nip42-relay-auth-plan.org`.
     #[serde(default)]
     pub auth: Vec<String>,
-    /// Search-capable relays (NIP-50). Split into `default` (joined
-    /// into every primary `~:` fan-out) and `fallback` (consulted only
-    /// when default returns zero / errors / times out). When
-    /// `exclusive=true` at the engine level, `default` REPLACES read
-    /// relays for `~:` queries rather than joining them.
-    /// Backward-compat: a flat `Vec<String>` deserializes into
-    /// `default` with empty `fallback`.
-    #[serde(default, deserialize_with = "deserialize_discovery_class")]
-    pub search: DiscoveryClass,
-    /// Indexer / discovery relays (purplepag.es etc.). Same shape as
-    /// `search`: `default` joins (or replaces, with `exclusive`) the
-    /// primary read fan-out for kind 0 / 10002 lookups; `fallback`
-    /// kicks in only on a default-miss.
-    #[serde(default, deserialize_with = "deserialize_discovery_class")]
-    pub indexer: DiscoveryClass,
+    /// Search relays — a per-relay flag like read/write. A search relay
+    /// joins the read set for every query intent whose kinds it serves
+    /// (see `search_kinds`); with no kinds listed it serves any kind.
+    /// Backward-compat: the old `{"default": […], "fallback": […]}`
+    /// two-tier shape deserializes into the union.
+    #[serde(default, deserialize_with = "deserialize_flat_or_tiers")]
+    pub search: Vec<String>,
+    /// Legacy `indexer` class, read only so
+    /// [`RelaySets::apply_default_upgrades`] can fold it into `search`
+    /// + `search_kinds`. Never written back.
+    #[serde(
+        default,
+        rename = "indexer",
+        skip_serializing,
+        deserialize_with = "deserialize_flat_or_tiers"
+    )]
+    pub legacy_indexer: Vec<String>,
     /// User-defined named relay sets — NIP-51 kind 30002. Thematic
     /// groupings ("research", "friends-only", "high-priority") that
     /// can be published as kind 30002 for sharing or backup. Orthogonal
@@ -85,29 +92,26 @@ pub struct RelaySets {
     /// combination of classes AND any number of named sets.
     #[serde(default)]
     pub named: Vec<NamedRelaySet>,
-    /// Per-relay **resolve kinds**: the event kinds a relay is claimed to
-    /// serve, keyed by normalized URL. Specificity layered on top of the
-    /// read/write/broadcast policy — it governs *resolution* (targeted
-    /// retrieval of a known coordinate/entity), not general traffic.
+    /// Per-relay **search kinds**: the event kinds a search relay is
+    /// asked for, keyed by normalized URL. They narrow the `search` flag:
+    /// a fetch for kind K goes to the read relays **plus** every search
+    /// relay listing K (a union — nothing is excluded). A search relay
+    /// with no entry serves any kind; a filter naming no kind reaches
+    /// only those unrestricted search relays. Kinds stay on file when
+    /// the search flag is off, but are ignored.
     ///
-    /// A claim is exclusive per kind: resolving kind K goes to the relays
-    /// listing K, whatever their policy. When no relay lists K, resolution
-    /// falls back to the read set — so an empty map is exactly today's
-    /// behavior. A URL with claims but no policy is a resolution-only
-    /// target: never in feeds, searches, or profile lookups.
-    ///
+    /// (Formerly `resolve_kinds`, an exclusive per-kind claim.)
     /// See `docs/zettel/idea-relay-kind-routing.org`.
-    #[serde(default)]
-    pub resolve_kinds: std::collections::BTreeMap<String, Vec<u64>>,
+    #[serde(default, alias = "resolve_kinds")]
+    pub search_kinds: std::collections::BTreeMap<String, Vec<u64>>,
     /// Inactive relays: URL → the set names it belonged to when it was
     /// deactivated (`"general"`, `"fetch"`, `"publish"`, `"broadcast"`,
-    /// `"search.default"`, `"search.fallback"`, `"indexer.default"`,
-    /// `"indexer.fallback"`). Presence in this map IS the inactive state:
+    /// `"auth"`, `"search"`). Presence in this map IS the inactive state:
     /// the URL is removed from those working sets (so every engine
     /// consumer skips it with zero filtering) and reactivation re-adds it
     /// to exactly the recorded sets. This is what lets the user park a
     /// relay — keep its URL and role configuration — without deleting it.
-    /// Claims (`resolve_kinds`) are retained but ignored while inactive.
+    /// Search kinds are retained but ignored while inactive.
     #[serde(default)]
     pub inactive: std::collections::BTreeMap<String, Vec<String>>,
     /// Highest default-seed generation this file has absorbed. Lets new
@@ -117,65 +121,12 @@ pub struct RelaySets {
     /// bumped. Files predating the field deserialize as 0.
     #[serde(default)]
     pub seed_version: u32,
-    /// Per-class `exclusive` toggle for discovery classes. When ON for
-    /// a class, the engine bypasses read relays entirely for that
-    /// lookup type — primary = `class.default` only, fallback =
-    /// `class.fallback` only. Keyed by class name (`"search"`,
-    /// `"indexer"`). Default OFF for both = read relays are the
-    /// primary floor.
-    #[serde(default)]
-    pub exclusive: ExclusiveFlags,
 }
 
-/// Two-tier membership within a discovery class (search / indexer).
-///
-/// `default` URLs join (or replace, with `exclusive`) the primary
-/// fan-out. `fallback` URLs are only consulted when the primary
-/// returned zero events. The two are mutually exclusive *per URL per
-/// class*: a relay is either default OR fallback for `search`, not
-/// both. Across classes the modes are independent — the same URL can
-/// be `search.default` AND `indexer.fallback` simultaneously.
-///
-/// Empty `default` AND empty `fallback` for a class = OFF, no extra
-/// fan-out for that lookup type. The read relays handle everything.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct DiscoveryClass {
-    #[serde(default)]
-    pub default: Vec<String>,
-    #[serde(default)]
-    pub fallback: Vec<String>,
-}
-
-impl DiscoveryClass {
-    pub fn is_empty(&self) -> bool {
-        self.default.is_empty() && self.fallback.is_empty()
-    }
-
-    /// True if `url` appears in either tier.
-    pub fn contains(&self, url: &str) -> bool {
-        self.default.iter().any(|u| u == url)
-            || self.fallback.iter().any(|u| u == url)
-    }
-
-    /// Strip `url` from both tiers. Returns true if anything was
-    /// removed. Used by `add` to enforce mutual exclusion: switching a
-    /// URL from default → fallback (or back) requires first removing
-    /// it from its current tier.
-    pub fn remove_url(&mut self, url: &str) -> bool {
-        let before_d = self.default.len();
-        let before_f = self.fallback.len();
-        self.default.retain(|u| u != url);
-        self.fallback.retain(|u| u != url);
-        self.default.len() != before_d || self.fallback.len() != before_f
-    }
-}
-
-/// Backward-compat deserialization: accepts both the new
-/// `{"default": [...], "fallback": [...]}` shape AND a legacy flat
-/// `[...]` array. Flat arrays are promoted into `.default`, leaving
-/// `.fallback` empty — preserving prior behavior so older
-/// `relays.json` files keep working.
-fn deserialize_discovery_class<'de, D>(d: D) -> std::result::Result<DiscoveryClass, D::Error>
+/// Backward-compat deserialization for a flat relay list that used to be
+/// a two-tier `{"default": [...], "fallback": [...]}` class: accepts
+/// both shapes and yields the union, default tier first.
+fn deserialize_flat_or_tiers<'de, D>(d: D) -> std::result::Result<Vec<String>, D::Error>
 where
     D: serde::Deserializer<'de>,
 {
@@ -183,7 +134,7 @@ where
     #[serde(untagged)]
     enum Form {
         Flat(Vec<String>),
-        Structured {
+        Tiers {
             #[serde(default)]
             default: Vec<String>,
             #[serde(default)]
@@ -191,22 +142,33 @@ where
         },
     }
     Ok(match Form::deserialize(d)? {
-        Form::Flat(urls) => DiscoveryClass {
-            default: urls,
-            fallback: Vec::new(),
-        },
-        Form::Structured { default, fallback } => DiscoveryClass { default, fallback },
+        Form::Flat(urls) => urls,
+        Form::Tiers { default, mut fallback } => {
+            let mut out = default;
+            out.append(&mut fallback);
+            out
+        }
     })
 }
 
-/// `exclusive` toggles per discovery class. Drives the
-/// composition-matrix interpretation in `Engine::profile_lookup` etc.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct ExclusiveFlags {
-    #[serde(default)]
-    pub search: bool,
-    #[serde(default)]
-    pub indexer: bool,
+/// The search relays that serve a fetch for `kinds` — the pure rule
+/// behind `Engine::search_relays_for_kinds`. `kinds = None` is a filter
+/// naming no kind (an id lookup, a `#e` thread): only unrestricted
+/// search relays qualify. Order follows `search`.
+pub fn search_relays_matching(
+    search: &[String],
+    search_kinds: &std::collections::BTreeMap<String, Vec<u64>>,
+    kinds: Option<&[u64]>,
+) -> Vec<String> {
+    search
+        .iter()
+        .filter(|url| match search_kinds.get(*url) {
+            None => true,
+            Some(listed) if listed.is_empty() => true,
+            Some(listed) => kinds.is_some_and(|ks| ks.iter().any(|k| listed.contains(k))),
+        })
+        .cloned()
+        .collect()
 }
 
 /// A NIP-51 kind 30002 relay set — user-named grouping of relays.
@@ -223,15 +185,14 @@ pub struct NamedRelaySet {
 
 impl RelaySets {
     /// Seed read/write/general sets from the bootstrap `initial_relays`
-    /// list, and seed the discovery classes with the engine's
-    /// well-known defaults (`crate::relay::DEFAULT_INDEXERS` /
-    /// `DEFAULT_SEARCH`) so a fresh install has a working indexer
-    /// fallback chain without manual configuration. Broadcast stays
-    /// empty — aggregators are opt-in per-event.
+    /// list, and seed the search set with the engine's well-known
+    /// profile/relay-list relays (`crate::relay::DEFAULT_INDEXERS`,
+    /// narrowed to [`INDEXER_KINDS`]) plus the default search-kind
+    /// relays, so a fresh install can find profiles without manual
+    /// configuration. Broadcast stays empty — aggregators are opt-in.
     ///
-    /// Discovery defaults only apply on **first boot** (when no
-    /// `relays.json` exists yet); subsequent loads honor the user's
-    /// stored state, including explicit-empty.
+    /// Only applies on **first boot** (no `relays.json` yet); later
+    /// loads honor the user's stored state, including explicit-empty.
     pub fn seed_from_initial(initial: &[String]) -> Self {
         let normalized = normalize_dedup(initial);
         // Publish gets the same seed minus the read-only defaults —
@@ -246,110 +207,144 @@ impl RelaySets {
             .filter(|u| !read_only.contains(u))
             .cloned()
             .collect();
-        let default_indexers: Vec<String> = crate::relay::DEFAULT_INDEXERS
-            .iter()
-            .map(|s| s.to_string())
-            .collect();
-        let default_search: Vec<String> = crate::relay::DEFAULT_SEARCH
-            .iter()
-            .map(|s| s.to_string())
-            .collect();
-        let mut resolve_kinds = std::collections::BTreeMap::new();
-        for (url, kinds) in crate::relay::DEFAULT_RESOLVE_CLAIMS {
-            let key = crate::relay_url::normalize_relay_url(url);
-            if !key.is_empty() {
-                resolve_kinds.insert(key, kinds.to_vec());
-            }
-        }
-        Self {
+        let mut sets = Self {
             general: normalized.clone(),
             fetch: normalized,
             publish,
-            broadcast: Vec::new(),
-            auth: Vec::new(),
-            search: DiscoveryClass {
-                default: normalize_dedup(&default_search),
-                fallback: Vec::new(),
-            },
-            indexer: DiscoveryClass {
-                default: normalize_dedup(&default_indexers),
-                fallback: Vec::new(),
-            },
-            named: Vec::new(),
-            resolve_kinds,
-            inactive: std::collections::BTreeMap::new(),
             seed_version: CURRENT_SEED_VERSION,
-            exclusive: ExclusiveFlags::default(),
+            ..Self::default()
+        };
+        for url in crate::relay::DEFAULT_SEARCH {
+            sets.add_search_relay(url, &[]);
+        }
+        for (url, kinds) in crate::relay::DEFAULT_RESOLVE_CLAIMS {
+            sets.add_search_relay(url, kinds);
+        }
+        for url in crate::relay::DEFAULT_INDEXERS {
+            sets.add_search_relay(url, INDEXER_KINDS);
+        }
+        sets
+    }
+
+    /// Put `url` in the search set and merge `kinds` into its search
+    /// kinds (empty = leave it unrestricted / as it is). Used by the
+    /// seed and the legacy migrations; no-op on an empty URL.
+    fn add_search_relay(&mut self, url: &str, kinds: &[u64]) {
+        let key = crate::relay_url::normalize_relay_url(url);
+        if key.is_empty() {
+            return;
+        }
+        if let Some(memberships) = self.inactive.get_mut(&key) {
+            // Parked: record the role so reactivation restores it.
+            if !memberships.iter().any(|m| m == "search") {
+                memberships.push("search".to_string());
+            }
+        } else if !self.search.contains(&key) {
+            self.search.push(key.clone());
+        }
+        if !kinds.is_empty() {
+            let entry = self.search_kinds.entry(key).or_default();
+            entry.extend_from_slice(kinds);
+            entry.sort_unstable();
+            entry.dedup();
         }
     }
 
     /// Merge defaults that postdate this file's `seed_version` — the
-    /// additive path by which new engine defaults reach existing
-    /// installs. Never removes or reorders anything the user has; a
-    /// default the user deleted after a previous upgrade won't return
-    /// unless a LATER seed generation re-adds it. Returns true when
-    /// anything changed (caller persists).
+    /// additive path by which new engine defaults (and model changes)
+    /// reach existing installs. Never removes or reorders anything the
+    /// user has; a default the user deleted after a previous upgrade
+    /// won't return unless a LATER seed generation re-adds it. Returns
+    /// true when anything changed (caller persists).
     pub fn apply_default_upgrades(&mut self) -> bool {
         if self.seed_version >= CURRENT_SEED_VERSION {
             return false;
         }
-        // Generation 1 (2026-08-18): theforest + thecitadel + mercury
-        // read defaults, thecitadel as a publish default, mercury's
-        // publication/wiki resolve claims.
-        let read_only: Vec<String> = crate::relay::DEFAULT_READ_ONLY
-            .iter()
-            .map(|u| crate::relay_url::normalize_relay_url(u))
-            .collect();
-        for url in crate::relay::DEFAULT_RELAYS {
-            let key = crate::relay_url::normalize_relay_url(url);
-            if key.is_empty() {
-                continue;
-            }
-            for list in [&mut self.general, &mut self.fetch] {
-                if !list.contains(&key) {
-                    list.push(key.clone());
+        if self.seed_version < 1 {
+            // Generation 1 (2026-08-18): theforest + thecitadel + mercury
+            // read defaults, thecitadel as a publish default, mercury's
+            // publication/wiki kinds.
+            let read_only: Vec<String> = crate::relay::DEFAULT_READ_ONLY
+                .iter()
+                .map(|u| crate::relay_url::normalize_relay_url(u))
+                .collect();
+            for url in crate::relay::DEFAULT_RELAYS {
+                let key = crate::relay_url::normalize_relay_url(url);
+                if key.is_empty() {
+                    continue;
+                }
+                for list in [&mut self.general, &mut self.fetch] {
+                    if !list.contains(&key) {
+                        list.push(key.clone());
+                    }
+                }
+                if !read_only.contains(&key) && !self.publish.contains(&key) {
+                    self.publish.push(key.clone());
                 }
             }
-            if !read_only.contains(&key) && !self.publish.contains(&key) {
-                self.publish.push(key.clone());
+            for (url, kinds) in crate::relay::DEFAULT_RESOLVE_CLAIMS {
+                let key = crate::relay_url::normalize_relay_url(url);
+                if !key.is_empty() {
+                    self.search_kinds.entry(key).or_insert_with(|| kinds.to_vec());
+                }
             }
         }
-        for (url, kinds) in crate::relay::DEFAULT_RESOLVE_CLAIMS {
-            let key = crate::relay_url::normalize_relay_url(url);
-            if !key.is_empty() {
-                self.resolve_kinds.entry(key).or_insert_with(|| kinds.to_vec());
+        if self.seed_version < 2 {
+            // Generation 2 (2026-11-09): one flat relay list with five
+            // flags. The indexer class is gone — its relays become
+            // search relays narrowed to profile / relay-list kinds — and
+            // the old "resolve kinds" are now search kinds, which only
+            // count on a search relay, so every relay carrying kinds
+            // gets the flag. Parked relays have their recorded roles
+            // renamed the same way.
+            for memberships in self.inactive.values_mut() {
+                for m in memberships.iter_mut() {
+                    if m.starts_with("search.") {
+                        *m = "search".to_string();
+                    }
+                }
+                let mut seen = Vec::new();
+                memberships.retain(|m| {
+                    let fresh = !seen.contains(m);
+                    seen.push(m.clone());
+                    fresh
+                });
             }
-        }
-        // The search class flattened from a two-tier section to a
-        // per-relay toggle backed by `search.default`; fold any
-        // fallback-tier members in so they stay visible. (No behavior
-        // change: the fallback tier never had a consumer.)
-        let fb = std::mem::take(&mut self.search.fallback);
-        for url in fb {
-            if !self.search.default.contains(&url) {
-                self.search.default.push(url);
+            let parked_indexers: Vec<String> = self
+                .inactive
+                .iter()
+                .filter(|(_, ms)| ms.iter().any(|m| m.starts_with("indexer.")))
+                .map(|(url, _)| url.clone())
+                .collect();
+            for memberships in self.inactive.values_mut() {
+                memberships.retain(|m| !m.starts_with("indexer."));
+            }
+            for url in std::mem::take(&mut self.legacy_indexer)
+                .into_iter()
+                .chain(parked_indexers)
+            {
+                self.add_search_relay(&url, INDEXER_KINDS);
+            }
+            let with_kinds: Vec<String> = self.search_kinds.keys().cloned().collect();
+            for url in with_kinds {
+                self.add_search_relay(&url, &[]);
             }
         }
         self.seed_version = CURRENT_SEED_VERSION;
         true
     }
 
-    /// The kinds claimed by `url` (normalized), or an empty slice.
+    /// The search kinds listed for `url` (normalized), or an empty slice.
     pub fn kinds_for(&self, url: &str) -> &[u64] {
         let key = crate::relay_url::normalize_relay_url(url);
-        self.resolve_kinds.get(&key).map_or(&[], |v| v.as_slice())
+        self.search_kinds.get(&key).map_or(&[], |v| v.as_slice())
     }
 
-    /// Every relay claiming `kind`, in insertion-stable (sorted-key) order.
-    /// Empty means nothing claims it — the caller falls back to the read
-    /// set, which is what makes an unconfigured install a no-op. Parked
-    /// (inactive) relays keep their claims on file but never claim here.
-    pub fn relays_claiming_kind(&self, kind: u64) -> Vec<String> {
-        self.resolve_kinds
-            .iter()
-            .filter(|(url, kinds)| kinds.contains(&kind) && !self.inactive.contains_key(*url))
-            .map(|(url, _)| url.clone())
-            .collect()
+    /// The search relays serving a fetch for `kinds` — see
+    /// [`search_relays_matching`]. Parked relays are in no working set,
+    /// so they never match.
+    pub fn search_relays_for_kinds(&self, kinds: Option<&[u64]>) -> Vec<String> {
+        search_relays_matching(&self.search, &self.search_kinds, kinds)
     }
 
     /// Replace `url`'s claims. An empty list drops the entry entirely so
@@ -361,13 +356,13 @@ impl RelaySets {
             return;
         }
         if kinds.is_empty() {
-            self.resolve_kinds.remove(&key);
+            self.search_kinds.remove(&key);
             return;
         }
         let mut k = kinds.to_vec();
         k.sort_unstable();
         k.dedup();
-        self.resolve_kinds.insert(key, k);
+        self.search_kinds.insert(key, k);
     }
 
     /// Normalize every URL in each set and drop duplicates. Idempotent —
@@ -379,17 +374,15 @@ impl RelaySets {
         self.publish = normalize_dedup(&self.publish);
         self.broadcast = normalize_dedup(&self.broadcast);
         self.auth = normalize_dedup(&self.auth);
-        self.search.default = normalize_dedup(&self.search.default);
-        self.search.fallback = normalize_dedup(&self.search.fallback);
-        self.indexer.default = normalize_dedup(&self.indexer.default);
-        self.indexer.fallback = normalize_dedup(&self.indexer.fallback);
+        self.search = normalize_dedup(&self.search);
+        self.legacy_indexer = normalize_dedup(&self.legacy_indexer);
         for s in &mut self.named {
             s.urls = normalize_dedup(&s.urls);
         }
         // Claim keys are URLs too — canonicalize them so a hand-edited
         // `relays.json` with a trailing slash still matches lookups.
-        if !self.resolve_kinds.is_empty() {
-            let claims = std::mem::take(&mut self.resolve_kinds);
+        if !self.search_kinds.is_empty() {
+            let claims = std::mem::take(&mut self.search_kinds);
             for (url, mut kinds) in claims {
                 let key = crate::relay_url::normalize_relay_url(&url);
                 if key.is_empty() || kinds.is_empty() {
@@ -397,7 +390,7 @@ impl RelaySets {
                 }
                 kinds.sort_unstable();
                 kinds.dedup();
-                self.resolve_kinds
+                self.search_kinds
                     .entry(key)
                     .and_modify(|existing| {
                         existing.extend_from_slice(&kinds);
@@ -420,19 +413,9 @@ impl RelaySets {
         }
     }
 
-    /// Every membership list `set_active` walks when parking/unparking —
-    /// the flat sets plus both tiers of each discovery class.
-    pub const MEMBERSHIP_SETS: &'static [&'static str] = &[
-        "general",
-        "fetch",
-        "publish",
-        "broadcast",
-        "auth",
-        "search.default",
-        "search.fallback",
-        "indexer.default",
-        "indexer.fallback",
-    ];
+    /// Every membership list `set_active` walks when parking/unparking.
+    pub const MEMBERSHIP_SETS: &'static [&'static str] =
+        &["general", "fetch", "publish", "broadcast", "auth", "search"];
 
     /// Park (`active=false`) or unpark (`active=true`) a relay.
     /// Deactivating strips `url` from every working set and records the
@@ -477,11 +460,9 @@ impl RelaySets {
         }
     }
 
-    /// Borrow the URL list for a set. Accepts both flat names
-    /// (`"general"`, `"fetch"`, `"publish"`, `"broadcast"`, `"auth"`) and
-    /// dotted discovery-class names (`"search.default"`, `"search.fallback"`,
-    /// `"indexer.default"`, `"indexer.fallback"`). Returns `None` for
-    /// unknown names so callers can ignore stray UI input rather
+    /// Borrow the URL list for a set (`"general"`, `"fetch"`,
+    /// `"publish"`, `"broadcast"`, `"auth"`, `"search"`). Returns `None`
+    /// for unknown names so callers can ignore stray UI input rather
     /// than panic.
     pub fn get(&self, set: &str) -> Option<&[String]> {
         match set {
@@ -490,10 +471,7 @@ impl RelaySets {
             "publish" => Some(&self.publish),
             "broadcast" => Some(&self.broadcast),
             "auth" => Some(&self.auth),
-            "search.default" => Some(&self.search.default),
-            "search.fallback" => Some(&self.search.fallback),
-            "indexer.default" => Some(&self.indexer.default),
-            "indexer.fallback" => Some(&self.indexer.fallback),
+            "search" => Some(&self.search),
             _ => None,
         }
     }
@@ -505,64 +483,9 @@ impl RelaySets {
             "publish" => Ok(&mut self.publish),
             "broadcast" => Ok(&mut self.broadcast),
             "auth" => Ok(&mut self.auth),
-            "search.default" => Ok(&mut self.search.default),
-            "search.fallback" => Ok(&mut self.search.fallback),
-            "indexer.default" => Ok(&mut self.indexer.default),
-            "indexer.fallback" => Ok(&mut self.indexer.fallback),
+            "search" => Ok(&mut self.search),
             other => Err(RelayStoreError::UnknownSet(other.to_string())),
         }
-    }
-
-    /// Borrow the `DiscoveryClass` for `"search"` or `"indexer"`.
-    /// Returns `None` for any other name.
-    pub fn discovery(&self, class: &str) -> Option<&DiscoveryClass> {
-        match class {
-            "search" => Some(&self.search),
-            "indexer" => Some(&self.indexer),
-            _ => None,
-        }
-    }
-
-    /// Merge the well-known default discovery URLs into `default`
-    /// tier for whichever class is empty. Used by the
-    /// `/api/v1/restore-defaults/indexer` style endpoints that let
-    /// existing users (with non-empty `relays.json` from before
-    /// discovery defaults existed) opt into the same set a fresh
-    /// install would get. Returns how many URLs were added across
-    /// both classes.
-    pub fn merge_discovery_defaults(&mut self) -> usize {
-        let mut added = 0;
-        for &url in crate::relay::DEFAULT_INDEXERS {
-            let u = crate::relay_url::normalize_relay_url(url);
-            if !self.indexer.contains(&u) {
-                self.indexer.default.push(u);
-                added += 1;
-            }
-        }
-        for &url in crate::relay::DEFAULT_SEARCH {
-            let u = crate::relay_url::normalize_relay_url(url);
-            if !self.search.contains(&u) {
-                self.search.default.push(u);
-                added += 1;
-            }
-        }
-        added
-    }
-}
-
-/// The mutually-exclusive sibling tier for a discovery-class set name,
-/// or `None` for a flat/unknown name. Adding a URL to one tier strips it
-/// from its sibling so a URL is never in both `default` and `fallback`
-/// of the same class. Single source of truth shared by
-/// `RelayStore::add` (on `RelaySets`) and `Engine::add_relay` (on
-/// `RelayConfig`).
-pub(crate) fn discovery_sibling(set: &str) -> Option<&'static str> {
-    match set {
-        "search.default" => Some("search.fallback"),
-        "search.fallback" => Some("search.default"),
-        "indexer.default" => Some("indexer.fallback"),
-        "indexer.fallback" => Some("indexer.default"),
-        _ => None,
     }
 }
 
@@ -625,28 +548,9 @@ impl RelayStore {
     /// Add `url` to the named set if it isn't already present, then
     /// persist the result. The mutation is applied to `sets` in place so
     /// the caller's in-memory copy stays in sync with the file.
-    ///
-    /// For discovery classes (`search.default` / `search.fallback` /
-    /// `indexer.default` / `indexer.fallback`) this enforces the
-    /// per-URL mutual exclusion: adding to one tier strips the URL
-    /// from the other tier of the same class. The user's intent
-    /// "move this URL to fallback" expresses as a single `add` call;
-    /// no separate `remove` needed.
     pub fn add(&self, sets: &mut RelaySets, set: &str, url: &str) -> Result<bool> {
-        // Strip from the sibling tier first so the same URL never
-        // appears in both default AND fallback within a class.
-        if let Some(s) = discovery_sibling(set) {
-            if let Ok(list) = sets.get_mut(s) {
-                list.retain(|u| u != url);
-            }
-        }
-
         let list = sets.get_mut(set)?;
         if list.iter().any(|u| u == url) {
-            // Already in the target tier and (possibly) just had to
-            // be stripped from the sibling — persist so the strip
-            // lands on disk too.
-            self.save(sets)?;
             return Ok(false);
         }
         list.push(url.to_string());
@@ -654,18 +558,17 @@ impl RelayStore {
         Ok(true)
     }
 
-    /// Replace `url`'s resolve-kind claims and persist. Passing an empty
-    /// slice clears them. Returns whether the stored claims changed.
+    /// Replace `url`'s search kinds and persist. Passing an empty slice
+    /// clears them. Returns whether the stored kinds changed.
     ///
-    /// Claims are deliberately independent of set membership: a relay may
-    /// carry claims with no read/write/broadcast policy at all (the
-    /// resolution-only target), so `remove` does *not* clear them — only
-    /// an explicit call here does.
+    /// Kinds are stored independently of set membership: turning the
+    /// search flag off keeps them on file (ignored) so turning it back
+    /// on restores the narrowing — only an explicit call here clears.
     pub fn set_kinds(&self, sets: &mut RelaySets, url: &str, kinds: &[u64]) -> Result<bool> {
         let key = crate::relay_url::normalize_relay_url(url);
-        let before = sets.resolve_kinds.get(&key).cloned();
+        let before = sets.search_kinds.get(&key).cloned();
         sets.set_kinds(url, kinds);
-        let changed = before.as_deref() != sets.resolve_kinds.get(&key).map(|v| v.as_slice());
+        let changed = before.as_deref() != sets.search_kinds.get(&key).map(|v| v.as_slice());
         if changed {
             self.save(sets)?;
         }
@@ -760,47 +663,101 @@ mod tests {
     }
 
     #[test]
-    fn discovery_class_round_trips_through_disk() {
+    fn search_set_round_trips_through_disk() {
         let tmp = TempDir::new().unwrap();
         let store = RelayStore::new(tmp.path()).unwrap();
         let mut sets = RelaySets::default();
 
-        assert!(store.add(&mut sets, "search.default", "wss://search-a").unwrap());
-        assert!(store.add(&mut sets, "search.fallback", "wss://search-b").unwrap());
-        assert!(store.add(&mut sets, "indexer.default", "wss://idx-a").unwrap());
+        assert!(store.add(&mut sets, "search", "wss://search-a").unwrap());
+        assert!(!store.add(&mut sets, "search", "wss://search-a").unwrap());
+        // The tiered and indexer set names are gone.
+        assert!(store.add(&mut sets, "search.default", "wss://x").is_err());
+        assert!(store.add(&mut sets, "indexer.default", "wss://x").is_err());
 
         let reloaded = store.load().unwrap();
-        assert_eq!(reloaded.search.default, vec!["wss://search-a".to_string()]);
-        assert_eq!(reloaded.search.fallback, vec!["wss://search-b".to_string()]);
-        assert_eq!(reloaded.indexer.default, vec!["wss://idx-a".to_string()]);
-        assert!(reloaded.indexer.fallback.is_empty());
+        assert_eq!(reloaded.search, vec!["wss://search-a".to_string()]);
     }
 
     #[test]
-    fn legacy_flat_search_array_migrates_to_default() {
-        // Older relays.json with `"search": ["wss://x"]` should load
-        // as DiscoveryClass { default: ["wss://x"], fallback: [] }.
+    fn legacy_tiers_and_indexers_migrate_to_search_relays() {
+        // A pre-generation-2 file: two-tier search, an indexer class
+        // (one tiered, so both shapes are covered), an exclusive flag,
+        // a kind claim on a relay with no search role, and a parked
+        // relay that was an indexer.
         let tmp = TempDir::new().unwrap();
         let store = RelayStore::new(tmp.path()).unwrap();
         let legacy_json = r#"{
-            "general": [],
-            "fetch": [],
-            "publish": [],
-            "broadcast": [],
-            "search": ["wss://nostr.search.example"],
-            "indexer": ["wss://purplepag.es"],
-            "named": []
+            "general": [], "fetch": ["wss://read.example"], "publish": [],
+            "search": { "default": ["wss://s1.example"], "fallback": ["wss://s2.example"] },
+            "indexer": { "default": ["wss://purplepag.es"], "fallback": ["wss://idx2.example"] },
+            "exclusive": { "search": true, "indexer": false },
+            "resolve_kinds": { "wss://docs.example": [30818] },
+            "inactive": { "wss://parked.example": ["fetch", "indexer.default", "search.fallback"] },
+            "seed_version": 1
         }"#;
         std::fs::write(store.path(), legacy_json).unwrap();
 
-        let loaded = store.load().unwrap();
+        let mut loaded = store.load().unwrap();
+        assert!(loaded.apply_default_upgrades());
+        for url in [
+            "wss://s1.example",
+            "wss://s2.example",
+            "wss://purplepag.es",
+            "wss://idx2.example",
+            "wss://docs.example",
+        ] {
+            assert!(loaded.search.contains(&url.to_string()), "{url} is a search relay");
+        }
+        // Former indexers are narrowed to profile / relay-list kinds;
+        // former search relays stay unrestricted; the claim is kept.
+        assert_eq!(loaded.kinds_for("wss://purplepag.es"), INDEXER_KINDS);
+        assert_eq!(loaded.kinds_for("wss://idx2.example"), INDEXER_KINDS);
+        assert!(loaded.kinds_for("wss://s1.example").is_empty());
+        assert_eq!(loaded.kinds_for("wss://docs.example"), &[30818]);
+        // The parked relay keeps its roles under the new names.
         assert_eq!(
-            loaded.search.default,
-            vec!["wss://nostr.search.example".to_string()]
+            loaded.inactive.get("wss://parked.example").map(|v| v.as_slice()),
+            Some(&["fetch".to_string(), "search".to_string()][..])
         );
-        assert!(loaded.search.fallback.is_empty());
-        assert_eq!(loaded.indexer.default, vec!["wss://purplepag.es".to_string()]);
-        assert!(loaded.indexer.fallback.is_empty());
+        assert_eq!(loaded.kinds_for("wss://parked.example"), INDEXER_KINDS);
+        assert!(!loaded.search.contains(&"wss://parked.example".to_string()));
+
+        // The rewritten file has no trace of the old classes.
+        store.save(&loaded).unwrap();
+        let raw = std::fs::read_to_string(store.path()).unwrap();
+        assert!(!raw.contains("indexer"));
+        assert!(!raw.contains("exclusive"));
+        assert!(!raw.contains("resolve_kinds"));
+        let mut again = store.load().unwrap();
+        assert!(!again.apply_default_upgrades());
+        assert_eq!(again.search, loaded.search);
+    }
+
+    #[test]
+    fn search_relays_match_by_kind_as_a_union() {
+        let mut sets = RelaySets::default();
+        for url in ["wss://any.example", "wss://profiles.example", "wss://docs.example"] {
+            sets.search.push(url.to_string());
+        }
+        sets.set_kinds("wss://profiles.example", &[0, 10002]);
+        sets.set_kinds("wss://docs.example", &[30040, 30818]);
+        // Kinds on a relay without the search flag are ignored.
+        sets.set_kinds("wss://off.example", &[0]);
+
+        let urls = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        assert_eq!(
+            sets.search_relays_for_kinds(Some(&[0])),
+            urls(&["wss://any.example", "wss://profiles.example"])
+        );
+        // Any listed kind matches — a multi-kind filter reaches both.
+        assert_eq!(
+            sets.search_relays_for_kinds(Some(&[0, 30818])),
+            urls(&["wss://any.example", "wss://profiles.example", "wss://docs.example"])
+        );
+        // An unlisted kind, and a filter naming no kind, reach only the
+        // unrestricted search relays.
+        assert_eq!(sets.search_relays_for_kinds(Some(&[1])), urls(&["wss://any.example"]));
+        assert_eq!(sets.search_relays_for_kinds(None), urls(&["wss://any.example"]));
     }
 
     #[test]
@@ -843,23 +800,7 @@ mod tests {
     }
 
     #[test]
-    fn adding_to_one_tier_strips_url_from_sibling_tier() {
-        // Per-URL mutual exclusion within a discovery class.
-        let tmp = TempDir::new().unwrap();
-        let store = RelayStore::new(tmp.path()).unwrap();
-        let mut sets = RelaySets::default();
-
-        assert!(store.add(&mut sets, "search.default", "wss://a").unwrap());
-        // Re-adding to the fallback tier moves it; default should be empty.
-        store.add(&mut sets, "search.fallback", "wss://a").unwrap();
-
-        let reloaded = store.load().unwrap();
-        assert!(reloaded.search.default.is_empty());
-        assert_eq!(reloaded.search.fallback, vec!["wss://a".to_string()]);
-    }
-
-    #[test]
-    fn resolve_kinds_round_trip_and_clear() {
+    fn search_kinds_round_trip_and_clear() {
         let tmp = TempDir::new().unwrap();
         let store = RelayStore::new(tmp.path()).unwrap();
         let mut sets = RelaySets::default();
@@ -879,34 +820,32 @@ mod tests {
 
         // Empty clears the entry rather than storing an empty vec.
         assert!(store.set_kinds(&mut sets, "wss://docs.example", &[]).unwrap());
-        assert!(store.load().unwrap().resolve_kinds.is_empty());
+        assert!(store.load().unwrap().search_kinds.is_empty());
     }
 
     #[test]
-    fn claims_survive_set_removal() {
-        // A relay may be a resolution-only target: claims with no
-        // read/write/broadcast membership. Leaving a set must not
-        // silently drop them.
+    fn search_kinds_survive_turning_search_off() {
+        // Kinds are kept on file when the flag goes off, so turning
+        // search back on restores the narrowing — but they don't route
+        // anything meanwhile.
         let tmp = TempDir::new().unwrap();
         let store = RelayStore::new(tmp.path()).unwrap();
         let mut sets = RelaySets::default();
 
-        store.add(&mut sets, "fetch", "wss://docs.example").unwrap();
+        store.add(&mut sets, "search", "wss://docs.example").unwrap();
         store
             .set_kinds(&mut sets, "wss://docs.example", &[30818])
             .unwrap();
-        store.remove(&mut sets, "fetch", "wss://docs.example").unwrap();
-
-        let reloaded = store.load().unwrap();
-        assert!(reloaded.fetch.is_empty());
-        assert_eq!(reloaded.kinds_for("wss://docs.example"), &[30818]);
         assert_eq!(
-            reloaded.relays_claiming_kind(30818),
+            sets.search_relays_for_kinds(Some(&[30818])),
             vec!["wss://docs.example".to_string()]
         );
-        // Nothing claims a kind nobody listed — the caller falls back to
-        // the read set, which is what keeps an unconfigured install a no-op.
-        assert!(reloaded.relays_claiming_kind(1).is_empty());
+        store.remove(&mut sets, "search", "wss://docs.example").unwrap();
+
+        let reloaded = store.load().unwrap();
+        assert!(reloaded.search.is_empty());
+        assert_eq!(reloaded.kinds_for("wss://docs.example"), &[30818]);
+        assert!(reloaded.search_relays_for_kinds(Some(&[30818])).is_empty());
     }
 
     #[test]
@@ -937,11 +876,17 @@ mod tests {
         assert!(!sets.publish.contains(&"wss://theforest.nostr1.com".to_string()));
         assert!(!sets.publish.contains(&"wss://mercury-relay.imwald.eu/relay".to_string()));
         assert!(sets.publish.contains(&"wss://thecitadel.nostr1.com".to_string()));
-        // Mercury claims the publication/wiki kinds; stamp is current.
+        // Mercury is a search relay for the publication/wiki kinds, the
+        // profile relays for profile / relay-list kinds; stamp is current.
         assert_eq!(
             sets.kinds_for("wss://mercury-relay.imwald.eu/relay"),
             &[30040, 30041, 30818]
         );
+        assert!(sets.search.contains(&"wss://mercury-relay.imwald.eu/relay".to_string()));
+        assert_eq!(sets.kinds_for("wss://purplepag.es"), INDEXER_KINDS);
+        assert!(sets
+            .search_relays_for_kinds(Some(&[0]))
+            .contains(&"wss://purplepag.es".to_string()));
         assert_eq!(sets.seed_version, CURRENT_SEED_VERSION);
     }
 
@@ -971,6 +916,8 @@ mod tests {
             sets.kinds_for("wss://mercury-relay.imwald.eu/relay"),
             &[30040, 30041, 30818]
         );
+        // Generation 2: a relay carrying kinds becomes a search relay.
+        assert!(sets.search.contains(&"wss://mywiki.example".to_string()));
         // Idempotent: the stamp gates a second pass.
         assert!(!sets.apply_default_upgrades());
     }
@@ -981,21 +928,21 @@ mod tests {
         let url = "wss://parked.example".to_string();
         sets.fetch.push(url.clone());
         sets.publish.push(url.clone());
-        sets.search.default.push(url.clone());
+        sets.search.push(url.clone());
         sets.set_kinds(&url, &[30818]);
 
         // Park: gone from every working set, memberships recorded,
-        // claims retained on file but no longer claiming.
+        // search kinds retained on file but no longer routing.
         assert!(sets.set_active(&url, false));
         assert!(sets.fetch.is_empty());
         assert!(sets.publish.is_empty());
-        assert!(sets.search.default.is_empty());
+        assert!(sets.search.is_empty());
         assert_eq!(
             sets.inactive.get(&url).map(|v| v.as_slice()),
-            Some(&["fetch".to_string(), "publish".to_string(), "search.default".to_string()][..])
+            Some(&["fetch".to_string(), "publish".to_string(), "search".to_string()][..])
         );
         assert_eq!(sets.kinds_for(&url), &[30818]);
-        assert!(sets.relays_claiming_kind(30818).is_empty());
+        assert!(sets.search_relays_for_kinds(Some(&[30818])).is_empty());
         // Idempotent in both directions.
         assert!(!sets.set_active(&url, false));
 
@@ -1003,22 +950,9 @@ mod tests {
         assert!(sets.set_active(&url, true));
         assert_eq!(sets.fetch, vec![url.clone()]);
         assert_eq!(sets.publish, vec![url.clone()]);
-        assert_eq!(sets.search.default, vec![url.clone()]);
+        assert_eq!(sets.search, vec![url.clone()]);
         assert!(sets.inactive.is_empty());
-        assert_eq!(sets.relays_claiming_kind(30818), vec![url.clone()]);
+        assert_eq!(sets.search_relays_for_kinds(Some(&[30818])), vec![url.clone()]);
         assert!(!sets.set_active(&url, true));
-    }
-
-    #[test]
-    fn exclusive_flag_round_trips() {
-        let tmp = TempDir::new().unwrap();
-        let store = RelayStore::new(tmp.path()).unwrap();
-        let mut sets = RelaySets::default();
-        sets.exclusive.search = true;
-        store.save(&sets).unwrap();
-
-        let reloaded = store.load().unwrap();
-        assert!(reloaded.exclusive.search);
-        assert!(!reloaded.exclusive.indexer);
     }
 }
