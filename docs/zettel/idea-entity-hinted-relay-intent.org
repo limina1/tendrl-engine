@@ -1,7 +1,23 @@
 #+TITLE: Idea: entity-hinted relays in the fetch intent
 #+TYPE: idea
-#+STATUS: open
+#+STATUS: partial
 #+DATE: 2026-07-06
+#+PROGRESS: 2026-11-09 — hints reach the intent for searches and the event endpoints; no distinct field or hinted-only toggle yet
+
+* Shipped so far (2026-11-09)
+- An =nevent= / =naddr= / =nprofile= in a search query adds the relays it
+  names to the proposed set (=search::entity_relay_hints=).
+- =GET /events/:id= and =/addressable/…= take =relays=<csv>= hints; the
+  web helpers accept them but no caller passes them yet.
+- The modal tags any listed relay outside the configured set as
+  =not in your relays= — which covers hints, but does not say *why* the
+  relay is there.
+- Hints are per fetch. A hint relay is only kept for the session if it
+  was approved in the modal
+  ([[file:decision-session-relay-choices.org][session relay choices]]).
+Still open: the =hinted_relays= field, the "this reference points here"
+group, the hinted-only toggle, and the nostrdown =embed= / =quote= /
+=slot= path.
 
 A =naddr= / =nevent= is not just an address — its NIP-19 TLV carries *relay
 hints*: "you'll find this event *here*." When a nostrdown =embed= / =quote= /

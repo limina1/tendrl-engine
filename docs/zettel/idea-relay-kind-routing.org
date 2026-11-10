@@ -2,7 +2,17 @@
 #+TYPE: idea
 #+STATUS: partial
 #+DATE: 2026-08-14
-#+PROGRESS: 2026-08-14 — storage + API + editor shipped; routing not wired yet
+#+PROGRESS: 2026-11-09 — superseded in part: kinds are now *search kinds* and join the read set (union), not exclusive claims
+
+*Superseded in part (2026-11-09).* The kinds column survives as *search
+kinds*, but rule 2 (a claim is exclusive) and rule 3 (a kinds-only relay
+is a resolution-only target) are gone: a fetch asks the read relays
+*plus* the search relays listing the kind, and kinds only count on a
+relay with the search flag. The class collapse this note planned shipped
+in a different shape — =indexer= folded into search rather than into its
+own index role. See
+[[file:decision-relay-flags-search-kinds.org][one relay list, five flags]].
+The rest of this note is the original design, kept as provenance.
 
 Relay sets today are *functional* — read / write / broadcast say what a
 relay is for — but not *topical*: nothing says what a relay actually
@@ -213,10 +223,10 @@ When several things have an opinion about where a fetch goes:
   still missing, and only then drops to =indexer.default= /
   =indexer.fallback=; and it no longer blocks the search response,
   because a profile lookup is a different fetch to different relays
-- [ ] Collapse =search= into read; retire =DiscoveryClass=, both
-  =exclusive= flags, and the four dotted set names — with a
-  =relays.json= load-time migration (=search.*= → read, =indexer.*= →
-  index)
+- [X] Retire =DiscoveryClass=, both =exclusive= flags, and the four
+  dotted set names, with a =relays.json= load-time migration —
+  2026-11-09, but not as planned here: =search.*= stays a flag (not
+  folded into read) and =indexer.*= becomes search + profile kinds
 - [ ] Kinds editor + NIP-11 =retention= parse as suggestions
 - [ ] Observed-provenance suggestions (kind × relay histogram)
 

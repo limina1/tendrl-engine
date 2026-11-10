@@ -33,7 +33,12 @@ toast. One shape, several callers — this is the place to track them:
 - *Fetch intent* (=FetchEvent::Intent=, =begin_operation_with_summary=): a REQ.
   Carries the proposed relay set + a =RequestSummary= (filters / composition /
   DSL sentence). =FetchConfirmModal= renders it; the user drops/adds relays and
-  =ConfirmDecision.relays= overrides the set the engine uses.
+  =ConfirmDecision.relays= overrides the set the engine uses. Since
+  2026-11-09 that choice is *session state* (off / on relays, applied in
+  Auto too) — see
+  [[file:decision-session-relay-choices.org][session relay choices]] —
+  and the proposed set is read ∪ matching search relays ∪ hints
+  ([[file:decision-relay-flags-search-kinds.org][one relay list, five flags]]).
 - *Publish intent* (=FetchEvent::PublishIntent=): the broadcast counterpart —
   carries the event ids + destination relays so the UI correlates per-relay
   Accepted / Rejected.
