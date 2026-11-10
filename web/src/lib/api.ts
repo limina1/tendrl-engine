@@ -721,10 +721,18 @@ export interface DraftComposeSection {
 	d_tag?: string;
 	/** Per-section content-format override; absent = inherit the draft's. */
 	format?: string;
-	tags: { name: string; value: string }[];
+	tags: DraftTag[];
 	/** Transclude slot target (naddr/coordinate) — set when this item is a slot,
 	 *  restored on resume so the `{{slot:…}}` line comes back. */
 	slot?: string;
+}
+
+/** A stored draft tag; `verbatim` ones carry their other values in `extra`. */
+export interface DraftTag {
+	name: string;
+	value: string;
+	extra?: string[];
+	verbatim?: boolean;
 }
 
 export interface DraftComposeState {
@@ -735,7 +743,7 @@ export interface DraftComposeState {
 	/** Output kind — absent/30040 = publication; any other kind = atomic draft
 	 *  (blog/wiki/custom) so resume reopens the composer in the right mode. */
 	kind?: number;
-	tags: { name: string; value: string }[];
+	tags: DraftTag[];
 	sections: DraftComposeSection[];
 }
 
@@ -753,13 +761,13 @@ export interface SaveDraftPayload {
 	title: string;
 	/** Default content format (canonical mimetype) — restored on resume. */
 	format?: string;
-	tags: [string, string][];
+	tags: WireTag[];
 	sections: {
 		title: string;
 		content: string;
 		format?: string;
 		level?: number;
-		tags: [string, string][];
+		tags: WireTag[];
 		d_tag?: string;
 		/** Transclude slot target (naddr/coordinate to a 30040/30041). */
 		slot?: string;
@@ -1687,13 +1695,13 @@ export interface PublishRequest {
 	 *  or its short name. REQUIRED — the engine stamps it as each 30041's `m`
 	 *  tag and refuses (400) without it. Never written on the 30040. */
 	format: string;
-	tags: [string, string][];
+	tags: WireTag[];
 	sections: {
 		title: string;
 		content: string;
 		/** Per-section override of the request's `format`. */
 		format?: string;
-		tags: [string, string][];
+		tags: WireTag[];
 		level?: number;
 		/** Reuse this section d-tag (republish replace) instead of minting. */
 		d_tag?: string;
@@ -1764,7 +1772,7 @@ export type PublishBlock =
 			title: string;
 			/** Per-block override of the request's `format`. */
 			format?: string;
-			tags: [string, string][];
+			tags: WireTag[];
 			content: string;
 			/** Reuse this 30041 d-tag (nanoid) on republish; omit to mint fresh. */
 			d_tag?: string;
@@ -1772,7 +1780,7 @@ export type PublishBlock =
 	| {
 			kind: 'imported';
 			title: string;
-			tags: [string, string][];
+			tags: WireTag[];
 			source_addr: { kind: number; pubkey: string; d_tag: string };
 			content: string;
 			author: string;
@@ -1781,7 +1789,7 @@ export type PublishBlock =
 			kind: 'forked';
 			title: string;
 			format?: string;
-			tags: [string, string][];
+			tags: WireTag[];
 			original_addr: { kind: number; pubkey: string; d_tag: string };
 			content: string;
 			original_author: string;
@@ -1793,7 +1801,7 @@ export interface PublishBlocksRequest {
 	title: string;
 	/** Content format for every event-emitting block — see PublishRequest. */
 	format: string;
-	tags: [string, string][];
+	tags: WireTag[];
 	/** Reuse this index d-tag (nanoid) on republish; omit to mint fresh. */
 	d_tag?: string;
 	blocks: PublishBlock[];
@@ -2349,7 +2357,7 @@ export function setAutoEmbed(auto_embed: boolean) {
 
 // Claude Code Sessions API
 
-import type { ClaudeSessionSummary, ClaudeSessionMessage } from './types';
+import type { ClaudeSessionSummary, ClaudeSessionMessage, WireTag } from './types';
 
 export function listClaudeSessions() {
 	return fetchJson<{ sessions: ClaudeSessionSummary[]; count: number }>('/api/v1/claude-sessions');

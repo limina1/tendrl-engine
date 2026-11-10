@@ -1404,24 +1404,6 @@
 		<div class="settings-group-body">
 
 		<div class="settings-row">
-			<span class="settings-label">Default edit mode</span>
-			<div class="radio-group">
-				{#each ['full', 'plain'] as opt (opt)}
-					<label class="radio">
-						<input
-							type="radio"
-							name="compose-default-mode"
-							value={opt}
-							checked={app.composeDefaultMode === opt}
-							onchange={() => (app.composeDefaultMode = opt as ComposeDefaultMode)}
-						/>
-						<span>{opt}</span>
-					</label>
-				{/each}
-			</div>
-		</div>
-
-		<div class="settings-row">
 			<span class="settings-label">Sync mode</span>
 			<div class="radio-group">
 				{#each ['reactive', 'explicit'] as opt (opt)}

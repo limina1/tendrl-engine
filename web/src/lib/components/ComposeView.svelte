@@ -6,7 +6,8 @@
 	import type { ComposeState, ContextItem, TagEntry, SyncMode } from '$lib/types';
 	import type { DraftSummary } from '$lib/api';
 	import { resolveNostrdown, search } from '$lib/api';
-	import type { EditorView } from '@codemirror/view';
+	import { EditorView } from '@codemirror/view';
+	import { Compartment } from '@codemirror/state';
 	import {
 		nostrdownEditor,
 		nostrdownCompletion,
@@ -17,10 +18,25 @@
 	import type { ResolvedRef } from '$lib/nostr/nostrdown';
 	import { cachedSlug, ensureSlugs, slug } from '$lib/nostr/slugs';
 	import EmbedCard from './EmbedCard.svelte';
-	import ComposeSection from './ComposeSection.svelte';
 	import ReferenceBuilderModal from './ReferenceBuilderModal.svelte';
 	import ItemBadge from './ItemBadge.svelte';
-	import TagEditor from './TagEditor.svelte';
+	import TagsPanel from './TagsPanel.svelte';
+	import FormatToolbar from './FormatToolbar.svelte';
+	import {
+		wysiwyg,
+		wysiwygTheme,
+		lockedRanges,
+		setLocked,
+		type ViewMode
+	} from '$lib/editor/wysiwyg';
+	import {
+		asStyle,
+		fenceCloses,
+		fenceOpen,
+		headingPrefix,
+		parseHeading,
+		type Style
+	} from '$lib/editor/markup';
 	import DraftReader from '$lib/wm/renderers/DraftReader.svelte';
 	import DraftVersions from './DraftVersions.svelte';
 	import PublishedDiffModal from './PublishedDiffModal.svelte';
@@ -44,11 +60,10 @@
 		doc: string,
 		targetSlug: string
 	): Promise<{ pos: number; title: string } | null> {
-		const d = effectiveDelim();
 		const heads: { pos: number; title: string }[] = [];
 		let offset = 0;
 		for (const line of doc.split('\n')) {
-			const head = parseHeadingLine(line, d);
+			const head = parseHeading(line, style);
 			if (head) heads.push({ pos: offset, title: head.title });
 			offset += line.length + 1; // + newline
 		}
@@ -228,7 +243,7 @@
 	// guide menu, scoped to this buffer.
 	const composerTours = toursForKind('composer');
 	let walkMenuOpen = $state(false);
-	function runComposeTour(t: { key: string; mode?: 'full' | 'plain' }) {
+	function runComposeTour(t: { key: string; mode?: 'plain' }) {
 		// A `mode`-tagged tour walks a specific view — switch to it first so its
 		// anchors are mounted when the tip resolves. View-agnostic tours leave the
 		// current view untouched. (No-op under an atomic kind, which has no views.)
@@ -237,7 +252,7 @@
 		runTour(t.key);
 	}
 
-	type ComposeMode = 'full' | 'plain' | 'preview';
+	type ComposeMode = 'plain' | 'preview';
 
 	/** Publish/preview/save payload. `kind`/`content` are set only for atomic
 	 *  kinds (NIP-23 blog, NIP-54 wiki, custom) — then the whole editor body is
@@ -254,12 +269,17 @@
 	// Output-kind presets for the mode dropdown. 30040 (Publication) keeps the
 	// section-parsing path; the rest publish a single atomic event of that kind.
 	// `-1` is the "Custom…" sentinel that reveals a free numeric kind input.
+	// `notes` = standalone 30041s (no index); `-1` = "Custom…" (a free kind).
 	const KIND_PRESETS = [
-		{ kind: 30040, label: 'Publication' },
-		{ kind: 30023, label: 'Blog' },
-		{ kind: 30818, label: 'Wiki' },
-		{ kind: -1, label: 'Custom…' }
+		{ kind: 30040, label: 'Publication', value: 'pub' },
+		{ kind: 30040, label: 'Notes', value: 'notes' },
+		{ kind: 30818, label: 'Wiki · 30818', value: '30818' },
+		{ kind: 30817, label: 'Spec · 30817', value: '30817' },
+		{ kind: 30023, label: 'Blog · 30023', value: '30023' },
+		{ kind: -1, label: 'Custom kind…', value: 'custom' }
 	];
+	/** The style a kind fixes by spec (NIP-23 Markdown, NIP-54 AsciiDoc). */
+	const KIND_STYLE: Record<number, string> = { 30023: 'text/markdown', 30818: 'text/asciidoc' };
 
 	let {
 		compose,
@@ -281,7 +301,7 @@
 		onlocksource,
 		oncrosspanelcopy,
 		onreorder,
-		mode = $bindable<ComposeMode>('full'),
+		mode = $bindable<ComposeMode>('plain'),
 		cursor = -1,
 		sectionsListEl = $bindable<HTMLDivElement | undefined>(undefined),
 		plainCmView = $bindable<EditorView | null>(null),
@@ -317,14 +337,11 @@
 		vimMode?: boolean;
 	} = $props();
 
-	let checkedIds: Set<string> = $state(new Set());
-	let collapsedIds: Set<string> = $state(new Set());
-	let headerCollapsed = $state(false);
 
 	// --- Output kind (Publication vs atomic blog/wiki/custom) ---
 	// Owned by app state so resuming a draft can restore the editor mode. The
 	// select reflects it; a non-preset kind shows the free numeric input.
-	const PRESET_KINDS = new Set(KIND_PRESETS.filter((p) => p.kind !== -1).map((p) => p.kind));
+	const PRESET_KINDS = new Set([30040, 30818, 30817, 30023]);
 	const composeKind = $derived(app.composeKind);
 	// Default content format for the sections — the engine stamps it as each
 	// 30041's `m` tag; a section's own select overrides it.
@@ -332,11 +349,23 @@
 	const isAtomic = $derived(composeKind !== 30040);
 	const isCustomKind = $derived(!PRESET_KINDS.has(composeKind));
 
+	const typeValue = $derived(
+		isCustomKind ? 'custom' : composeKind === 30040 ? (app.composeNotes ? 'notes' : 'pub') : String(composeKind)
+	);
 	function onKindSelect(e: Event) {
-		const v = +(e.currentTarget as HTMLSelectElement).value;
-		// -1 = "Custom…": keep the current kind if it's already custom, else
-		// seed a non-preset default (1 = a plain note) the user can edit.
-		app.composeKind = v === -1 ? (isCustomKind ? composeKind : 1) : v;
+		const v = (e.currentTarget as HTMLSelectElement).value;
+		if (v === 'pub' || v === 'notes') {
+			app.composeKind = 30040;
+			app.composeNotes = v === 'notes';
+			return;
+		}
+		app.composeNotes = false;
+		// "Custom…": keep the current kind if it's already custom, else seed
+		// a non-preset default (1 = a plain note) the user can edit.
+		const k = v === 'custom' ? (isCustomKind ? composeKind : 1) : +v;
+		app.composeKind = k;
+		// A kind that fixes its style by spec sets it (still changeable).
+		if (KIND_STYLE[k]) app.composeFormat = KIND_STYLE[k];
 	}
 	function onCustomKind(e: Event) {
 		app.composeKind = +(e.currentTarget as HTMLInputElement).value || 0;
@@ -352,178 +381,68 @@
 		untrack(() => {
 			if (app.composeAtomicSeeded) return;
 			if (!app.composeAtomicBody.trim()) {
-				app.composeAtomicBody = compose.sections
-					.map((s) => s.content)
-					.filter((c) => c.trim().length > 0)
-					.join('\n\n');
+				// The whole document carries over — its title line, headings
+				// and text — so switching Publication → Wiki loses nothing.
+				app.composeAtomicBody = plainText.trim() ? plainText : serializeAll();
 			}
 			app.composeAtomicSeeded = true;
 		});
 	});
 
-	const atomicCanPublish = $derived(
-		isAtomic && compose.title.trim().length > 0 && app.composeAtomicBody.trim().length > 0
-	);
+	/** The style the editor reads and the toolbar writes (the `m` tag). */
+	const style: Style = $derived(asStyle(composeFormat));
 
-	/** Pull a leading run of `:name: value` tag lines off the atomic body — the
-	 *  same `:tag:` / `:tags:` syntax plain mode uses for its doc header — so an
-	 *  atomic blog/wiki can carry tags inline. `:tags: a, b` expands to `t`
-	 *  tags (via parseTagLine). Returns the parsed tags and the body with the
-	 *  block (and its trailing blank separator) stripped. */
-	function parseAtomicBody(text: string): { tags: TagEntry[]; content: string } {
+	/** An atomic body's title is its leading level-1 heading (`# Title`,
+	 *  `* Title`, `= Title`); the rest is the event content. */
+	function splitAtomic(text: string): { title: string; content: string } {
 		const lines = text.split('\n');
-		const tags: TagEntry[] = [];
 		let i = 0;
-		for (; i < lines.length; i++) {
-			const parsed = parseTagLine(lines[i]);
-			if (!parsed) break;
-			tags.push(...parsed);
+		while (i < lines.length && lines[i].trim() === '') i++;
+		const h = i < lines.length ? parseHeading(lines[i], style) : null;
+		if (h && h.level === 1) {
+			let j = i + 1;
+			while (j < lines.length && lines[j].trim() === '') j++;
+			return { title: h.title, content: lines.slice(j).join('\n') };
 		}
-		if (tags.length > 0) {
-			while (i < lines.length && lines[i].trim() === '') i++;
-		}
-		return { tags, content: lines.slice(i).join('\n') };
+		return { title: compose.title, content: text };
 	}
-
-	/** Header (TagEditor) tags plus body-parsed tags, de-duped by name+value. */
-	function mergeTags(base: TagEntry[], extra: TagEntry[]): TagEntry[] {
-		const seen = new Set(base.map((t) => `${t.name} ${t.value}`));
-		const out = [...base];
-		for (const t of extra) {
-			const key = `${t.name} ${t.value}`;
-			if (!seen.has(key)) {
-				seen.add(key);
-				out.push(t);
-			}
-		}
-		return out;
-	}
-
-	// Live view of what the body's leading tag block parses to — drives the
-	// "detected tags" hint and the publish payload so they can't drift.
 	const atomicParsed = $derived(
-		isAtomic ? parseAtomicBody(app.composeAtomicBody) : { tags: [] as TagEntry[], content: '' }
+		isAtomic ? splitAtomic(app.composeAtomicBody) : { title: '', content: '' }
+	);
+	const atomicCanPublish = $derived(
+		isAtomic && atomicParsed.title.trim().length > 0 && atomicParsed.content.trim().length > 0
 	);
 
 	function atomicMeta(): PublishMeta {
 		return {
-			title: compose.title,
-			tags: mergeTags(compose.tags, atomicParsed.tags),
+			title: atomicParsed.title,
+			tags: compose.tags,
 			kind: composeKind,
 			content: atomicParsed.content
 		};
 	}
 
-	let delimiter = $state('');
-	// Parse level — the heading depth at which sections stop being their
-	// own 30040 indices and fold into the nearest ancestor's 30041 content.
-	// 2 = flat (one index over a flat list of sections); each higher level
-	// turns one more heading tier into nested sub-indices and folds anything
-	// deeper into content. Mirrors Alexandria's parseLevel
-	// (docs/publication_creation.md §1.2). Range 2–5.
-	let parseLevel = $state(2);
-	let prevDelimiter = $state('');
-	let trashPending: ContextItem[] = $state([]);
-	let trashTimer: ReturnType<typeof setTimeout> | null = $state(null);
-	let trashCountdown = $state(0);
-	let countdownInterval: ReturnType<typeof setInterval> | null = $state(null);
+	// Sections are H2 (and H3, which turns its H2 into a nested index);
+	// H4 and deeper stay inside the section text. H1 is the title.
+	const SECTION_DEPTH = 3;
 
 	// --- Serialize / Parse ---
 
-	function effectiveDelim(): string {
-		return delimiter.trim() || '=';
-	}
-
-	/** Heading prefix for level N — N copies of the active delimiter
-	 *  followed by a single space. Level 1 = publication root, level 2 =
-	 *  top-level section, level 3+ = nested. */
+	/** Heading prefix for level N in the current style. Level 1 = the
+	 *  publication title, 2 = a section, 3 = a nested section. */
 	function headFor(level: number): string {
-		return effectiveDelim().repeat(level) + ' ';
+		return headingPrefix(style, level);
 	}
 
-	function headForWith(d: string, level: number): string {
-		return d.repeat(level) + ' ';
-	}
-
-	/** If `line` starts with one of the heading prefixes for the active
-	 *  delimiter (level 1..6), return that level and the title; else null.
-	 *  Counts leading delimiter chars and requires a trailing space. An *empty*
-	 *  title (`= ` with nothing after) is still a heading — so a fresh draft's
-	 *  lone `= ` round-trips through Full↔Plain instead of being misread as
-	 *  content (which would explode into a stray `=`/`==`/`=` on re-serialize). */
-	function parseHeadingLine(line: string, d: string): { level: number; title: string } | null {
-		if (line.length === 0 || line[0] !== d) return null;
-		let i = 0;
-		while (i < line.length && line[i] === d) i++;
-		if (i < 1 || i > 6) return null;
-		if (line[i] !== ' ') return null;
-		const title = line.slice(i + 1).trimEnd();
-		return { level: i, title };
-	}
-
-	// Reactively swap delimiters in plain text — preserves the level
-	// count per heading line by counting the old delim and replacing
-	// with the same count of the new delim.
-	$effect(() => {
-		const cur = effectiveDelim();
-		if (mode === 'plain' && prevDelimiter && cur !== prevDelimiter) {
-			plainText = plainText
-				.split('\n')
-				.map((line) => {
-					const old = parseHeadingLine(line, prevDelimiter);
-					if (!old) return line;
-					return headForWith(cur, old.level) + old.title;
-				})
-				.join('\n');
-		}
-		prevDelimiter = cur;
-	});
-
-	function serializeTagBlock(tags: TagEntry[]): string {
-		if (tags.length === 0) return '';
-		const tValues: string[] = [];
-		const lines: string[] = [];
-		for (const tag of tags) {
-			if (tag.name === 't') {
-				tValues.push(tag.value);
-			} else {
-				lines.push(`:${tag.name}: ${tag.value}`);
-			}
-		}
-		if (tValues.length > 0) {
-			lines.push(`:tags: ${tValues.join(', ')}`);
-		}
-		return lines.join('\n') + '\n';
-	}
-
-	function parseTagLine(line: string): TagEntry[] | null {
-		const match = line.match(/^:([^:]+):\s*(.*)$/);
-		if (!match) return null;
-		const name = match[1].trim();
-		const value = match[2].trim();
-		if (name === 'tags') {
-			return value
-				.split(',')
-				.map((s) => s.trim())
-				.filter(Boolean)
-				.map((v) => ({ name: 't', value: v }));
-		}
-		return [{ name, value }];
-	}
-
-	function serializeSection(s: ContextItem): string {
-		const level = s.level ?? 2;
-		let out = `${headFor(level)}${s.title}\n`;
-		out += serializeTagBlock(s.tags);
-		out += `\n${s.content}`;
-		return out;
-	}
-
-	// Serialize entire document into one text blob
+	// Serialize entire document into one text blob. Tags live in the tags
+	// panel (compose state), never in the text.
 	function serializeAll(): string {
-		let out = `${headFor(1)}${compose.title}\n`;
-		out += serializeTagBlock(compose.tags);
-		for (const s of compose.sections) {
+		// Blank sections (a fresh draft's placeholder) write nothing, and the
+		// title line is written only when there is a title — so a new draft
+		// opens empty and the first `# ` the author types is the title.
+		const sections = compose.sections.filter((s) => s.slot || s.title.trim() || s.content.trim());
+		let out = compose.title ? `${headFor(1)}${compose.title}\n` : '';
+		for (const s of sections) {
 			if (s.slot) {
 				// A slot serializes back as its `{{slot:…}}` line — so a resumed
 				// draft / mode switch reconstructs it as a block, not a section.
@@ -532,32 +451,21 @@
 			}
 			const level = s.level ?? 2;
 			out += `\n${headFor(level)}${s.title}\n`;
-			out += serializeTagBlock(s.tags);
 			out += `\n${s.content}\n`;
 		}
 		return out;
 	}
 
-	// Serialize a *parsed* document (used by plain-mode reorder: parse →
-	// swap sections in the array → write back without round-tripping
-	// through compose.sections). Carries per-section level so heading
-	// depth round-trips through the parser.
-	function serializeParsed(
-		title: string,
-		tags: TagEntry[],
-		sections: ParsedSection[]
-	): string {
-		let out = `${headFor(1)}${title}\n`;
-		out += serializeTagBlock(tags);
+	// Serialize a *parsed* document (used by outline reorder: parse → swap
+	// sections → write back without round-tripping through compose.sections).
+	function serializeParsed(title: string, hasTitle: boolean, sections: ParsedSection[]): string {
+		let out = hasTitle ? `${headFor(1)}${title}\n` : '';
 		for (const s of sections) {
 			if (s.slot) {
-				// A slot round-trips as its own `{{slot:…}}` line — no heading,
-				// tags, or body — so reorder/move preserves it like any block.
 				out += `\n{{slot:${s.slot}}}\n`;
 				continue;
 			}
 			out += `\n${headFor(s.level)}${s.title}\n`;
-			out += serializeTagBlock(s.tags);
 			out += `\n${s.content}\n`;
 		}
 		return out;
@@ -569,138 +477,100 @@
 		if (swap < 0 || swap >= parsed.sections.length) return;
 		const next = parsed.sections.slice();
 		[next[index], next[swap]] = [next[swap], next[index]];
-		plainText = serializeParsed(parsed.title, parsed.tags, next);
+		// Section tags follow their section.
+		const items = compose.sections.slice();
+		if (items[index] && items[swap]) {
+			[items[index], items[swap]] = [items[swap], items[index]];
+			onupdate({ ...compose, sections: items });
+		}
+		plainText = serializeParsed(parsed.title, parsed.hasTitle, next);
 	}
 
 	interface ParsedSection {
 		title: string;
-		tags: TagEntry[];
 		content: string;
-		/** Heading depth — 2 for `== Title`, 3 for `=== Subtitle`, … */
+		/** Heading depth — 2 for a section, 3 for a nested one. */
 		level: number;
+		/** First line (0-based) of the section — its heading, or its slot line. */
+		line: number;
 		/** Set when this item is a block-level `{{slot:target}}` transclude —
 		 *  the naddr/coordinate of an existing 30040/30041 to reference as a
 		 *  child of the index (no title/content/heading of its own). */
 		slot?: string;
 	}
 
-	// Parse full text blob back into title/tags + sections. Recognises
-	// any heading level >= 2 as a section; level 1 is reserved for the
-	// publication title. Per-section level rides through to compose so
-	// the engine can emit the nested 30040/30041 graph.
+	// Parse the text into title + sections, in the current style. Headings
+	// inside code fences are content. Level 1 is the title; levels
+	// 2..SECTION_DEPTH are sections; deeper headings stay in the text.
 	function parseAll(text: string): {
 		title: string;
 		hasTitle: boolean;
-		tags: TagEntry[];
 		sections: ParsedSection[];
 	} {
-		const d = effectiveDelim();
 		const lines = text.split('\n');
 		let docTitle = '';
-		// Whether a level-1 `=` heading LINE was seen — distinct from `docTitle`
-		// being non-empty. An explicit but empty `= ` sets this true (→ Publication
-		// shape); a doc with only `==` sections and no `=` line leaves it false
-		// (→ Notes). Drives the auto-detected shape, not the title text.
+		// Whether a level-1 heading LINE was seen — an explicit but empty
+		// `# ` still counts as a title line.
 		let hasTitle = false;
-		const docTags: TagEntry[] = [];
 		const sections: ParsedSection[] = [];
-		let current: {
-			title: string;
-			tags: TagEntry[];
-			contentLines: string[];
-			inTags: boolean;
-			level: number;
-		} | null = null;
+		let current: { title: string; contentLines: string[]; level: number; line: number } | null =
+			null;
 		let inDocHeader = true;
-		let docInTags = true;
+		let fence: string | null = null;
+		const finish = () => {
+			if (current)
+				sections.push({
+					title: current.title,
+					content: current.contentLines.join('\n').trim(),
+					level: current.level,
+					line: current.line
+				});
+			current = null;
+		};
 
-		for (const line of lines) {
-			const head = parseHeadingLine(line, d);
+		lines.forEach((line, ln) => {
+			if (fence) {
+				if (fenceCloses(line, fence, style)) fence = null;
+				if (current) current.contentLines.push(line);
+				else if (line.trim()) {
+					inDocHeader = false;
+					current = { title: '', contentLines: [line], level: 2, line: ln };
+				}
+				return;
+			}
+			const head = parseHeading(line, style);
 			if (inDocHeader && !hasTitle && head && head.level === 1) {
 				docTitle = head.title;
 				hasTitle = true;
-				continue;
+				return;
 			}
-			// Sections at levels 2..parseLevel become their own segments;
-			// anything deeper falls through and folds into the nearest
-			// ancestor's content (header text and all).
-			if (head && head.level >= 2 && head.level <= parseLevel) {
-				// Finish previous section
-				if (current) {
-					sections.push({
-						title: current.title,
-						tags: current.tags,
-						content: current.contentLines.join('\n').trim(),
-						level: current.level
-					});
-				}
+			if (head && head.level >= 2 && head.level <= SECTION_DEPTH) {
+				finish();
 				inDocHeader = false;
-				current = {
-					title: head.title,
-					tags: [],
-					contentLines: [],
-					inTags: true,
-					level: head.level
-				};
-				continue;
+				current = { title: head.title, contentLines: [], level: head.level, line: ln };
+				return;
 			}
-			// A standalone `{{slot:target}}` line is a block-level transclude
-			// slot: it ends the current section and becomes its own ordered
-			// item (no heading, no body). Its identity is the target, in the
-			// text — so it reorders / round-trips like any other block.
+			// A standalone `{{slot:target}}` line is a block-level transclude.
 			const slotMatch = line.trim().match(/^\{\{slot:([^}|#]+)\}\}$/);
 			if (slotMatch) {
-				if (current) {
-					sections.push({
-						title: current.title,
-						tags: current.tags,
-						content: current.contentLines.join('\n').trim(),
-						level: current.level
-					});
-					current = null;
-				}
+				finish();
 				inDocHeader = false;
-				sections.push({ title: '', tags: [], content: '', level: 2, slot: slotMatch[1].trim() });
-				continue;
+				sections.push({ title: '', content: '', level: 2, line: ln, slot: slotMatch[1].trim() });
+				return;
 			}
+			const open = fenceOpen(line, style);
+			if (open) fence = open;
 			if (inDocHeader) {
-				if (docInTags) {
-					const parsed = parseTagLine(line);
-					if (parsed) {
-						docTags.push(...parsed);
-						continue;
-					}
-					docInTags = false;
-				}
-				// Skip blank lines in header before first section
-				if (line.trim() === '') continue;
-				// Non-heading content before any section — start an untitled section
+				if (line.trim() === '') return;
+				// Content before any section — an untitled section.
 				inDocHeader = false;
-				current = { title: '', tags: [], contentLines: [line], inTags: false, level: 2 };
+				current = { title: '', contentLines: [line], level: 2, line: ln };
 			} else if (current) {
-				if (current.inTags) {
-					const parsed = parseTagLine(line);
-					if (parsed) {
-						current.tags.push(...parsed);
-					} else {
-						current.inTags = false;
-						current.contentLines.push(line);
-					}
-				} else {
-					current.contentLines.push(line);
-				}
+				current.contentLines.push(line);
 			}
-		}
-		// Finish last section
-		if (current) {
-			sections.push({
-				title: current.title,
-				tags: current.tags,
-				content: current.contentLines.join('\n').trim(),
-				level: current.level
-			});
-		}
-		return { title: docTitle, hasTitle, tags: docTags, sections };
+		});
+		finish();
+		return { title: docTitle, hasTitle, sections };
 	}
 
 	// Reconcile parsed sections with existing compose sections. Carries
@@ -714,7 +584,8 @@
 		const parsed = parseAll(text);
 		const oldSections = compose.sections;
 
-		// Match parsed sections to existing by position, create new for extras
+		// Match parsed sections to existing by position, create new for extras.
+		// Tags live in the tags panel, on the item — they follow by position.
 		const newSections: ContextItem[] = parsed.sections.map((p, i) => {
 			const existing = i < oldSections.length ? oldSections[i] : null;
 			if (existing) {
@@ -722,7 +593,6 @@
 					...existing,
 					title: p.title,
 					content: p.content,
-					tags: p.tags,
 					level: p.level,
 					slot: p.slot,
 					modified: p.content !== existing.original_content
@@ -733,7 +603,7 @@
 				title: p.title,
 				content: p.content,
 				context_content: p.content,
-				tags: p.tags,
+				tags: [],
 				level: p.level,
 				slot: p.slot,
 				original_content: '',
@@ -746,10 +616,11 @@
 			};
 		});
 
-		// Plain-mode re-parse keeps the document's format (per-section overrides
-		// are per-card state and don't survive a plain round trip, like tags).
-		onupdate({ title: parsed.title, format: compose.format, tags: parsed.tags, sections: newSections });
-		return { title: parsed.title, format: compose.format, tags: parsed.tags, sections: newSections };
+		const next = { ...compose, title: parsed.title, tags: compose.tags, sections: newSections };
+		// Our own commit: the text already says this — don't re-serialize it.
+		knownSectionFp = sectionFp(newSections);
+		onupdate(next);
+		return { title: parsed.title, format: compose.format, tags: compose.tags, sections: newSections };
 	}
 
 	// Detected structure for plain mode sidebar
@@ -763,12 +634,12 @@
 			return {
 				title: '',
 				hasTitle: false,
-				tags: [] as TagEntry[],
 				sections: [] as {
 					title: string;
 					item: ContextItem | null;
 					index: number;
 					level: number;
+					line: number;
 					slot?: string;
 				}[]
 			};
@@ -777,10 +648,16 @@
 		return {
 			title: parsed.title,
 			hasTitle: parsed.hasTitle,
-			tags: parsed.tags,
 			sections: parsed.sections.map((p, i) => {
 				const existing = i < oldSections.length ? oldSections[i] : null;
-				return { title: p.title, item: existing, index: i, level: p.level, slot: p.slot };
+				return {
+					title: p.title,
+					item: existing,
+					index: i,
+					level: p.level,
+					line: p.line,
+					slot: p.slot
+				};
 			})
 		};
 	});
@@ -909,15 +786,16 @@
 	const hasDocTitle = $derived(
 		mode === 'plain' ? detectedState.hasTitle : compose.title.trim().length > 0
 	);
-	const isNotes = $derived(!isAtomic && hasSections && !hasDocTitle);
+	// Notes: picked in the Type select, or a publication with no title line.
+	const isNotes = $derived(!isAtomic && hasSections && (app.composeNotes || !hasDocTitle));
 
 	// Fingerprint of section identity + lock/divergence state, so we can
 	// detect external changes. readonly/modified flips cover the badge
 	// lock-to-source cycle, which resets content to the original — the
 	// editor text must follow.
 	let knownSectionFp = $state('');
-	function sectionFp(): string {
-		return compose.sections
+	function sectionFp(sections: ContextItem[] = compose.sections): string {
+		return sections
 			.map((s) => `${s.id}:${s.readonly ? 1 : 0}:${sectionDiverged(s) ? 1 : 0}`)
 			.join('|');
 	}
@@ -948,7 +826,6 @@
 			if (next === 'plain') {
 				plainText = serializeAll();
 				knownSectionFp = sectionFp();
-				prevDelimiter = effectiveDelim();
 			} else if (appliedMode === 'plain') {
 				handlePlainFullEdit(plainText);
 			}
@@ -966,129 +843,26 @@
 		};
 	});
 
-	// --- Trash state ---
-
-	function clearTrash() {
-		trashPending = [];
-		trashCountdown = 0;
-		if (trashTimer) clearTimeout(trashTimer);
-		trashTimer = null;
-		if (countdownInterval) clearInterval(countdownInterval);
-		countdownInterval = null;
-	}
-
-	const trashActive = $derived(trashPending.length > 0);
-
 	// --- Section handlers ---
-
-	function toggleCheck(id: string) {
-		const next = new Set(checkedIds);
-		if (next.has(id)) next.delete(id);
-		else next.add(id);
-		checkedIds = next;
-		clearTrash();
-	}
-
-	function toggleCollapse(id: string) {
-		const next = new Set(collapsedIds);
-		if (next.has(id)) next.delete(id);
-		else next.add(id);
-		collapsedIds = next;
-	}
-
-	function toggleAllCollapsed() {
-		if (allCollapsed) {
-			collapsedIds = new Set();
-		} else {
-			collapsedIds = new Set(compose.sections.map((s) => s.id));
-		}
-	}
-
-	const allCollapsed = $derived(
-		compose.sections.length > 0 && compose.sections.every((s) => collapsedIds.has(s.id))
-	);
-
-	// Toolbar actions work across all modes via compose.sections
-	function toolbarSendToChat() {
-		const items = compose.sections.filter((s) => checkedIds.has(s.id));
-		if (items.length > 0) {
-			onsendtochat(items);
-			checkedIds = new Set();
-		}
-		clearTrash();
-	}
-
-	function toolbarPublish() {
-		publishSelected();
-		clearTrash();
-	}
-
-	function toolbarTrash() {
-		if (trashPending.length > 0) {
-			ondeletepermanent(trashPending);
-			checkedIds = new Set();
-			clearTrash();
-			return;
-		}
-		const items = compose.sections.filter((s) => checkedIds.has(s.id));
-		if (items.length === 0) return;
-		ondelete(items);
-		trashPending = items;
-		checkedIds = new Set();
-		trashCountdown = 10;
-		trashTimer = setTimeout(clearTrash, 10000);
-		countdownInterval = setInterval(() => {
-			trashCountdown--;
-			if (trashCountdown <= 0) clearTrash();
-		}, 1000);
-	}
-
-	function toolbarSelectAll() {
-		checkedIds = new Set(compose.sections.map((s) => s.id));
-	}
-
-	function toolbarInvert() {
-		const next = new Set<string>();
-		for (const s of compose.sections) {
-			if (!checkedIds.has(s.id)) next.add(s.id);
-		}
-		checkedIds = next;
-	}
 
 	function handlePlainBlur() {
 		handlePlainFullEdit(plainText);
-	}
-
-	function updateTitle(e: Event) {
-		onupdate({ ...compose, title: (e.target as HTMLInputElement).value });
 	}
 
 	function updateTags(tags: TagEntry[]) {
 		onupdate({ ...compose, tags });
 	}
 
-	function updateSection(id: string, title: string, content: string) {
-		const sections = compose.sections.map((s) =>
-			s.id === id ? { ...s, title, content, modified: content !== s.original_content } : s
-		);
-		onupdate({ ...compose, sections });
-	}
-
-	function updateSectionTags(id: string, tags: TagEntry[]) {
-		const sections = compose.sections.map((s) => (s.id === id ? { ...s, tags } : s));
-		onupdate({ ...compose, sections });
-	}
-
-	function updateSectionFormat(id: string, format: string | undefined) {
-		const sections = compose.sections.map((s) => (s.id === id ? { ...s, format } : s));
-		onupdate({ ...compose, sections });
-	}
-
-	function resetSection(id: string) {
-		const sections = compose.sections.map((s) =>
-			s.id === id ? { ...s, content: s.original_content, modified: false } : s
-		);
-		onupdate({ ...compose, sections });
+	function updateSectionTags(index: number, tags: TagEntry[]) {
+		// Commit the live text first so a section typed since the last blur
+		// has its item, then set the tags on it.
+		const { sections } = handlePlainFullEdit(plainText);
+		const target = sections[index];
+		if (!target) return;
+		onupdate({
+			...compose,
+			sections: compose.sections.map((s) => (s.id === target.id ? { ...s, tags } : s))
+		});
 	}
 
 	function removeSection(id: string) {
@@ -1117,32 +891,125 @@
 	// Mirror ReaderBuffer's bulk-lock affordance: a section is "lockable"
 	// when imported and currently locked (can be unlocked), and "unlocked"
 	// when imported, unlocked, and unmodified (can be re-locked cleanly).
-	const anyLockable = $derived(
-		compose.sections.some((s) => s.source_addr && s.readonly)
-	);
+	const anyLockable = $derived(compose.sections.some((s) => s.source_addr && s.readonly));
 	const anyUnlocked = $derived(
 		compose.sections.some((s) => s.source_addr && !s.readonly && s.content === s.original_content)
 	);
 
-	function addSection() {
-		const item: ContextItem = {
-			id: crypto.randomUUID(),
-			title: '',
-			content: '',
-			context_content: '',
-			tags: [],
-			original_content: '',
-			modified: false,
-			in_context: false,
-			in_compose: true,
-			held: false,
-			origin: 'compose' as const,
-			// Default-locked. The user explicitly unlocks (yellow) before
-			// editing, matching the model used for transcluded sections.
-			readonly: true
-		};
-		onupdate({ ...compose, sections: [...compose.sections, item] });
+	// --- The rendered editor ---
+
+	/** Rendered / Show markers / Source — per-viewer, remembered. */
+	const VIEW_KEY = 'tendrl.compose.view';
+	function loadView(): ViewMode {
+		try {
+			const v = localStorage.getItem(VIEW_KEY);
+			if (v === 'rendered' || v === 'markers' || v === 'source') return v;
+		} catch {
+			/* storage blocked */
+		}
+		return 'rendered';
 	}
+	let viewMode = $state<ViewMode>(loadView());
+	function setViewMode(v: ViewMode) {
+		viewMode = v;
+		try {
+			localStorage.setItem(VIEW_KEY, v);
+		} catch {
+			/* storage blocked */
+		}
+	}
+
+	// One compartment per editor surface (plain + atomic), reconfigured when
+	// the style or the view changes; the document is never rewritten.
+	const plainLook = new Compartment();
+	const atomicLook = new Compartment();
+	/** Bumped on every editor update — the toolbar re-reads the heading level,
+	 *  the rail re-reads the cursor's section. */
+	let edVersion = $state(0);
+	let cursorLine = $state(0);
+	const tracker = EditorView.updateListener.of((u) => {
+		if (u.selectionSet || u.docChanged) {
+			cursorLine = u.state.doc.lineAt(u.state.selection.main.head).number - 1;
+			edVersion++;
+		}
+	});
+	const plainExt = [
+		...nostrdownExt,
+		plainLook.of(wysiwyg(asStyle(app.composeFormat), loadView())),
+		lockedRanges(),
+		wysiwygTheme,
+		tracker
+	];
+	const atomicExt = [
+		...nostrdownExt,
+		atomicLook.of(wysiwyg(asStyle(app.composeFormat), loadView())),
+		wysiwygTheme,
+		tracker
+	];
+	$effect(() => {
+		const ext = wysiwyg(style, viewMode);
+		untrack(() => {
+			plainCmView?.dispatch({ effects: plainLook.reconfigure(ext) });
+			atomicCmView?.dispatch({ effects: atomicLook.reconfigure(ext) });
+		});
+	});
+
+	/** The section the cursor is in (outline index), or -1 before the first. */
+	const cursorSection = $derived.by(() => {
+		let at = -1;
+		for (const d of detectedSections) if (d.line <= cursorLine) at = d.index;
+		return at;
+	});
+
+	// Locked sections (a placed edit's siblings, imported sections not yet
+	// claimed) are read-only ranges in the editor: their heading line through
+	// the line before the next section.
+	$effect(() => {
+		const view = plainCmView;
+		if (!view || mode !== 'plain') return;
+		void knownSectionFp;
+		const text = plainText;
+		untrack(() => {
+			const parsed = parseAll(text);
+			const lineStarts: number[] = [0];
+			for (let i = 0; i < text.length; i++) if (text[i] === '\n') lineStarts.push(i + 1);
+			const ranges: { from: number; to: number }[] = [];
+			parsed.sections.forEach((p, i) => {
+				const item = compose.sections[i];
+				if (!item?.readonly || !item.source_addr) return;
+				const from = lineStarts[p.line] ?? text.length;
+				const nextLine = parsed.sections[i + 1]?.line;
+				const to = nextLine !== undefined ? (lineStarts[nextLine] ?? text.length) : text.length;
+				ranges.push({ from, to });
+			});
+			// Re-sent on every change (a whole-doc sync collapses the old
+			// ranges); skipped only while there is nothing to lock.
+			if (ranges.length === 0 && !hadLocked) return;
+			hadLocked = ranges.length > 0;
+			view.dispatch({ effects: setLocked.of(ranges) });
+		});
+	});
+	let hadLocked = false;
+
+	/** Jump the editor to a section from the outline. */
+	function jumpTo(line: number) {
+		const view = plainCmView;
+		if (!view) return;
+		const pos = view.state.doc.line(Math.min(line + 1, view.state.doc.lines)).from;
+		view.dispatch({ selection: { anchor: pos }, scrollIntoView: true });
+		view.focus();
+	}
+
+	/** Tags panel tab: the publication's (or the event's) tags, or the
+	 *  cursor's section. */
+	let railTab = $state<'doc' | 'section'>('doc');
+	const autoDocTags = $derived(
+		isAtomic
+			? ['d', 'title', `m ${composeFormat}`]
+			: isNotes
+				? []
+				: ['d', 'title', 'a × ' + detectedSections.length, 'auto-update']
+	);
 
 	function publishAll() {
 		if (isAtomic) {
@@ -1231,49 +1098,19 @@
 		}
 		onpreview(sections, meta);
 	}
-
-	function publishSelected() {
-		let all: ContextItem[];
-		let meta: { title: string; tags: TagEntry[] } | undefined;
-		if (mode === 'plain') {
-			const parsed = handlePlainFullEdit(plainText);
-			all = parsed.sections;
-			meta = { title: parsed.title, tags: parsed.tags };
-		} else {
-			all = compose.sections;
-		}
-		const items = all.filter((s) => checkedIds.has(s.id));
-		if (items.length === 0) return;
-		const claimedInSelection = items.filter(
-			(s) => s.source_addr && !s.readonly && s.content === s.original_content
-		);
-		if (claimedInSelection.length > 0) {
-			const n = claimedInSelection.length;
-			const ok = confirm(
-				`You've left ${n} of the selected section${n === 1 ? '' : 's'} unlocked but haven't modified ${n === 1 ? 'it' : 'them'}. Publish anyway?`
-			);
-			if (!ok) return;
-		}
-		onpublish(items, meta);
-		checkedIds = new Set();
-	}
 </script>
 
 <div class="compose-view">
 	<div class="compose-mode-bar" data-tour="compose-modebar">
-		<!-- Output kind. Publication parses the editor into a 30040/30041
-		     section graph; Blog/Wiki/Custom publish the whole body as a single
-		     atomic event of that kind. The numeric input lets the user pick any
-		     replaceable kind directly. -->
-		<label class="kind-group" data-tour="compose-kind" title="Output kind — Publication (30040/41 section graph) or a single atomic event (blog/wiki/custom)">
-			<span class="kind-label">kind</span>
-			<select
-				class="kind-select"
-				value={isCustomKind ? -1 : composeKind}
-				onchange={onKindSelect}
-			>
-				{#each KIND_PRESETS as preset (preset.kind)}
-					<option value={preset.kind}>{preset.label}</option>
+		<!-- Type: what a Sign publishes. Publication parses the editor into a
+		     30040/30041 graph; Notes publishes each section as a standalone
+		     30041; Wiki / Spec / Blog / Custom publish the whole body as one
+		     event of that kind. -->
+		<label class="kind-group" data-tour="compose-kind" title="Type — what a Sign publishes">
+			<span class="kind-label">Type</span>
+			<select class="kind-select" value={typeValue} onchange={onKindSelect}>
+				{#each KIND_PRESETS as preset (preset.value)}
+					<option value={preset.value}>{preset.label}</option>
 				{/each}
 			</select>
 			{#if isCustomKind}
@@ -1283,90 +1120,47 @@
 					min="0"
 					value={composeKind}
 					oninput={onCustomKind}
+					aria-label="Event kind number"
 					title="Event kind number"
 				/>
 			{/if}
 		</label>
-		<!-- Content format — stamped by the engine as every section's `m`
-		     mimetype tag (never on the index). Each section card can override
-		     it; the default here is what "inherit" means. -->
-		<label class="kind-group" data-tour="compose-format" title="Content format of the sections (their m tag). Readers pick a rendering layer from it; a section's own select overrides this default.">
-			<span class="kind-label">format</span>
+		<!-- Style: the markup the editor reads and the toolbar writes, stamped
+		     as every section's `m` tag. Changing it re-reads the text as the new
+		     style; nothing is converted. -->
+		<label class="kind-group" data-tour="compose-format" title="Style — the markup of the text (its m tag). Changing it re-reads the text; nothing is converted.">
+			<span class="kind-label">Style</span>
 			<select
 				class="kind-select"
 				value={composeFormat}
 				onchange={(e) => (app.composeFormat = e.currentTarget.value)}
 			>
 				{#each CANONICAL_MIMETYPES as mt (mt)}
-					<option value={mt}>{FORMAT_LABEL[mt]}</option>
+					<option value={mt}
+						>{FORMAT_LABEL[mt]}{KIND_STYLE[composeKind] === mt ? ' · kind default' : ''}</option
+					>
 				{/each}
 			</select>
 		</label>
-		{#if !isAtomic}
-			<!-- Output shape, AUTO-DETECTED from the document title and shown read-
-			     only so the user can see what a Sign will publish: a title binds
-			     the sections into one Publication (30040 index + 30041s); no title
-			     means scattered Notes (each section a standalone 30041, no index).
-			     Same parsed sections either way. -->
-			<span
-				class="pub-shape"
-				data-tour="compose-shape"
-				class:pub-shape--notes={isNotes}
-				title={isNotes
-					? 'Notes — no document title, so each section publishes as a standalone 30041 (no 30040 index). Add a title to bind them into one Publication.'
-					: 'Publication — one 30040 index over the parsed 30041 sections. Remove the title to publish them as standalone Notes instead.'}
-			>{isNotes ? 'Notes' : 'Publication'}</span>
-			<!-- The view starts on the user's compose-default setting (full/plain)
-			     and stays switchable here. Normal-mode h/l still toggles it; this
-			     segmented control gives a click target that doesn't depend on vim
-			     mode. Preview is its own toggle (the Read button on the right). -->
-			<div class="mode-toggle" role="group" aria-label="Editor view" data-tour="compose-view">
-				<button
-					class="mode-seg"
-					class:mode-seg--on={mode === 'full'}
-					onclick={() => (mode = 'full')}
-					title="Full view — structured section cards"
-				>full</button>
-				<button
-					class="mode-seg"
-					class:mode-seg--on={mode === 'plain'}
-					onclick={() => (mode = 'plain')}
-					title="Plain view — one plain-text editor with a live detected-section outline"
-				>plain</button>
-			</div>
-			<div class="delim-group" data-tour="compose-nest">
-				<span class="delim-label">delim</span>
-				<input
-					class="delim-input"
-					bind:value={delimiter}
-					placeholder="="
-					maxlength="2"
-				/>
-			</div>
-			<label
-				class="nest-group"
-				title="Parse level — how deep the outline nests into 30040 indices. flat = one index over a flat list of sections (deeper headings stay as content); each higher level turns one more heading tier into nested sub-indices and folds anything below it into content."
+		<label class="kind-group" data-tour="compose-view" title="View — Rendered hides the markup; Show markers dims it; Source is the plain text">
+			<span class="kind-label">View</span>
+			<select
+				class="kind-select"
+				value={viewMode}
+				onchange={(e) => setViewMode(e.currentTarget.value as ViewMode)}
 			>
-				<span class="nest-label">nest</span>
-				<select class="nest-select" bind:value={parseLevel}>
-					<option value={2}>flat</option>
-					<option value={3}>1 tier</option>
-					<option value={4}>2 tiers</option>
-					<option value={5}>3 tiers</option>
-				</select>
-			</label>
-		{/if}
+				<option value="rendered">Rendered</option>
+				<option value="markers">Show markers</option>
+				<option value="source">Source</option>
+			</select>
+		</label>
 		<span class="bar-sp"></span>
-		<!-- Bulk lock/unlock mirrors ReaderBuffer's draft toolbar so the
-		     read↔edit transition keeps the same affordances at the same
-		     on-screen level. Gated on a source publication since there's
-		     nothing to lock against in a from-scratch draft. -->
 		{#if compose.source_publication_addr && !isAtomic}
 			<button
 				class="bulk-btn"
 				onclick={unlockAllImported}
 				disabled={!anyLockable}
-				title="Unlock all imported sections (yellow — claimed for reorder/edit)"
+				title="Unlock every section of the publication for editing"
 			>Unlock all</button>
 			<button
 				class="bulk-btn"
@@ -1375,27 +1169,13 @@
 				title="Re-lock unlocked sections that haven't been modified"
 			>Lock all</button>
 		{/if}
-		<!-- Reference builder + autocomplete checkbox — lead the affordance cluster. -->
-		<button
-			class="affordance affordance--ref"
-			onclick={openRefBuilder}
-			title="Insert a reference — build a ref / wiki / embed / slot / quote / mention token at the cursor"
-			aria-label="Insert reference"
-			data-tour="compose-ref"
-		>&lbrace;&lbrace; &rbrace;&rbrace;</button>
 		<label
 			class="ref-auto"
 			title="Inline autocomplete — suggest ref / wiki / embed / quote as you type the brace syntax in the editor"
 		>
 			<input type="checkbox" bind:checked={autocompleteOn} />
-			auto
+			auto refs
 		</label>
-		<!-- Read mirrors ReaderBuffer's "Edit" button — same on-screen
-		     position (toolbar far-right) so the Edit↔Read swap reads as
-		     a single mode toggle. When a source pub exists we navigate to
-		     its ReaderBuffer; for from-scratch drafts we fall back to
-		     inline DraftReader. Green to signal "read view" symmetric to
-		     Edit. Publication-only: an atomic event has no section tree to read. -->
 		{#if !isAtomic}
 			<button
 				class="read-btn"
@@ -1420,12 +1200,6 @@
 				class:active={mode === 'preview'}
 				title="Preview the draft in a separate buffer"
 			>Read</button>
-		{/if}
-		<!-- Composer's own affordances, mirroring the mode-line's W / ? pair: W
-		     opens this buffer's walkthrough menu (every composer tutorial), ?
-		     opens the flat reference. Each menu row carries a plain/full tag and,
-		     when picked, switches the editor to that view before running. -->
-		{#if !isAtomic}
 			<div class="compose-walk">
 				<button
 					class="affordance affordance--walkthrough"
@@ -1447,7 +1221,6 @@
 									title={discovery.seen.includes(t.key) ? 'Run before' : 'Not run yet'}
 								>{discovery.seen.includes(t.key) ? '✓' : '·'}</span>
 								<span class="walk-title">{TIPS[t.key]?.title ?? t.key}</span>
-								{#if t.mode}<span class="walk-mode">{t.mode}</span>{/if}
 							</button>
 						{/each}
 					</div>
@@ -1457,196 +1230,141 @@
 		<button
 			class="affordance affordance--help"
 			onclick={openComposeHelp}
-			title="Composer reference — modes, the section model, and draft → sign → broadcast"
+			title="Composer reference — the editor, sections, tags, and draft → sign → broadcast"
 			aria-label="Composer help"
 		>?</button>
 	</div>
 
-	<!-- Title + tags and the selection toolbar are factored into snippets so
-	     full mode can anchor them (sticky) at the top of its single scroll
-	     region (feed-style), while plain mode renders just the toolbar and
-	     preview renders neither. -->
-	{#snippet composeHeader()}
-		<div class="compose-header" class:compose-header--collapsed={headerCollapsed}>
-			<div class="compose-title-row">
-				<button
-					class="collapse-toggle"
-					onclick={() => (headerCollapsed = !headerCollapsed)}
-					title={headerCollapsed ? 'Expand publication tags' : 'Collapse to title only'}
-					aria-expanded={!headerCollapsed}
-				>{headerCollapsed ? '▸' : '▾'}</button>
-				<input
-					class="compose-title"
-					value={compose.title}
-					oninput={updateTitle}
-					placeholder="Publication title"
-				/>
-				{#if headerCollapsed && compose.tags.length > 0}
-					<span class="header-tag-count" title="{compose.tags.length} publication tag{compose.tags.length === 1 ? '' : 's'}">{compose.tags.length} tag{compose.tags.length === 1 ? '' : 's'}</span>
-				{/if}
-			</div>
-			{#if !headerCollapsed}
-				<TagEditor tags={compose.tags} onupdate={updateTags} />
-			{/if}
-		</div>
-	{/snippet}
-
-	{#snippet composeToolbar()}
-		<div class="compose-toolbar" data-tour="compose-toolbar">
-			<button class="sel-btn" onclick={toolbarSelectAll} disabled={compose.sections.length === 0} title="Select all">All</button>
-			<button class="sel-btn" onclick={toolbarInvert} disabled={compose.sections.length === 0} title="Invert selection">Inv</button>
-			<button class="icon-btn" onclick={toolbarSendToChat} disabled={checkedIds.size === 0} title="Send to chat">◂</button>
-			<button class="icon-btn" onclick={toolbarPublish} disabled={checkedIds.size === 0} title="Publish locally">▸</button>
-			<button
-				class="icon-btn trash-btn"
-				class:trash-armed={trashActive}
-				onclick={toolbarTrash}
-				disabled={checkedIds.size === 0 && !trashActive}
-				title={trashActive ? 'Delete everywhere' : 'Remove from compose'}
-			>🗑</button>
-			{#if trashActive}
-				<span class="trash-warn" style:opacity={trashCountdown / 10}>delete everywhere ({trashCountdown}s)</span>
-			{/if}
-			<span class="toolbar-sp"></span>
-			<button
-				class="sel-btn"
-				onclick={toggleAllCollapsed}
-				disabled={compose.sections.length === 0}
-				title={allCollapsed ? 'Expand all sections' : 'Collapse all sections to titles'}
-			>{allCollapsed ? '▾ all' : '▸ all'}</button>
-		</div>
-	{/snippet}
-
-	<!-- Atomic mode = one title + tags header over a single body editor. No
-	     section parsing, delimiter, or nesting — the whole body is one event of
-	     the selected kind (blog/wiki/custom). -->
-	{#if isAtomic}
-		<div class="compose-content compose-content--scroll">
-			<div class="compose-stick">
-				{@render composeHeader()}
-			</div>
-			<div class="atomic-editor-wrap" data-tour="compose-atomic">
-				{#if atomicParsed.tags.length > 0}
-					<div class="atomic-detected" title="Parsed from leading :tag: lines in the body and merged with the header tags">
-						<span class="atomic-detected-label">tags from body</span>
-						{#each atomicParsed.tags as t, i (i)}
-							<span class="atomic-tag-chip">{t.name === 't' ? `#${t.value}` : `${t.name}: ${t.value}`}</span>
-						{/each}
-					</div>
-				{/if}
-				<CodeMirrorEditor
-					bind:value={app.composeAtomicBody}
-					bind:editorView={atomicCmView}
-					{lineNumbers}
-					{vimMode}
-					extensions={nostrdownExt}
-				/>
-			</div>
-		</div>
-	<!-- Full mode = the feed's shape: title + tags and the selection toolbar
-	     anchored (sticky) at the top of one scroll region; sections appended
-	     below and scrolling under them. One window, not two competing panes. -->
-	{:else if mode === 'full'}
-		<div class="compose-content compose-content--scroll">
-			<div class="compose-stick">
-				{@render composeHeader()}
-				{@render composeToolbar()}
-			</div>
-			<div class="compose-sections" data-tour="compose-sections" bind:this={sectionsListEl}>
-				{#each compose.sections as section, i (section.id)}
-					<div
-						class="compose-section-row"
-						class:compose-section-row--cursor={i === cursor}
-						data-cursor={i}
+	{#snippet tagsRail(sectionTabs: boolean)}
+		<div class="rail-tags" data-tour="compose-tags">
+			{#if sectionTabs}
+				<div class="rail-tabs" role="tablist" aria-label="Tags of">
+					<button
+						role="tab"
+						aria-selected={railTab === 'doc'}
+						class:on={railTab === 'doc'}
+						onclick={() => (railTab = 'doc')}>{isNotes ? 'All notes' : 'Publication'}</button
 					>
-						<ComposeSection
-							{section}
-							{syncMode}
-							checked={checkedIds.has(section.id)}
-							collapsed={collapsedIds.has(section.id)}
-							oncheck={toggleCheck}
-							oncollapse={toggleCollapse}
-							onupdate={updateSection}
-							onupdatetags={updateSectionTags}
-							onupdateformat={updateSectionFormat}
-							inheritedFormat={composeFormat}
-							onreset={resetSection}
-							onremove={removeSection}
-							onsendtochat={onsenditemtochat}
-							{ontogglereadonly}
-							{onlocksource}
-							{oncrosspanelcopy}
-							onreorder={onreorder}
-							isFirst={i === 0}
-							isLast={i === compose.sections.length - 1}
+					<button
+						role="tab"
+						aria-selected={railTab === 'section'}
+						class:on={railTab === 'section'}
+						disabled={cursorSection < 0}
+						title={cursorSection < 0 ? 'Put the cursor in a section' : ''}
+						onclick={() => (railTab = 'section')}
+						>{cursorSection >= 0
+							? detectedSections[cursorSection]?.title || '[Untitled]'
+							: 'Section'}</button
+					>
+				</div>
+			{:else}
+				<div class="rail-head">Tags</div>
+			{/if}
+			{#if sectionTabs && railTab === 'section' && cursorSection >= 0}
+				{@const det = detectedSections[cursorSection]}
+				<TagsPanel
+					tags={det?.item?.tags ?? []}
+					disabled={!!det?.item?.readonly && !!det?.item?.source_addr}
+					auto={['d', 'title', `m ${det?.item?.format ?? composeFormat}`]}
+					empty="No tags on this section."
+					onupdate={(t) => updateSectionTags(cursorSection, t)}
+				/>
+			{:else}
+				<TagsPanel tags={compose.tags} auto={autoDocTags} onupdate={updateTags} />
+			{/if}
+		</div>
+	{/snippet}
+
+	{#if isAtomic}
+		<div class="compose-content">
+			<div class="plain-layout" class:plain-layout--closed={!detectedOpen}>
+				<div class="plain-editor-wrap editor-col" data-tour="compose-atomic">
+					{#if viewMode !== 'source'}
+						<FormatToolbar view={atomicCmView} {style} version={edVersion} onref={openRefBuilder} />
+					{/if}
+					<div class="editor-host">
+						<CodeMirrorEditor
+							bind:value={app.composeAtomicBody}
+							bind:editorView={atomicCmView}
+							{lineNumbers}
+							{vimMode}
+							extensions={atomicExt}
 						/>
 					</div>
-				{/each}
+				</div>
+				<div class="detected-sections">
+					<button
+						class="detected-toggle"
+						onclick={() => (detectedOpen = !detectedOpen)}
+						aria-expanded={detectedOpen}
+					>
+						<span class="ptr">{detectedOpen ? '▾' : '▸'}</span>
+						{atomicParsed.title || '[No title — start with a level-1 heading]'}
+					</button>
+					{#if detectedOpen}
+						{@render tagsRail(false)}
+					{/if}
+				</div>
 			</div>
 		</div>
 	{:else if mode === 'plain'}
-		{@render composeToolbar()}
 		<div class="compose-content">
 			<div class="plain-layout" class:plain-layout--closed={!detectedOpen} data-tour="compose-plain">
-				<div class="plain-editor-wrap">
-					<CodeMirrorEditor
-						bind:value={plainText}
-						bind:editorView={plainCmView}
-						{lineNumbers}
-						{vimMode}
-						onBlur={handlePlainBlur}
-						extensions={nostrdownExt}
-					/>
+				<div class="plain-editor-wrap editor-col">
+					{#if viewMode !== 'source'}
+						<FormatToolbar view={plainCmView} {style} version={edVersion} onref={openRefBuilder} />
+					{/if}
+					<div class="editor-host">
+						<CodeMirrorEditor
+							bind:value={plainText}
+							bind:editorView={plainCmView}
+							{lineNumbers}
+							{vimMode}
+							onBlur={handlePlainBlur}
+							extensions={plainExt}
+						/>
+					</div>
 				</div>
 				<div class="detected-sections" data-tour="compose-detected">
-					<!-- Caret-collapsible: at phone width the fixed sidebar left
-					     ~half the width for text; closed, the panel folds to a
-					     slim bar under the editor and the editor takes it all. -->
 					<button
 						class="detected-toggle"
 						onclick={() => (detectedOpen = !detectedOpen)}
 						aria-expanded={detectedOpen}
 						title={detectedOpen
-							? 'Hide the detected-section outline — the editor takes the full width'
-							: 'Show the live detected-section outline'}
+							? 'Hide the outline — the editor takes the full width'
+							: 'Show the outline and tags'}
 					>
 						<span class="ptr">{detectedOpen ? '▾' : '▸'}</span>
-						Detected ({detectedSections.length})
+						Outline ({detectedSections.length})
 					</button>
 					{#if detectedOpen}
 					<div class="detected-row detected-doc-title">
-						<span class="detected-label">title</span>
-						<span class="detected-title">{detectedState.title || '[No title]'}</span>
+						<span class="detected-label">{isNotes ? 'notes' : 'title'}</span>
+						<span class="detected-title">{isNotes ? 'no index — each section is a note' : detectedState.title || '[No title]'}</span>
 					</div>
-					{#if detectedState.tags.length > 0}
-						<div class="detected-row">
-							<span class="detected-label">tags</span>
-							<span class="detected-title">{detectedState.tags.length}</span>
-						</div>
-					{/if}
 					{#each detectedSections as det, di (det.index)}
 						<div
 							class="detected-row"
 							class:detected-row--nested={det.level > 2}
 							class:detected-row--slot={!!det.slot}
+							class:detected-row--cur={di === cursorSection}
 							style="--depth: {Math.max(0, det.level - 2)}"
 						>
 							{#if det.slot}
 								<span class="detected-title detected-slot" title={det.slot}>⧉ slot · {slotLabel(det.slot)}</span>
-							{:else if det.item}
-								<label class="check">
-									<input
-										type="checkbox"
-										checked={checkedIds.has(det.item.id)}
-										onchange={() => toggleCheck(det.item!.id)}
-									/>
-								</label>
-								<span class="detected-title">{det.title || '[Untitled]'}</span>
-								<ItemBadge item={det.item} {syncMode} panel="compose" {ontogglereadonly} {onlocksource} {oncrosspanelcopy} />
-								<button class="icon-btn-sm" onclick={() => onsenditemtochat(det.item!.id)} title="Send to chat">◂</button>
 							{:else}
-								<span class="detected-title detected-new">{det.title || '[Untitled]'}</span>
-								<span class="badge badge-new">new</span>
+								<button
+									class="detected-title detected-jump"
+									class:detected-new={!det.item}
+									onclick={() => jumpTo(det.line)}
+									title="Go to this section">{det.title || '[Untitled]'}</button
+								>
+								{#if det.item}
+									<ItemBadge item={det.item} {syncMode} panel="compose" {ontogglereadonly} {onlocksource} {oncrosspanelcopy} />
+									<button class="icon-btn-sm" onclick={() => onsenditemtochat(det.item!.id)} title="Send to chat" aria-label="Send to chat">◂</button>
+								{:else}
+									<span class="badge badge-new">new</span>
+								{/if}
 							{/if}
 							<button
 								class="icon-btn-sm"
@@ -1666,21 +1384,18 @@
 					{/each}
 					{#if detectedSections.length === 0}
 						<div class="detected-empty">
-							Type {effectiveDelim()}{effectiveDelim()} heading to create a
-							section ({effectiveDelim()}{effectiveDelim()}{effectiveDelim()}+
-							for nested sub-sections)
+							Type <code>{headFor(2)}</code> (or press H2) to start a section;
+							<code>{headFor(3)}</code> nests one under it.
 						</div>
 					{/if}
+					{@render tagsRail(true)}
 					{/if}
 				</div>
 			</div>
 		</div>
 	{:else}
 		<div class="compose-content">
-			<!-- Preview = the read view of the current draft. Same lock/
-			     unlock/reorder affordances as ReaderBuffer; the surrounding
-			     edit chrome (title/tags + selection toolbar) is hidden so
-			     this reads as the read-mode equivalent of the draft. -->
+			<!-- Preview = the read view of the current draft. -->
 			<DraftReader
 				{compose}
 				{ontogglereadonly}
@@ -1714,9 +1429,6 @@
 	{/if}
 
 	<div class="compose-actions" data-tour="compose-actions">
-		{#if mode === 'full' && !isAtomic}
-			<button onclick={addSection}>+ Section</button>
-		{/if}
 		{#if onpreview}
 			<button
 				class="preview-events-btn"
@@ -1768,9 +1480,6 @@
 								? 'No structural change since the source publication — nothing to sign'
 								: 'Add or modify a section to enable signing'}
 			>Sign</button>
-			{#if checkedIds.size > 0}
-				<button class="publish-btn publish-selected" onclick={publishSelected}>Sign ({checkedIds.size})</button>
-			{/if}
 		{/if}
 		<button onclick={oncancel}>Cancel</button>
 	</div>
@@ -1840,33 +1549,6 @@
 	}
 
 	/* Segmented full/plain switch — a click target independent of vim mode. */
-	.mode-toggle {
-		display: inline-flex;
-		border: 1px solid var(--border);
-		border-radius: var(--radius);
-		overflow: hidden;
-	}
-	.mode-seg {
-		font-family: var(--font-mono);
-		font-size: var(--t-3xs);
-		color: var(--fg-muted);
-		text-transform: uppercase;
-		letter-spacing: 0.05em;
-		padding: 2px 8px;
-		background: transparent;
-		border: none;
-		cursor: pointer;
-	}
-	.mode-seg + .mode-seg {
-		border-left: 1px solid var(--border);
-	}
-	.mode-seg:hover {
-		color: var(--fg);
-	}
-	.mode-seg--on {
-		background: color-mix(in srgb, var(--id-yours) 22%, transparent);
-		color: var(--id-yours);
-	}
 
 	.kind-group {
 		display: flex;
@@ -1897,201 +1579,31 @@
 
 	/* Read-only output-shape indicator — auto-detected Publication vs Notes.
 	   Notes is the attention state (no index), so it's tinted accent. */
-	.pub-shape {
-		font-family: var(--font-mono);
-		font-size: var(--t-3xs);
-		text-transform: uppercase;
-		letter-spacing: 0.05em;
-		font-weight: 600;
-		padding: 2px 8px;
-		border-radius: var(--radius);
-		border: 1px solid var(--border);
-		color: var(--fg-muted);
-		cursor: default;
-		user-select: none;
-		white-space: nowrap;
-	}
-	.pub-shape--notes {
-		color: var(--accent);
-		border-color: var(--accent);
-		background: color-mix(in srgb, var(--accent) 14%, transparent);
-	}
 
 	/* Atomic body editor — fills the scroll region under the sticky header,
 	   same framing as the plain editor wrap. */
-	.atomic-editor-wrap {
-		flex: 1;
-		display: flex;
-		flex-direction: column;
-		min-height: 0;
-		padding: 12px;
-		gap: 8px;
-	}
 
 	/* Mirrors plain mode's "Detected" affordance: shows what the body's leading
 	   :tag: block parses to, so the stripped tags aren't invisible. */
-	.atomic-detected {
-		display: flex;
-		flex-wrap: wrap;
-		align-items: center;
-		gap: 6px;
-		flex-shrink: 0;
-	}
-	.atomic-detected-label {
-		font-size: var(--t-3xs);
-		font-weight: 600;
-		color: var(--fg-muted);
-		text-transform: uppercase;
-		letter-spacing: 0.05em;
-	}
-	.atomic-tag-chip {
-		font-family: var(--font-mono);
-		font-size: var(--t-3xs);
-		padding: 1px 6px;
-		border-radius: 4px;
-		background: color-mix(in srgb, var(--accent) 16%, transparent);
-		color: var(--accent);
-	}
 
-	.delim-group {
-		display: flex;
-		align-items: center;
-		gap: 6px;
-	}
 
-	.delim-label {
-		font-size: var(--t-2xs);
-		color: var(--fg-muted);
-		font-weight: 600;
-		text-transform: uppercase;
-		letter-spacing: 0.05em;
-	}
 
-	.delim-input {
-		width: 36px;
-		text-align: center;
-		font-family: var(--font-mono);
-		font-size: var(--t-xs);
-		font-weight: 700;
-		padding: 4px 6px;
-	}
 
-	.nest-group {
-		display: flex;
-		align-items: center;
-		gap: 6px;
-		cursor: pointer;
-		user-select: none;
-	}
-	.nest-label {
-		font-size: var(--t-2xs);
-		color: var(--fg-muted);
-		font-weight: 600;
-		text-transform: uppercase;
-		letter-spacing: 0.05em;
-	}
-	.nest-select {
-		font-family: var(--font-mono);
-		font-size: var(--t-2xs);
-		padding: 3px 6px;
-		cursor: pointer;
-	}
 
-	.compose-header {
-		display: flex;
-		flex-direction: column;
-		gap: 8px;
-		flex-shrink: 0;
-		max-height: 28vh;
-		overflow-y: auto;
-		padding-right: 4px;
-	}
 
-	.compose-header--collapsed {
-		max-height: none;
-		overflow-y: visible;
-	}
 
-	.compose-title-row {
-		display: flex;
-		align-items: center;
-		gap: 6px;
-	}
 
-	.compose-title-row .compose-title { flex: 1; }
 
-	.collapse-toggle {
-		font-size: var(--t-2xs);
-		padding: 0 4px;
-		min-width: 18px;
-		background: transparent;
-		border: none;
-		color: var(--fg-muted);
-		cursor: pointer;
-	}
-	.collapse-toggle:hover { color: var(--fg); }
 
-	.header-tag-count {
-		font-size: var(--t-3xs);
-		color: var(--fg-muted);
-		font-family: var(--font-mono);
-		text-transform: uppercase;
-		letter-spacing: 0.05em;
-	}
 
-	.compose-title {
-		font-family: inherit;
-		font-size: var(--t-md);
-		font-weight: 700;
-		border: 1px solid var(--border);
-		border-radius: var(--radius);
-		background: var(--bg-surface);
-		color: var(--fg);
-		padding: 10px 12px;
-		outline: none;
-	}
 
-	.compose-title:focus {
-		border-color: var(--accent);
-	}
 
-	.compose-toolbar {
-		display: flex;
-		gap: 6px;
-		align-items: center;
-		flex-shrink: 0;
-	}
 
-	.sel-btn {
-		font-size: var(--t-3xs);
-		padding: 2px 6px;
-		color: var(--fg-muted);
-	}
 
-	.icon-btn {
-		padding: 4px 8px;
-		font-size: var(--t-xs);
-		min-width: 28px;
-	}
 
-	.trash-btn {
-		font-size: var(--t-2xs);
-	}
 
-	.trash-armed {
-		background: var(--danger-strong);
-		border-color: var(--danger-strong);
-		color: white;
-	}
 
-	.trash-warn {
-		font-size: var(--t-3xs);
-		color: var(--danger-strong);
-		font-weight: 600;
-		white-space: nowrap;
-	}
 
-	.toolbar-sp { flex: 1; }
 
 	.compose-content {
 		flex: 1;
@@ -2102,48 +1614,6 @@
 		border: 1px solid var(--border);
 		border-radius: var(--radius);
 		background: var(--bg-surface);
-	}
-
-	/* Full mode: the content box itself scrolls (feed pattern) so the title +
-	   toolbar can stick to its top and the sections fill the rest. */
-	.compose-content--scroll {
-		overflow-y: auto;
-	}
-	.compose-stick {
-		position: sticky;
-		top: 0;
-		z-index: 2;
-		display: flex;
-		flex-direction: column;
-		gap: 8px;
-		padding: 12px 12px 8px;
-		background: var(--bg-surface);
-		border-bottom: 1px solid var(--border);
-	}
-	/* Inside the sticky header the title/tags no longer compete with the
-	   sections for height — drop the viewport cap, keep a generous scroll
-	   ceiling only so a huge tag list can't dominate. */
-	.compose-stick .compose-header {
-		max-height: 40vh;
-	}
-
-	.compose-sections {
-		display: flex;
-		flex-direction: column;
-		gap: 12px;
-		padding: 12px;
-	}
-
-	/* Ranger-style cursor over compose sections — same inset bar +
-	   tinted background as feed/reader/search. Wraps each
-	   ComposeSection so the section's own provenance border is
-	   preserved alongside the cursor highlight. */
-	.compose-section-row {
-		border-radius: 4px;
-	}
-	.compose-section-row--cursor {
-		box-shadow: inset 4px 0 0 var(--id-yours);
-		background: color-mix(in srgb, var(--id-yours) 10%, transparent);
 	}
 
 	.plain-layout {
@@ -2172,7 +1642,7 @@
 	}
 
 	.detected-sections {
-		width: 200px;
+		width: 260px;
 		flex-shrink: 0;
 		border-left: 1px solid var(--border);
 		overflow-y: auto;
@@ -2249,6 +1719,76 @@
 		color: var(--fg-muted);
 		font-style: italic;
 	}
+	.detected-jump {
+		background: none;
+		border: none;
+		color: inherit;
+		text-align: left;
+		cursor: pointer;
+		padding: 2px 0;
+		font-family: inherit;
+	}
+	.detected-jump:hover {
+		color: var(--id-yours);
+	}
+	.detected-row--cur {
+		background: color-mix(in srgb, var(--id-yours) 10%, transparent);
+	}
+	.detected-empty code {
+		font-family: var(--font-mono);
+	}
+	.editor-col {
+		min-width: 0;
+	}
+	.editor-host {
+		flex: 1;
+		min-height: 0;
+		overflow: hidden;
+		display: flex;
+		flex-direction: column;
+	}
+	.rail-tags {
+		padding: 10px;
+		border-top: 1px solid var(--border);
+		display: flex;
+		flex-direction: column;
+		gap: 6px;
+	}
+	.rail-head {
+		font-size: var(--t-3xs);
+		font-weight: 600;
+		color: var(--fg-muted);
+		text-transform: uppercase;
+		letter-spacing: 0.05em;
+	}
+	.rail-tabs {
+		display: flex;
+		gap: 4px;
+		flex-wrap: wrap;
+	}
+	.rail-tabs button {
+		font: inherit;
+		font-size: var(--t-2xs);
+		background: none;
+		border: 1px solid var(--border);
+		color: var(--fg-muted);
+		border-radius: var(--r-sm);
+		padding: 3px 8px;
+		max-width: 100%;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+		cursor: pointer;
+	}
+	.rail-tabs button.on {
+		border-color: var(--id-yours);
+		color: var(--fg);
+		background: color-mix(in srgb, var(--id-yours) 12%, transparent);
+	}
+	.rail-tabs button:disabled {
+		opacity: 0.45;
+		cursor: default;
+	}
 
 	/* A transclude slot in the outline — an existing event referenced by the
 	   index, not an authored section. Tinted to read as "borrowed". */
@@ -2283,10 +1823,6 @@
 		font-style: italic;
 	}
 
-	.detected-row .check {
-		display: flex;
-		align-items: center;
-	}
 
 	.icon-btn-sm {
 		padding: 2px 6px;
@@ -2304,44 +1840,9 @@
 		color: var(--accent);
 	}
 
-	.preview-sections {
-		flex: 1;
-		min-height: 0;
-		overflow-y: auto;
-		display: flex;
-		flex-direction: column;
-		gap: 0;
-	}
 
-	.preview-section-bar {
-		display: flex;
-		align-items: center;
-		gap: 4px;
-		padding: 4px 10px;
-		background: var(--bg);
-		border-bottom: 1px solid var(--border);
-		font-size: var(--t-2xs);
-		flex-shrink: 0;
-	}
 
-	.checked-section {
-		background: color-mix(in srgb, var(--accent) 8%, transparent);
-	}
 
-	.editor-pane {
-		flex: 1;
-		font-family: var(--font-mono);
-		font-size: var(--t-xs);
-		line-height: 1.6;
-		padding: 4px 0;
-		margin: 0;
-		white-space: pre-wrap;
-		word-break: break-word;
-		color: var(--fg);
-		outline: none;
-		background: transparent;
-		border: none;
-	}
 
 	.compose-actions {
 		display: flex;
@@ -2403,11 +1904,6 @@
 		opacity: 0.4;
 	}
 
-	.publish-selected {
-		background: transparent;
-		color: var(--accent);
-		border: 1px solid var(--accent);
-	}
 
 	.active {
 		background: var(--accent);
@@ -2545,15 +2041,4 @@
 	}
 	/* Opaque view tag — which editor view the tour applies to (plain/full).
 	   Absent for view-agnostic tours. */
-	.walk-mode {
-		flex: 0 0 auto;
-		font-family: var(--font-mono);
-		font-size: var(--t-3xs);
-		text-transform: uppercase;
-		letter-spacing: 0.04em;
-		color: var(--fg-muted);
-		background: color-mix(in srgb, var(--fg-muted) 16%, transparent);
-		padding: 0 5px;
-		border-radius: var(--r-sm, 4px);
-	}
 </style>
