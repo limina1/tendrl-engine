@@ -8,6 +8,7 @@
 	import { untrack } from 'svelte';
 	import * as nar from '$lib/narration.svelte';
 	import * as amedia from '$lib/media-android';
+	import * as history from '$lib/history.svelte';
 	import { shell } from '$lib/wm/shell.svelte';
 	import { getAuthorDisplayName } from '$lib/discussions/authors.svelte';
 
@@ -31,6 +32,9 @@
 		if (audio.src !== u) {
 			audio.src = u;
 			audio.load();
+			// load() resets playbackRate to defaultPlaybackRate — keep the
+			// chosen speed across sections and pieces.
+			audio.playbackRate = nar.player.rate;
 		}
 	});
 	$effect(() => {
@@ -46,8 +50,56 @@
 		}
 	});
 	$effect(() => {
-		if (audio) audio.playbackRate = nar.player.rate;
+		if (!audio) return;
+		audio.defaultPlaybackRate = nar.player.rate;
+		audio.playbackRate = nar.player.rate;
 	});
+
+	function onLoadedMetadata() {
+		if (!audio) return;
+		audio.playbackRate = nar.player.rate;
+		const seek = nar.player.pendingSeek;
+		if (seek !== null) {
+			nar.player.pendingSeek = null;
+			if (Number.isFinite(audio.duration) && seek < audio.duration - 2) audio.currentTime = seek;
+		}
+	}
+
+	// Listening history: where the player is in which publication, so
+	// "listen" resumes there next time. Throttled in the store; flushed on
+	// pause / track change / stop / page hide.
+	function recordListen(flush = false) {
+		const it = nar.current();
+		const pc = nar.player.pubCoord;
+		if (!it || !pc || !audio) return;
+		const parts = history.parseCoord(pc);
+		history.recordListen(
+			pc,
+			{ title: nar.player.pubTitle, author: parts?.pubkey ?? '' },
+			{
+				coord: it.coord,
+				title: it.title,
+				recording_id: it.recording.id,
+				piece: it.piece,
+				position_secs: audio.currentTime,
+				duration_secs: audio.duration || it.recording.duration_secs || 0
+			},
+			flush
+		);
+	}
+	$effect(() => {
+		const onHide = () => recordListen(true);
+		window.addEventListener('pagehide', onHide);
+		document.addEventListener('visibilitychange', onHide);
+		return () => {
+			window.removeEventListener('pagehide', onHide);
+			document.removeEventListener('visibilitychange', onHide);
+		};
+	});
+	function closePlayer() {
+		recordListen(true);
+		nar.stop();
+	}
 
 	// Media Session: lock-screen / notification controls + metadata where
 	// the platform offers them (desktop browsers, Android WebView).
@@ -145,7 +197,7 @@
 					nar.prev();
 					break;
 				case 'stop':
-					nar.stop();
+					closePlayer();
 					break;
 				case 'seek':
 					if (audio && position !== undefined && Number.isFinite(position)) audio.currentTime = position;
@@ -170,7 +222,11 @@
 	}
 
 	function onEnded() {
-		if (!nar.next() && audio) audio.currentTime = 0;
+		if (nar.next()) return;
+		// End of the playlist: the book is finished — forget the listening
+		// place so the next ▶ starts from the top.
+		if (nar.player.pubCoord) history.clearListen(nar.player.pubCoord);
+		if (audio) audio.currentTime = 0;
 	}
 
 	function seek(e: Event) {
@@ -192,14 +248,22 @@
 			preload="auto"
 			onended={onEnded}
 			onerror={onError}
-			ontimeupdate={() => (nar.player.position = audio?.currentTime ?? 0)}
+			ontimeupdate={() => {
+				nar.player.position = audio?.currentTime ?? 0;
+				recordListen();
+			}}
 			ondurationchange={() => (nar.player.duration = audio?.duration ?? 0)}
-			onseeked={() => syncAndroid()}
+			onloadedmetadata={onLoadedMetadata}
+			onseeked={() => {
+				syncAndroid();
+				recordListen(true);
+			}}
 			onplay={() => (nar.player.playing = true)}
 			onpause={() => {
 				// Only a user-initiated pause should flip the store; the
 				// `ended` → next transition pauses transiently.
 				if (audio && !audio.ended) nar.player.playing = false;
+				recordListen(true);
 			}}
 		></audio>
 		<button class="np-btn" onclick={() => nar.prev()} disabled={nar.player.index <= 0} title="Previous section" aria-label="Previous">⏮</button>
@@ -243,7 +307,7 @@
 			<button class="np-btn np-rate" onclick={cycleRate} title="Playback speed">{nar.player.rate}×</button>
 		{/if}
 		<button class="np-btn" onclick={() => (open = !open)} title={open ? 'Collapse' : 'Expand'} aria-label={open ? 'Collapse player' : 'Expand player'}>{open ? '▾' : '▴'}</button>
-		<button class="np-btn" onclick={() => nar.stop()} title="Stop and close the player" aria-label="Close player">×</button>
+		<button class="np-btn" onclick={closePlayer} title="Stop and close the player" aria-label="Close player">×</button>
 	</div>
 {/if}
 

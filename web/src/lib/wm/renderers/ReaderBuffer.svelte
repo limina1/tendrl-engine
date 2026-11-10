@@ -38,6 +38,7 @@
 	import HighlightList from '$lib/components/HighlightList.svelte';
 	import NarrationDrawer from '$lib/components/NarrationDrawer.svelte';
 	import * as nar from '$lib/narration.svelte';
+	import * as history from '$lib/history.svelte';
 	import HighlightsDrawer, {
 		type DrawerHighlight
 	} from '$lib/components/HighlightsDrawer.svelte';
@@ -655,6 +656,44 @@
 		}
 	}
 
+	// ── Reading history (persistent, engine-side) ───────────────────────
+	// The reading *place* above is per-buffer and dies with the session;
+	// the history is the one line per document that survives it. Tracked:
+	// publication indexes (30040) with the section last shown, and the
+	// atomic documents (30023 articles, 30818 wikis). A section is only
+	// ever recorded *inside* its publication — a 30041 opened on its own
+	// leaves no entry. For publications, recording waits until the resume
+	// check in `finish` has run (`placeReady`), so a fresh open never
+	// overwrites the saved place with section 0 before jumping to it.
+	const HISTORY_KINDS = new Set([30040, 30023, 30818]);
+	let placeReady = $state(!!savedView);
+	$effect(() => {
+		if (!publication || !parsedAddr || !HISTORY_KINDS.has(parsedAddr.kind)) return;
+		const coord = `${parsedAddr.kind}:${parsedAddr.pubkey}:${parsedAddr.dTag}`;
+		const meta = { title: publication.title, author: publication.author_pubkey };
+		if (parsedAddr.kind !== 30040) {
+			untrack(() => history.recordRead(coord, meta));
+			return;
+		}
+		if (!placeReady) return;
+		const sec = pristineSections[currentSection];
+		if (!sec || sec.addr.kind !== 30041) return;
+		const place = { coord: addrKey(sec.addr), title: sec.title };
+		untrack(() => history.recordRead(coord, meta, place));
+	});
+	function resumeFromHistory() {
+		if (placeReady || parsedAddr?.kind !== 30040) {
+			placeReady = true;
+			return;
+		}
+		const pubCoord = `30040:${parsedAddr.pubkey}:${parsedAddr.dTag}`;
+		void history.ensureLoaded().then(() => {
+			const h = history.entryFor(pubCoord);
+			if (h?.section && sectionIndexForAddr(h.section.coord) > 0) goToSectionCoord(h.section.coord);
+			placeReady = true;
+		});
+	}
+
 	// Summary drawer — a publication/article/wiki `summary` tag renders
 	// under the title, open by default, closable from the title-row chip.
 	let summaryOpen = $state(savedView?.summaryOpen ?? true);
@@ -1211,6 +1250,8 @@
 				// Recordings ride along with the book: local store only here;
 				// "fetch from relays" and the drawer's ⟳ reach relays.
 				if (parsedAddr?.kind === 30040) void nar.refresh(parsedAddr.pubkey, parsedAddr.dTag, 'local_only');
+				// Fresh open: continue at the last section the history remembers.
+				resumeFromHistory();
 			}
 		};
 
@@ -2188,7 +2229,7 @@
 				class="tb-icon"
 				class:active={narrationOpen}
 				onclick={() => {
-					if (parsedAddr && !nar.playPublication(parsedAddr.pubkey, parsedAddr.dTag, publication?.title ?? null)) narrationOpen = true;
+					if (parsedAddr && !nar.resumeOrPlay(parsedAddr.pubkey, parsedAddr.dTag, publication?.title ?? null)) narrationOpen = true;
 				}}
 				title="Listen — play this publication's narration ({narrationSummary.narrated} of {narrationSummary.sections} sections recorded)"
 				aria-label="Listen to the narration"

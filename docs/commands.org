@@ -2361,6 +2361,26 @@ recordings, ⋮ event viewer, sources with HEAD check, mirror, narrate §);
 ▶ on a section title plays it (player strip bottom-left). Settings ›
 Narration holds the Blossom server list.
 
+** Reading / listening history (=feat/listening-history=)
+
+#+begin_src bash
+B=http://127.0.0.1:3131/api/v1
+curl -s $B/history | jq '.entries[] | {coord, title, section: .section.title, audio: [.audio.title, .audio.position_secs]}'
+curl -s -X POST $B/history -H 'content-type: application/json' \
+  -d '{"coord":"30040:<pk>:<d>","title":"Book","author":"<pk>","section":{"coord":"30041:<pk>:<s>","title":"Two"}}'
+curl -s -X POST $B/history -H 'content-type: application/json' -d '{"coord":"30040:<pk>:<d>","clear_audio":true}'
+curl -s -X POST $B/history/remove -H 'content-type: application/json' -d '{"coord":"30040:<pk>:<d>"}'   # "*" clears all
+#+end_src
+
+GUI (headless check as in "Narration"): open a publication → Next → the
+entry's =section= follows within ~2 s; *▶ listen* → =audio= follows every
+5 s and on pause/×; reload → the reader opens at the remembered section
+and *▶ listen* resumes at the position (same recording re-chosen); feed
+→ *history* tab lists 📖 / 🎧 with *▶ listen* / *×* / *Clear history*;
+a 30023/30818 opened in the reader lists as ARTICLE / WIKI; a 30041
+opened on its own adds nothing. Rate: pick 1.5× → next section still
+1.5× → reload → still 1.5× (=localStorage tendrl.narration.rate=).
+
 ** Android background playback (=media= plugin, v0.17.1)
 
 The WebView's =<audio>= stays the player; =MediaPlugin.kt= /

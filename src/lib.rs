@@ -69,6 +69,7 @@ pub mod git;
 pub mod identity;
 pub mod llm;
 pub mod mimetype;
+pub mod history;
 pub mod narration;
 pub mod providers;
 pub mod network;
