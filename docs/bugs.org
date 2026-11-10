@@ -6,6 +6,28 @@ Log defects here as they're found mid-task, then fix on a dedicated =bugs=
 branch (via worktree) and merge back to the integration branch — don't fold
 unrelated bug fixes into feature/cleanup commits. Tick =FIXED= with the commit.
 
+* FIXED — narration reads AsciiDoc role spans, hard breaks and footnote markers aloud
+:PROPERTIES:
+:found: 2026-11-09 (Russell, /Mysticism and Logic/ "III. Time": the TTS input held =[.i0]#… + #= around a Sufi verse and =[5]=)
+:fixed: 2026-11-09, =bugs= branch
+:END:
+
+** Symptom
+=spoken_text= for =text/asciidoc= left inline attribute lists
+(=[.sc]#London#=, =[.i0]#…#=), the =␠+= hard line break, superscript
+footnote refs (=^[5]^= → "[5]") and stray =#= from spans broken across
+lines in the text sent to TTS. Verse lines ran together with no pause.
+
+** Cause / fix
+=strip_asciidoc= only unwrapped constrained emphasis. It now drops a
+trailing =␠+=, footnote refs (=^[n]^= and a bracketed number glued to a
+word, the plain-text Gutenberg form), attribute lists in front of a =#=
+span, unconstrained =##…##= / =**…**= / =__…__=, and leftover =#= tokens
+(keeping =#1=); a =[verse]= =____= block reads one paragraph per line.
+Regression test: =spoken_text_asciidoc_spans_breaks_footnotes_verse=. The
+data side (the importer emitting role spans for Gutenberg poems / small
+caps) was fixed in the import and the 5 affected leaves republished.
+
 * FIXED — mixed TOC renders every nested index after every leaf
 :PROPERTIES:
 :found: 2026-11-09 (Russell, /Mysticism and Logic/ — chapters I and VIII, the two chapter-indexes, sank to the bottom of the book's TOC)
