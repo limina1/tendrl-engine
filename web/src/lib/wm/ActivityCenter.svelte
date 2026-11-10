@@ -1,5 +1,6 @@
 <script lang="ts">
 	import type { NetworkStatus } from '$lib/types';
+	import { resetSessionRelays } from '$lib/api';
 
 	// The network-activity center list — active fetches (with kill ×) and
 	// recent ones (with expand-cause ▸). Extracted from +page's modeline
@@ -16,6 +17,28 @@
 	} = $props();
 
 	let expanded = $state<Record<number, boolean>>({});
+
+	// Session relay overrides — fetch-modal choices that stick until the
+	// engine restarts. They apply in Auto mode too, where no modal ever
+	// shows them, so this is where they stay visible (and resettable).
+	const sessionOff = $derived(activity?.session?.off ?? []);
+	const sessionOn = $derived(activity?.session?.on ?? []);
+	// The status is polled; hide the block at once after a reset by
+	// remembering which state was cleared.
+	let clearedKey = $state('');
+	const sessionKey = $derived(JSON.stringify([sessionOff, sessionOn]));
+	const showSession = $derived(
+		sessionOff.length + sessionOn.length > 0 && sessionKey !== clearedKey
+	);
+	async function resetSession() {
+		const key = sessionKey;
+		try {
+			await resetSessionRelays();
+			clearedKey = key;
+		} catch {
+			// Leave the block up — the next poll shows the truth.
+		}
+	}
 
 	function shortRelay(url: string): string {
 		return url.replace(/^wss?:\/\//, '').replace(/\/+$/, '');
@@ -46,6 +69,30 @@
 				onclick={() => onKill?.(f.id)}
 				title="Kill this fetch">×</button
 			>
+		</div>
+	{/each}
+{/if}
+{#if showSession}
+	<div class="act-sect act-sect--row">
+		<span>this session's relay choices</span>
+		<button
+			class="act-killall act-reset"
+			onclick={resetSession}
+			title="Forget them — every fetch goes back to your configured relays"
+		>
+			reset
+		</button>
+	</div>
+	{#each sessionOff as url (url)}
+		<div class="act-row" title="Turned off in a fetch dialog — skipped by every fetch this session">
+			<span class="act-row__reason act-row__reason--off">off</span>
+			<span class="act-row__relay">{shortRelay(url)}</span>
+		</div>
+	{/each}
+	{#each sessionOn as url (url)}
+		<div class="act-row" title="Added in a fetch dialog — joins every fetch you start this session">
+			<span class="act-row__reason act-row__reason--on">added</span>
+			<span class="act-row__relay">{shortRelay(url)}</span>
 		</div>
 	{/each}
 {/if}
@@ -110,6 +157,25 @@
 		opacity: 0.8;
 		font-size: 0.9em;
 		text-transform: lowercase;
+	}
+	.act-sect--row {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+	}
+	.act-reset {
+		border-color: var(--panel-border);
+		color: var(--fg-muted);
+	}
+	.act-reset:hover {
+		background: color-mix(in srgb, var(--fg) 10%, transparent);
+		color: var(--fg);
+	}
+	.act-row__reason--off {
+		color: var(--orange, #cb4b16);
+	}
+	.act-row__reason--on {
+		color: var(--state-online, var(--green));
 	}
 	.act-row {
 		display: flex;

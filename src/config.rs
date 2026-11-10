@@ -130,31 +130,21 @@ pub struct RelayConfig {
     /// never signed. Filled at runtime from `relays.json`.
     #[serde(skip, default = "default_auth")]
     pub auth: RelaySet,
-    /// NIP-50 search-capable relays. Two-tier: `default` joins (or
-    /// replaces with `exclusive_search`) the primary `~:` fan-out;
-    /// `fallback` is consulted only when the primary returns zero.
+    /// Search relays — a per-relay flag. A search relay joins the read
+    /// set for every fetch whose kinds it serves (`search_kinds`).
     /// URLs filled at runtime from `relays.json`.
     #[serde(skip, default)]
-    pub search: crate::relay_store::DiscoveryClass,
-    /// Indexer / discovery relays (purplepag.es etc.). Same two-tier
-    /// shape as `search`. Used for kind 0 / 10002 / metadata lookups.
-    #[serde(skip, default)]
-    pub indexer: crate::relay_store::DiscoveryClass,
-    /// Per-class `exclusive` toggle. When ON, the discovery class
-    /// REPLACES the read relays for its lookup type rather than
-    /// joining them. Filled from `relays.json` at runtime.
-    #[serde(skip, default)]
-    pub exclusive: crate::relay_store::ExclusiveFlags,
+    pub search: Vec<String>,
     /// User-defined named relay sets (NIP-51 kind 30002). Loaded from
     /// `relays.json` at runtime; never deserialized from TOML.
     #[serde(skip, default)]
     pub named_sets: Vec<crate::relay_store::NamedRelaySet>,
-    /// Per-relay resolve-kind claims, keyed by normalized URL. Loaded
-    /// from `relays.json` at runtime; never from TOML. Empty map = no
-    /// claims = resolution uses the read set, as it always did. See
-    /// `relay_store::RelaySets::resolve_kinds`.
+    /// Per-relay search kinds, keyed by normalized URL — the kinds a
+    /// search relay is asked for (none listed = any kind). Loaded from
+    /// `relays.json` at runtime; never from TOML. See
+    /// `relay_store::RelaySets::search_kinds`.
     #[serde(skip, default)]
-    pub resolve_kinds: std::collections::BTreeMap<String, Vec<u64>>,
+    pub search_kinds: std::collections::BTreeMap<String, Vec<u64>>,
     /// Parked relays: URL → memberships held when deactivated. Loaded
     /// from `relays.json` at runtime; never from TOML. See
     /// `relay_store::RelaySets::inactive`.
@@ -254,11 +244,9 @@ impl Default for RelayConfig {
             fetch: default_fetch(),
             broadcast: default_broadcast(),
             auth: default_auth(),
-            search: crate::relay_store::DiscoveryClass::default(),
-            indexer: crate::relay_store::DiscoveryClass::default(),
-            exclusive: crate::relay_store::ExclusiveFlags::default(),
+            search: Vec::new(),
             named_sets: Vec::new(),
-            resolve_kinds: std::collections::BTreeMap::new(),
+            search_kinds: std::collections::BTreeMap::new(),
             inactive: std::collections::BTreeMap::new(),
             authors: Vec::new(),
             timeout_ms: default_timeout_ms(),
@@ -267,7 +255,25 @@ impl Default for RelayConfig {
 }
 
 impl RelayConfig {
-    /// Get all unique relay URLs across all working sets.
+    /// The read relays: `fetch`, plus the legacy `general` set (which
+    /// the UI shows as read+write). Order-stable, de-duplicated.
+    pub fn read_urls(&self) -> Vec<String> {
+        let mut out = self.fetch.urls.clone();
+        for u in &self.general.urls {
+            if !out.contains(u) {
+                out.push(u.clone());
+            }
+        }
+        out
+    }
+
+    /// The search relays serving a fetch for `kinds` (`None` = a filter
+    /// naming no kind). See `relay_store::search_relays_matching`.
+    pub fn search_relays_for_kinds(&self, kinds: Option<&[u64]>) -> Vec<String> {
+        crate::relay_store::search_relays_matching(&self.search, &self.search_kinds, kinds)
+    }
+
+    /// Get all unique relay URLs across the general / publish / fetch sets.
     pub fn all_urls(&self) -> Vec<String> {
         let mut urls = std::collections::HashSet::new();
         for u in &self.general.urls {
@@ -282,11 +288,9 @@ impl RelayConfig {
         urls.into_iter().collect()
     }
 
-    /// Borrow the mutable URL list for a working-set name. Accepts the
-    /// flat names (`general` / `publish` / `fetch` / `broadcast`) and the
-    /// dotted discovery-class tiers (`search.default` / `search.fallback`
-    /// / `indexer.default` / `indexer.fallback`); returns `None` for any
-    /// other name so callers can ignore stray UI input.
+    /// Borrow the mutable URL list for a working-set name (`general` /
+    /// `publish` / `fetch` / `broadcast` / `auth` / `search`); returns
+    /// `None` for any other name so callers can ignore stray UI input.
     ///
     /// Single source of truth for the set-name → field routing on
     /// `RelayConfig` (used by `Engine::add_relay` / `remove_relay`). It
@@ -300,10 +304,7 @@ impl RelayConfig {
             "fetch" => Some(&mut self.fetch.urls),
             "broadcast" => Some(&mut self.broadcast.urls),
             "auth" => Some(&mut self.auth.urls),
-            "search.default" => Some(&mut self.search.default),
-            "search.fallback" => Some(&mut self.search.fallback),
-            "indexer.default" => Some(&mut self.indexer.default),
-            "indexer.fallback" => Some(&mut self.indexer.fallback),
+            "search" => Some(&mut self.search),
             _ => None,
         }
     }
@@ -318,10 +319,8 @@ impl RelayConfig {
         self.broadcast.urls = sets.broadcast.clone();
         self.auth.urls = sets.auth.clone();
         self.search = sets.search.clone();
-        self.indexer = sets.indexer.clone();
-        self.exclusive = sets.exclusive.clone();
         self.named_sets = sets.named.clone();
-        self.resolve_kinds = sets.resolve_kinds.clone();
+        self.search_kinds = sets.search_kinds.clone();
         self.inactive = sets.inactive.clone();
     }
 

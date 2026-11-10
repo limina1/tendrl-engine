@@ -1412,7 +1412,7 @@ blind" warning instead.
 =Engine::reset_relays_to_defaults= behind =reset_relays= on
 =/api/v1/config/update=: first-boot seed (general/fetch/publish from
 =initial_relays=), broadcast cleared, discovery built-ins restored,
-exclusive flags off, named sets PRESERVED. Local-only.
+search relays + search kinds re-seeded, named sets PRESERVED. Local-only.
 
 #+begin_src bash
 cargo test --lib test_reset_relays   # in-memory + disk + named-set survival
@@ -1420,7 +1420,7 @@ cargo test --lib test_reset_relays   # in-memory + disk + named-set survival
 # Endpoint smoke (scratch engine): drift the sets, then
 curl -s -X POST localhost:3031/api/v1/config/update \
   -H 'Content-Type: application/json' -d '{"reset_relays":true}'
-curl -s localhost:3031/api/v1/relays | jq '{publish:.publish.urls, broadcast:.broadcast.urls, indexer:.indexer.default, named:[.named_sets[].d_tag]}'
+curl -s localhost:3031/api/v1/relays | jq '{publish:.publish.urls, broadcast:.broadcast.urls, search:.search.urls, search_kinds:.search_kinds, named:[.named_sets[].d_tag]}'
 # publish/broadcast back to seed/empty, indexer.default = purplepag.es +
 # user.kindpag.es, named sets still listed.
 #+end_src
@@ -2409,3 +2409,76 @@ adb shell input keyevent KEYCODE_WAKEUP
 Android 13+ asks for notification permission the first time ▶ is pressed;
 declined, the audio still runs in the background but there is no
 lock-screen card. =×= on the player strip stops the service.
+
+* Relay model: five flags, search kinds, session overrides (feat/relay-simplify)
+
+One flat relay list (auth / read / write / search / broadcast), no indexer
+class, no tiers, no exclusive flag. A fetch for kinds K asks the read relays
+plus the search relays serving K. Confirm-modal choices stick for the session
+(the engine process) and apply in Auto mode too.
+
+** Unit tests
+
+#+begin_src bash
+cargo test --lib -- relay_store network:: test_plan_resolve test_search_kinds test_parse_nevent --test-threads=4
+pnpm -C web check && pnpm -C web test
+#+end_src
+
+** Migration of an old relays.json (isolated instance, never :3030)
+
+#+begin_src bash
+D=/tmp/tendrl-relay-test; rm -rf $D; mkdir -p $D
+cat > $D/relays.json <<'JSON'
+{"general":[],"fetch":["wss://theforest.nostr1.com"],"publish":[],
+ "search":{"default":["wss://s1.example"],"fallback":["wss://s2.example"]},
+ "indexer":{"default":["wss://idx.example"],"fallback":[]},
+ "exclusive":{"search":false,"indexer":true},
+ "resolve_kinds":{"wss://docs.example":[30818]},
+ "inactive":{"wss://parked.example":["fetch","indexer.default"]},
+ "seed_version":1}
+JSON
+./target/debug/tendrl-engine --data-dir $D --port 3141 &
+curl -s localhost:3141/api/v1/relays | jq '{search:.search.urls, search_kinds, inactive}'
+# search = s1, s2, idx, docs; idx + parked get kinds 0,3,10002,10007,10088,30002;
+# parked roles = fetch, search; no indexer / exclusive / resolve_kinds keys left.
+#+end_src
+
+** Search kinds union + hints + session (same instance, Confirm mode)
+
+#+begin_src bash
+PK=0000000000000000000000000000000000000000000000000000000000000001
+curl -sN localhost:3141/api/v1/network/fetch-events > /tmp/sse.log &
+# kind 30818 → forest + s1 + s2 + docs (+ the hint), NOT idx:
+curl -s "localhost:3141/api/v1/addressable/30818/$PK/x?policy=fetch_always&confirm=true&relays=wss://hint.example" &
+grep -o '"relays":\[[^]]*\]' /tmp/sse.log | tail -1
+# approve with a subset + one typed relay → session.off / session.on:
+OP=$(grep -o 'op-[a-z0-9-]*' /tmp/sse.log | tail -1)
+curl -s -X POST localhost:3141/api/v1/network/fetch-confirm -H 'content-type: application/json' \
+  -d "{\"operation_id\":\"$OP\",\"approved\":true,\"relays\":[\"wss://theforest.nostr1.com\",\"wss://typed.example\"]}"
+curl -s localhost:3141/api/v1/network/status | jq .session
+# kind 0 → idx joins; the next intent carries session_off and lists typed.example.
+# Auto mode: the intent's relays are already the applied set (off removed, on added):
+curl -s -X POST localhost:3141/api/v1/network/mode -H 'content-type: application/json' -d '{"mode":"auto"}'
+curl -s -X POST localhost:3141/api/v1/network/session/reset
+#+end_src
+
+GUI: the fetch modal shows *invert*, the session note, *reset session* once
+anything is off, and tags (=search=, =not in your relays=); the relays screen
+has no Discovery section and parked relays sit under *Inactive*.
+
+** Local-first, reactive display (same branch)
+
+#+begin_src bash
+cargo test --lib -- test_ingest_announces
+# isolated engine in Auto mode, then:
+curl -sN localhost:3142/api/v1/network/fetch-events > /tmp/sse.log &
+PK=<a pubkey the store does not hold>
+curl -s -o /dev/null -w "%{time_total}s\n" localhost:3142/api/v1/profiles/fetch \
+  -H 'content-type: application/json' -d "{\"pubkeys\":[\"$PK\"]}"      # ~0.003s, not seconds
+sleep 6; grep -o '"type":"ingested"[^}]*' /tmp/sse.log                   # kinds [0], profiles [PK]
+curl -s localhost:3142/api/v1/profile/$PK | jq .found                    # true
+#+end_src
+
+In the browser: DevTools → Network → no =/api/= request should sit in
+"Stalled"; switching the feed's relay timeline keeps the rows up (dimmed) and
+never shows "Loading publications…" unless the list is empty.

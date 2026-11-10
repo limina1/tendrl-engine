@@ -31,14 +31,8 @@
 				return 'Publish';
 			case 'broadcast':
 				return 'Broadcast';
-			case 'search.default':
-				return 'Search · default';
-			case 'search.fallback':
-				return 'Search · fallback';
-			case 'indexer.default':
-				return 'Indexer · default';
-			case 'indexer.fallback':
-				return 'Indexer · fallback';
+			case 'search':
+				return 'Search';
 		}
 	}
 

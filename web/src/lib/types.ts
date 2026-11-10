@@ -634,17 +634,9 @@ export type NetworkMode = 'auto' | 'confirm';
 /** Pattern of a user-initiated fetch operation (mirrors the engine). */
 export type FetchPattern = 'event' | 'publication' | 'thread' | 'search' | 'profile' | 'custom';
 
-/** Which relay class a fetch/publish member targets — dot-notation
- *  values match the DSL surface (`indexer.default`, `search.fallback`). */
-export type Phase =
-	| 'read'
-	| 'write'
-	| 'publish'
-	| 'broadcast'
-	| 'search.default'
-	| 'search.fallback'
-	| 'indexer.default'
-	| 'indexer.fallback';
+/** Which relay class a fetch/publish member targets. `search` marks the
+ *  search relays that joined a fetch because they serve its kinds. */
+export type Phase = 'read' | 'write' | 'publish' | 'broadcast' | 'search';
 
 /** Per-relay lifecycle status — drives the dots in the expanded toast. */
 export type RelayStatusValue =
@@ -725,6 +717,9 @@ export type FetchEvent =
 			label: string;
 			steps: string[];
 			relays: string[];
+			/** The subset of `relays` turned off earlier this session —
+			 *  listed unchecked. Absent when there are none. */
+			session_off?: string[];
 			needs_confirmation: boolean;
 			summary?: RequestSummary;
 	  }
@@ -747,6 +742,9 @@ export type FetchEvent =
 			status: RelayStatusValue;
 	  }
 	| { type: 'completed'; operation_id: string; event_count: number }
+	/** Events landed in the local store (relay fetch or local save).
+	 *  Views re-read their local query when a kind they show appears. */
+	| { type: 'ingested'; kinds: number[]; count: number; profiles?: string[] }
 	| { type: 'failed'; operation_id: string; error: string };
 
 export interface FetchRecord {
@@ -785,6 +783,17 @@ export interface NetworkStatus {
 	last_fetch_timestamp: number;
 	active: ActiveFetch[];
 	recent: FetchRecord[];
+	/** This session's relay overrides. */
+	session: SessionRelays;
+}
+
+/** Fetch-modal relay choices that stick for the session (one engine
+ *  run): `off` relays are left out of every fetch, `on` relays join
+ *  every user-initiated fetch. Durable configuration lives in relay
+ *  management. */
+export interface SessionRelays {
+	off: string[];
+	on: string[];
 }
 
 /** `watching` = npub (read-only) login: a pubkey with no key material —

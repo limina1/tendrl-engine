@@ -47,7 +47,7 @@ exists (with code paths), gaps.
 - [[file:feat-engine-substrate.org][Engine substrate]] — nostrdb + the
   query lock, boot, the 60 s background tick
 - [[file:feat-network.org][Network modes]] — FetchPolicy, Auto/Confirm intents
-- [[file:feat-relays.org][Relay sets]] — general/fetch/publish, relays.json
+- [[file:feat-relays.org][Relay sets]] — one list, five flags (auth/read/write/search/broadcast), search kinds, relays.json
 - [[file:feat-import.org][Document import]] — PDF/DOCX/EPUB/HTML → events, JSONL ingest/export
 - [[file:feat-assistant.org][LLM assistant]] — chat fragments, agentic tool-calling
 - [[file:feat-agent-services.org][Agent services]] — ppq.ai / routstr as the assistant's model: accounts, Cashu/Lightning funding, drawer + mode-line, the funding gate (v0.15.0)
@@ -76,6 +76,8 @@ exists (with code paths), gaps.
 - [[file:decision-no-keyring-backend.org][No OS keyring backend]] — nsec-in-engine signing is being phased out; pairings will live in the data dir
 - [[file:decision-nip42-auth-as-user.org][Relay auth (NIP-42): as the user, per relay, never prompted]]
   — markup-agnostic grammar is data-layer, not display-layer
+- [[file:decision-relay-flags-search-kinds.org][One relay list, five flags; search kinds join the read set]] — no indexer class, tiers or exclusive flag; a fetch asks read ∪ matching search relays
+- [[file:decision-session-relay-choices.org][Fetch-modal relay choices are session state]] — engine-owned, Auto and Confirm; relay management is the only durable surface
 - [[file:decision-feed-relay-timelines.org][The feed is per-relay timelines]]
 - [[file:decision-buffer-state-homes.org][Where buffer state lives]] — AppState / bufferState / entryDrafts; save-place, session-only
   — one relay at a time, scoped engine-side; composite stays reachable, not the frame
@@ -193,8 +195,8 @@ path: [[file:conventions.org][conventions]].
 
 ** Substrate & network
 - [[file:idea-web-tools.org][Web tools]] — =web_search= / =fetch_url= for the assistant; backend decision (SearXNG / Brave / ppq plugin)
-- [[file:idea-relay-kind-routing.org][Kind-scoped relay routing]] — relays list the kinds they serve; resolution goes to the claimers, not the whole set
-- [[file:idea-entity-hinted-relay-intent.org][Entity-hinted relay intent]] — surface a naddr/nevent's TLV relays in the Confirm modal; hinted-vs-full choice
+- [[file:idea-relay-kind-routing.org][Kind-scoped relay routing]] — relays list the kinds they serve; superseded in part 2026-11-09 (kinds join the read set instead of claiming it)
+- [[file:idea-entity-hinted-relay-intent.org][Entity-hinted relay intent]] — a naddr/nevent's TLV relays in the Confirm modal; hints reach the intent (2026-11-09), distinct group + hinted-only toggle still open
 
 * Tooling & fixtures
 
