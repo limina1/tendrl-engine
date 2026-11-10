@@ -1,3 +1,8 @@
+## v0.18.0 — 2026-11-09
+
+- feat(history): reading / listening history — resume where you were; narration speed persists across sections
+- feat(android): narration keeps playing in the background — media foreground service + MediaSession, WebView stays the player
+
 ## v0.17.0 — 2026-11-09
 
 - feat(narration): playback-speed multiplier on the voice preview (shared with the player)
