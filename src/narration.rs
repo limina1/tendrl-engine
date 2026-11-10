@@ -631,11 +631,15 @@ fn strip_asciidoc(s: &str) -> String {
         } else if line == "+" {
             line.clear();
         }
+        line = expand_adoc_char_refs(&line);
         line = strip_adoc_footnote_refs(&line);
         line = strip_adoc_span_attrs(&line);
         line = strip_adoc_macros(&line);
         line = strip_inline_common(&line);
-        line = strip_emphasis(&line, &["**", "__", "##", "*", "_", "`", "#", "^", "~"]);
+        line = strip_emphasis(&line, &["**", "__", "##", "*", "_", "`", "#"]);
+        // After emphasis: `__e__~1~` is `e~1~` by now.
+        line = flatten_adoc_subscripts(&line);
+        line = strip_emphasis(&line, &["^", "~"]);
         line = strip_stray_hashes(&line);
         out.push(line);
         if in_verse {
@@ -664,7 +668,13 @@ fn strip_adoc_footnote_refs(s: &str) -> String {
                     i = close + 2;
                     continue;
                 }
-                let glued = !sup && i > 0 && !bytes[i - 1].is_ascii_whitespace();
+                // Glued = right after a word or closing punctuation; a
+                // footnote *body's* own number (`*[1]* text`) is not a ref.
+                let glued = !sup
+                    && i > 0
+                    && (bytes[i - 1].is_ascii_alphanumeric()
+                        || matches!(bytes[i - 1], b'.' | b',' | b';' | b':' | b'!' | b'?' | b'"' | b'\'' | b')')
+                        || bytes[i - 1] >= 0x80);
                 if glued {
                     i = close + 1;
                     continue;
@@ -676,6 +686,56 @@ fn strip_adoc_footnote_refs(s: &str) -> String {
         out.push(ch);
         i += ch.len_utf8();
     }
+    out
+}
+
+/// AsciiDoc's built-in character attributes (`{plus}`, `{amp}`, `{nbsp}`, …)
+/// are the characters they stand for, not words; `{empty}` is nothing.
+fn expand_adoc_char_refs(s: &str) -> String {
+    if !s.contains('{') {
+        return s.to_string();
+    }
+    const REFS: &[(&str, &str)] = &[
+        ("{plus}", "+"), ("{amp}", "&"), ("{lt}", "<"), ("{gt}", ">"), ("{nbsp}", " "), ("{sp}", " "),
+        ("{empty}", ""), ("{zwsp}", ""), ("{wj}", ""), ("{apos}", "'"), ("{quot}", "\""),
+        ("{startsb}", "["), ("{endsb}", "]"), ("{vbar}", "|"), ("{caret}", "^"), ("{asterisk}", "*"),
+        ("{tilde}", "~"), ("{backslash}", "\\"), ("{backtick}", "`"), ("{deg}", "°"), ("{brvbar}", "¦"),
+        ("{two-colons}", "::"), ("{two-semicolons}", ";;"), ("{cpp}", "C++"), ("{pp}", "++"),
+    ];
+    let mut out = s.to_string();
+    for (k, v) in REFS {
+        out = out.replace(k, v);
+    }
+    out
+}
+
+/// `e~1~` / `x^2^` glued to a word (maths variables, exponents) read as
+/// `e1` / `x2`; the marks are dropped, the characters kept.
+fn flatten_adoc_subscripts(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut rest = s;
+    while let Some(pos) = rest.find(['~', '^']) {
+        let mark = rest.as_bytes()[pos] as char;
+        let glued = rest[..pos].chars().last().is_some_and(|c| c.is_alphanumeric());
+        let inner_end = rest[pos + 1..].find(mark).map(|r| pos + 1 + r);
+        match inner_end {
+            Some(end)
+                if glued
+                    && end > pos + 1
+                    && end - pos <= 8
+                    && rest[pos + 1..end].chars().all(|c| c.is_alphanumeric()) =>
+            {
+                out.push_str(&rest[..pos]);
+                out.push_str(&rest[pos + 1..end]);
+                rest = &rest[end + 1..];
+            }
+            _ => {
+                out.push_str(&rest[..=pos]);
+                rest = &rest[pos + 1..];
+            }
+        }
+    }
+    out.push_str(rest);
     out
 }
 
@@ -1636,6 +1696,10 @@ pub struct DiscoveredNode {
     /// is compared against to show "differs from this version".
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub spoken: Option<String>,
+    /// What in `spoken` should not be read as-is (footnotes, citations,
+    /// foreign script, …) — see [`crate::transcript::review`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub review: Option<crate::transcript::Review>,
     pub recordings: Vec<Recording>,
 }
 
@@ -1777,6 +1841,7 @@ impl<'a> NarrationEngine<'a> {
             .into_iter()
             .map(|n| DiscoveredNode {
                 recordings: rank(&narrations, &n.coord, n.event_id.as_deref(), &servers, me),
+                review: n.text.as_deref().map(|t| crate::transcript::review(t, &n.title)),
                 coord: n.coord,
                 event_id: n.event_id,
                 title: n.title,
@@ -1855,6 +1920,7 @@ impl<'a> NarrationEngine<'a> {
         Ok(Discovery {
             nodes: vec![DiscoveredNode {
                 recordings: rank(&narrations, &coord, event_id.as_deref(), &servers, me),
+                review: spoken.as_deref().map(|t| crate::transcript::review(t, &title)),
                 coord,
                 event_id,
                 title,
@@ -2728,6 +2794,19 @@ pub mod handlers {
         pub only: Vec<String>,
     }
 
+    #[derive(Deserialize)]
+    pub struct ReviewReq {
+        pub text: String,
+        #[serde(default)]
+        pub title: String,
+    }
+
+    /// `POST /api/v1/narration/review` — flag what in a (possibly hand-
+    /// edited) transcript should not be read as-is. Pure, no IO.
+    pub async fn review(Json(req): Json<ReviewReq>) -> R {
+        Ok(Json(serde_json::to_value(crate::transcript::review(&req.text, &req.title))?))
+    }
+
     /// `POST /api/v1/narration/estimate` — the plan without spending.
     pub async fn estimate(State(st): State<ChatAppState>, Json(req): Json<EstimateReq>) -> R {
         let models = models_for(&st.providers).await;
@@ -3019,6 +3098,10 @@ mod tests {
         );
         // The malformed form already published (span closers on the next
         // line) still reads clean.
+        // A footnote body keeps its number; maths subscripts read inline.
+        assert_eq!(spoken_text("We know 2{plus}2=4 {amp} more.", Some(crate::mimetype::ASCIIDOC)), "We know 2+2=4 & more.");
+        let t = spoken_text("*[1]* All the above.\n\nIf e~1~ precedes e~2~, x^2^ grows; __e__~1~ and E~_t_~.", Some(crate::mimetype::ASCIIDOC));
+        assert_eq!(t, "[1] All the above.\n\nIf e1 precedes e2, x2 grows; e1 and Et.");
         let broken = "[.i0]#\"Past and future. +\n# [.i0]#Burn up both of them. +\n#\n";
         let t = spoken_text(broken, Some(crate::mimetype::ASCIIDOC));
         assert_eq!(t, "\"Past and future. Burn up both of them.");
