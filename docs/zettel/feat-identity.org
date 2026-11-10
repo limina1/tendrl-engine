@@ -49,6 +49,15 @@ without knowing where the key lives.
   signing purpose next to snapshot and broadcast: no stored event — 2026-09-15,
   [[file:decision-nip42-auth-as-user.org][decision]].
 
+- NIP-07 signer registration is self-healing (2026-11-09). It lives only
+  in the engine's memory, so an engine restart or a dropped signer channel
+  used to leave the page looking signed in while the engine had no identity
+  — author-scoped feed empty, bookshelf "no identity", NIP-42 AUTH and
+  signing failing — until a reload. =registerNip07Signer= now re-registers
+  on channel loss (fresh token, backoff) and the app re-reads identity-scoped
+  views (=onReconnect=). NIP-55 (Android) has the same shape and is not
+  converted: there the engine restarts with the app.
+
 * Gaps / open edges
 - NIP-46: =bunker://= only — the client-initiated =nostrconnect://= (QR)
   flow is not implemented; NIP-04-only bunkers are unsupported by design.

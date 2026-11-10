@@ -4986,7 +4986,20 @@ function _createAppState() {
 			// the extension — important for extensions that don't
 			// cache approval (e.g. soapbox-signer prompts twice).
 			externalSignerPubkey = await window.nostr!.getPublicKey();
-			externalSignerTeardown = await registerNip07Signer(externalSignerPubkey);
+			externalSignerTeardown = await registerNip07Signer(externalSignerPubkey, {
+				// The engine lost the registration (restart / dropped
+				// channel) and the signer just re-registered: re-read
+				// everything that is scoped to the identity.
+				onReconnect: async () => {
+					try {
+						identityStatus = await api.getIdentity();
+					} catch {
+						// next identity poll picks it up
+					}
+					void loadFeed();
+					if (bookshelf || bookshelfError) void loadBookshelf();
+				}
+			});
 			identityStatus = await api.getIdentity();
 			myPubkey = externalSignerPubkey;
 			resolveIdentityName(externalSignerPubkey);
