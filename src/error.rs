@@ -57,6 +57,11 @@ pub enum EngineError {
     #[error("Identity locked: {0}")]
     Locked(String),
 
+    /// The signer is known but not allowed to do this (e.g. reacting to a
+    /// merge request that is not addressed to them).
+    #[error("Forbidden: {0}")]
+    Forbidden(String),
+
     /// A relay demanded NIP-42 auth and the engine did not authenticate —
     /// the relay is not in the user's auth set, no signer is loaded, or
     /// the signer refused. Per-relay and expected: callers surface it as
@@ -98,6 +103,7 @@ impl IntoResponse for EngineError {
             EngineError::InvalidHex(msg) => (StatusCode::BAD_REQUEST, "invalid_hex", msg.clone()),
             EngineError::Auth(msg) => (StatusCode::UNAUTHORIZED, "auth_required", msg.clone()),
             EngineError::Locked(msg) => (StatusCode::LOCKED, "identity_locked", msg.clone()),
+            EngineError::Forbidden(msg) => (StatusCode::FORBIDDEN, "forbidden", msg.clone()),
             EngineError::Config(msg) => (StatusCode::INTERNAL_SERVER_ERROR, "config_error", msg.clone()),
             EngineError::BadRequest(msg) => (StatusCode::BAD_REQUEST, "bad_request", msg.clone()),
             EngineError::Io(err) => (StatusCode::INTERNAL_SERVER_ERROR, "io_error", err.to_string()),

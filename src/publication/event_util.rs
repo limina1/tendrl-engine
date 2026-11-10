@@ -23,7 +23,14 @@ pub fn event_tags(ev: &Value) -> Vec<Vec<String>> {
         .and_then(Value::as_array)
         .map(|rows| {
             rows.iter()
-                .filter_map(|row| row.as_array().map(|cells| cells.iter().filter_map(|c| c.as_str().map(str::to_string)).collect()))
+                .filter_map(|row| {
+                    row.as_array().map(|cells| {
+                        cells
+                            .iter()
+                            .filter_map(|c| c.as_str().map(str::to_string))
+                            .collect()
+                    })
+                })
                 .collect()
         })
         .unwrap_or_default()
@@ -31,7 +38,10 @@ pub fn event_tags(ev: &Value) -> Vec<Vec<String>> {
 
 /// First value of tag `name`, if any.
 pub fn tag_value(ev: &Value, name: &str) -> Option<String> {
-    event_tags(ev).into_iter().find(|t| t.first().map(String::as_str) == Some(name)).and_then(|t| t.get(1).cloned())
+    event_tags(ev)
+        .into_iter()
+        .find(|t| t.first().map(String::as_str) == Some(name))
+        .and_then(|t| t.get(1).cloned())
 }
 
 /// `kind:pubkey:d` of an addressable event; `None` without a `d` tag.

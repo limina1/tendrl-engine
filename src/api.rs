@@ -2,6 +2,9 @@
 //!
 //! Provides REST endpoints for querying Nostr events.
 
+pub mod merge_requests;
+pub mod section_edit;
+
 use crate::engine::{Engine, FetchPolicy, QueryResponse};
 use crate::error::EngineError;
 use crate::network::{FetchTrigger, NetworkMode};

@@ -1170,6 +1170,40 @@ impl Engine {
         out
     }
 
+    /// The relays nostrdb recorded for one event id (fetched from or
+    /// broadcast to). Empty for an event written locally and never sent.
+    pub fn provenance_of_id(&self, id: &str) -> Vec<String> {
+        let Ok(r) = self.query_local_only(&[json!({"ids": [id], "limit": 1})]) else { return Vec::new() };
+        let mut out: Vec<String> = Vec::new();
+        for ev in &r.events {
+            for u in ev.get("relays").and_then(Value::as_array).into_iter().flatten().filter_map(Value::as_str) {
+                let n = crate::nip11::normalize_relay_url(u);
+                if !n.is_empty() && n != "local" && !out.contains(&n) {
+                    out.push(n);
+                }
+            }
+        }
+        out
+    }
+
+    /// `pubkey`'s NIP-65 inbox: the read relays of their newest kind 10002.
+    /// Local first; `policy` above `LocalOnly` asks the relays serving
+    /// kind 10002 when nothing is cached (Confirm-gated when
+    /// `mode_confirm`, resolved local-only otherwise in Confirm mode).
+    pub async fn inbox_relays_for(&self, pubkey: &str, policy: FetchPolicy, mode_confirm: bool) -> Result<Vec<String>> {
+        let filter = json!({ "kinds": [10002], "authors": [pubkey], "limit": 1 });
+        let mut events = self.query_local_only(std::slice::from_ref(&filter))?.events;
+        if events.is_empty() && policy != FetchPolicy::LocalOnly {
+            events = self.get_events_with_options(vec![filter], policy, None, mode_confirm).await?.events;
+        }
+        let Some(ev) = events.into_iter().max_by_key(|e| e.get("created_at").and_then(Value::as_i64).unwrap_or(0)) else {
+            return Ok(Vec::new());
+        };
+        let tags: Vec<Vec<String>> = crate::publication::event_util::event_tags(&ev);
+        let list = crate::user_data::RelayList::from_event_tags(&tags, ev.get("created_at").and_then(Value::as_u64).unwrap_or(0));
+        Ok(list.read_relays().into_iter().map(String::from).collect())
+    }
+
     /// Variant of `begin_fetch_operation` that carries a structured
     /// `RequestSummary` on the emitted `Intent`. Callers that have
     /// already built filters + composition (e.g. the feed-init path

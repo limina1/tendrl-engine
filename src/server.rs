@@ -913,6 +913,14 @@ pub async fn start(opts: ServeOptions) -> anyhow::Result<RunningServer> {
             "/api/v1/discussions/delete",
             post(api::discussion_delete_handler),
         )
+        .route("/api/v1/section-edit/preview", post(api::section_edit::preview_handler))
+        .route("/api/v1/section-edit/publish", post(api::section_edit::publish_handler))
+        .route("/api/v1/merge-requests", get(api::merge_requests::list_handler))
+        .route("/api/v1/merge-requests/destinations", post(api::merge_requests::destinations_handler))
+        .route("/api/v1/merge-requests/react", post(api::merge_requests::react_handler))
+        .route("/api/v1/merge-requests/{id}/diff", get(api::merge_requests::review_handler))
+        .route("/api/v1/merge-requests/{id}/merge", post(api::merge_requests::merge_handler))
+        .route("/api/v1/merge-requests/{id}/decline", post(api::merge_requests::decline_handler))
         .route("/api/v1/event/templates", get(api::event_templates_handler))
         .route("/api/v1/event/mint-d", get(api::event_mint_d_handler))
         .route("/api/v1/event/preview", post(api::event_preview_handler))
