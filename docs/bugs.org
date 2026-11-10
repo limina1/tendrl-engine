@@ -6,6 +6,30 @@ Log defects here as they're found mid-task, then fix on a dedicated =bugs=
 branch (via worktree) and merge back to the integration branch — don't fold
 unrelated bug fixes into feature/cleanup commits. Tick =FIXED= with the commit.
 
+* FIXED — mixed TOC renders every nested index after every leaf
+:PROPERTIES:
+:found: 2026-11-09 (Russell, /Mysticism and Logic/ — chapters I and VIII, the two chapter-indexes, sank to the bottom of the book's TOC)
+:fixed: 2026-11-09, =bugs= branch
+:END:
+
+** Symptom
+A 30040 whose =a= tags interleave 30041 leaves and nested 30040 indexes
+(front matter, chapter I as an index, chapters II–VII as leaves, chapter
+VIII as an index, …) read in the wrong order: all leaves first, then all
+nested indexes. A flat publication (leaves only) never showed it.
+
+** Cause / fix
+=Publication::from_event= splits =a= tags by kind into =sections= and
+=nested= and nothing kept their interleaving; the stream
+(=PubLoadEvent::Index.children=), =build_toc=, the draft flattener
+(=publication_to_draft_compose=) and the sibling walk each emitted
+"sections, then nested". NKBIP-01 reading order is =a=-tag order.
+=Publication.order= (=ChildSlot=) now records each child's slot in tag
+order and =Publication::children()= yields them interleaved (falling back to
+sections-then-nested for an unloaded stub); every order-sensitive walk goes
+through it. The web reader already follows the streamed =children= list.
+Regression test: =test_children_keep_a_tag_order=.
+
 * FIXED — nostrdown parse/resolve panics on multi-byte chars in `[[ ]]` targets
 :PROPERTIES:
 :found: 2026-08-11 (Wikipedia-derived 30818 article: no wikilinks rendered, worker panic)

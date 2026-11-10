@@ -5886,7 +5886,16 @@ fn publication_to_draft_compose(
     }
 
     fn walk(pub_: &crate::publication::Publication, level: u8, out: &mut Vec<DraftSectionCompose>) {
-        for s in &pub_.sections {
+        use crate::publication::Child;
+        // `a`-tag order: a nested index stays where the parent lists it.
+        for child in pub_.children() {
+            let s = match child {
+                Child::Section(s) => s,
+                Child::Nested(nested) => {
+                    walk(nested, level + 1, out);
+                    continue;
+                }
+            };
             out.push(DraftSectionCompose {
                 title: s.title.clone().unwrap_or_default(),
                 content: s.content.clone().unwrap_or_default(),
@@ -5898,9 +5907,6 @@ fn publication_to_draft_compose(
                 // The published 30041's own declaration (its `m` tag), if any.
                 format: s.event.data().and_then(crate::mimetype::from_event).map(String::from),
             });
-        }
-        for nested in &pub_.nested {
-            walk(nested, level + 1, out);
         }
     }
 
