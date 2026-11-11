@@ -5,6 +5,13 @@
 		pubkeyToHighlightStroke
 	} from '$lib/discussions/colors';
 	import { getAuthorDisplayName, hasAuthorName } from '$lib/discussions/authors.svelte';
+	import type { Highlighter } from '$lib/discussions/highlights';
+	import {
+		highlightDisplay,
+		ALPHA_MIN,
+		ALPHA_MAX
+	} from '$lib/discussions/highlight-display.svelte';
+	import ColorPicker from './ColorPicker.svelte';
 
 	export interface DrawerHighlight {
 		/** kind-9802 event id */
@@ -19,6 +26,8 @@
 		 *  section content contains the text — that highlight won't be
 		 *  scrollable, only listed. */
 		section_addr: string | null;
+		/** The highlight's style (`["highlighter", label, color]`), if any. */
+		highlighter?: Highlighter;
 	}
 
 	let {
@@ -26,7 +35,12 @@
 		open,
 		onclose,
 		onnavigate,
-		onrefresh = null
+		onrefresh = null,
+		mypubkey = null,
+		focus = null,
+		labelFilter = $bindable(null),
+		onrestyle = null,
+		onadopt = null
 	}: {
 		highlights: DrawerHighlight[];
 		open: boolean;
@@ -39,7 +53,89 @@
 		/** Optional: refetch kind 0 from relays for every author in the
 		 *  drawer. Used to pick up renames without leaving the panel. */
 		onrefresh?: (() => Promise<void>) | null;
+		/** The signer's pubkey — own highlights can be recoloured. */
+		mypubkey?: string | null;
+		/** A highlight clicked in the text: the drawer expands its author,
+		 *  selects it and flashes it. `n` changes on every click. */
+		focus?: { id: string; n: number } | null;
+		/** Label filter (`null` = all, `''` = plain only) — the reader paints
+		 *  only the matching highlights too. */
+		labelFilter?: string | null;
+		/** Republish one of yours with a new style (`null` = plain). */
+		onrestyle?: ((id: string, highlighter: Highlighter | null) => Promise<void>) | null;
+		/** Someone else's style → the next capture starts with it. */
+		onadopt?: ((h: Highlighter) => void) | null;
 	} = $props();
+
+	// The selected entry (actions open under it) + the one flashing.
+	let selected = $state<string | null>(null);
+	let flashing = $state<{ id: string; n: number } | null>(null);
+	// Recolour form for the selected entry.
+	let editLabel = $state('');
+	let editColor = $state('#f7d94c');
+	let restyling = $state(false);
+
+	function select(h: DrawerHighlight) {
+		selected = h.id;
+		editLabel = h.highlighter?.label ?? '';
+		editColor = h.highlighter?.color ?? '#f7d94c';
+	}
+
+	$effect(() => {
+		const f = focus;
+		if (!f) return;
+		const h = highlights.find((x) => x.id === f.id);
+		if (!h) return;
+		if (labelFilter !== null && (h.highlighter?.label ?? '') !== labelFilter) labelFilter = null;
+		expanded.add(h.pubkey);
+		expanded = new Set(expanded);
+		select(h);
+		flashing = { id: h.id, n: f.n };
+		requestAnimationFrame(() => {
+			document
+				.querySelector(`.hl-entry-wrap[data-hl-id="${h.id}"]`)
+				?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+		});
+		const n = f.n;
+		setTimeout(() => {
+			if (flashing?.n === n) flashing = null;
+		}, 1300);
+	});
+
+	// Label filter chips: every label present, plus `plain` when some
+	// highlights carry none.
+	const labels = $derived.by(() => {
+		const m = new Map<string, string>();
+		let plain = false;
+		for (const h of highlights) {
+			if (h.highlighter) {
+				if (!m.has(h.highlighter.label)) m.set(h.highlighter.label, h.highlighter.color);
+			} else plain = true;
+		}
+		const out = [...m.entries()].map(([label, color]) => ({ label, color }));
+		out.sort((a, b) => a.label.localeCompare(b.label));
+		return { list: out, plain };
+	});
+	const visible = $derived(
+		labelFilter === null
+			? highlights
+			: highlights.filter((h) => (h.highlighter?.label ?? '') === labelFilter)
+	);
+
+	async function republish(h: DrawerHighlight) {
+		if (!onrestyle || restyling) return;
+		const l = editLabel.trim();
+		restyling = true;
+		try {
+			await onrestyle(h.id, l ? { label: l, color: editColor } : null);
+			selected = null;
+		} finally {
+			restyling = false;
+		}
+	}
+	const unchanged = (h: DrawerHighlight) =>
+		editLabel.trim() === (h.highlighter?.label ?? '') &&
+		(!editLabel.trim() || editColor === h.highlighter?.color);
 
 	let refreshing = $state(false);
 	async function handleRefresh() {
@@ -62,7 +158,7 @@
 
 	const groups = $derived.by<AuthorGroup[]>(() => {
 		const byPubkey = new Map<string, DrawerHighlight[]>();
-		for (const h of highlights) {
+		for (const h of visible) {
 			const bucket = byPubkey.get(h.pubkey) ?? [];
 			bucket.push(h);
 			byPubkey.set(h.pubkey, bucket);
@@ -96,7 +192,9 @@
 	}
 
 	function handleKeydown(e: KeyboardEvent) {
-		if (e.key === 'Escape' && open) onclose();
+		if (e.key !== 'Escape' || !open) return;
+		if (selected) selected = null;
+		else onclose();
 	}
 </script>
 
@@ -104,7 +202,7 @@
 
 <aside class="hl-drawer" class:open aria-hidden={!open} aria-label="Highlights drawer">
 	<header class="hl-drawer__head">
-		<h3 class="hl-drawer__title">Highlights ({highlights.length})</h3>
+		<h3 class="hl-drawer__title">Highlights ({visible.length})</h3>
 		<div class="hl-drawer__head-actions">
 			{#if onrefresh}
 				<button
@@ -119,6 +217,45 @@
 			<button class="hl-drawer__close" onclick={onclose} aria-label="Close drawer">×</button>
 		</div>
 	</header>
+	<div class="hl-tools">
+		<label class="hl-alpha">
+			<span>alpha</span>
+			<input
+				type="range"
+				min={ALPHA_MIN}
+				max={ALPHA_MAX}
+				value={highlightDisplay.alpha}
+				oninput={(e) => highlightDisplay.setAlpha(Number((e.currentTarget as HTMLInputElement).value))}
+				aria-label="Highlight alpha"
+			/>
+			<span class="hl-alpha__v">{highlightDisplay.alpha}%</span>
+		</label>
+		{#if labels.list.length}
+			<div class="hl-filters" role="group" aria-label="Filter by highlighter">
+				<button class="hl-filter" class:on={labelFilter === null} onclick={() => (labelFilter = null)}
+					>all</button
+				>
+				{#each labels.list as l (l.label)}
+					<button
+						class="hl-filter"
+						class:on={labelFilter === l.label}
+						aria-pressed={labelFilter === l.label}
+						onclick={() => (labelFilter = labelFilter === l.label ? null : l.label)}
+					>
+						<span class="hl-filter__dot" style="background: {l.color}"></span>{l.label}
+					</button>
+				{/each}
+				{#if labels.plain}
+					<button
+						class="hl-filter"
+						class:on={labelFilter === ''}
+						aria-pressed={labelFilter === ''}
+						onclick={() => (labelFilter = labelFilter === '' ? null : '')}>plain</button
+					>
+				{/if}
+			</div>
+		{/if}
+	</div>
 	<ul class="hl-authors">
 		{#each groups as group (group.pubkey)}
 			{@const isOpen = expanded.has(group.pubkey)}
@@ -142,16 +279,72 @@
 				{#if isOpen}
 					<ul class="hl-entries">
 						{#each group.highlights as entry (entry.id)}
-							<li>
+							{@const mine = !!mypubkey && entry.pubkey === mypubkey}
+							<li
+								class="hl-entry-wrap"
+								class:selected={selected === entry.id}
+								class:flash={flashing?.id === entry.id}
+								data-hl-id={entry.id}
+							>
 								<button
 									class="hl-entry"
-									onclick={() => onnavigate(entry.id, entry.section_addr)}
+									onclick={() => {
+										if (selected === entry.id) selected = null;
+										else select(entry);
+										if (entry.section_addr !== null) onnavigate(entry.id, entry.section_addr);
+									}}
 									title={entry.content}
-									disabled={entry.section_addr === null}
+									aria-expanded={selected === entry.id}
 								>
-									<span class="hl-stripe" style="background: {group.stripe};"></span>
-									<span class="hl-preview">{preview(entry.content)}</span>
+									<span
+										class="hl-stripe"
+										style="background: {entry.highlighter?.color ?? group.stripe};"
+									></span>
+									<span class="hl-body">
+										{#if entry.highlighter}
+											<span
+												class="hl-label"
+												style="background: {entry.highlighter.color}">{entry.highlighter.label}</span
+											>
+										{/if}
+										<span class="hl-preview">{preview(entry.content)}</span>
+									</span>
 								</button>
+								{#if selected === entry.id}
+									<div class="hl-actions">
+										{#if mine && onrestyle}
+											<div class="hl-restyle">
+												<input
+													class="hl-restyle__label"
+													data-entry
+													maxlength="64"
+													placeholder="label (empty = plain)"
+													aria-label="Highlighter label"
+													bind:value={editLabel}
+													disabled={restyling}
+												/>
+												<ColorPicker bind:value={editColor} disabled={restyling} label="recolour" />
+											</div>
+											<div class="hl-actions__row">
+												<span class="hl-actions__hint">publishes a new highlight; this one is dropped</span>
+												<button
+													class="hl-act hl-act--primary"
+													disabled={restyling || unchanged(entry)}
+													onclick={() => republish(entry)}
+												>
+													{restyling ? 'Publishing…' : 'Republish'}
+												</button>
+											</div>
+										{:else if !mine && entry.highlighter && onadopt}
+											<div class="hl-actions__row">
+												<span class="hl-actions__hint">not yours to recolour</span>
+												<button class="hl-act" onclick={() => onadopt?.(entry.highlighter!)}
+													>Highlight with this style</button
+												>
+											</div>
+										{/if}
+									</div>
+								{/if}
 							</li>
 						{/each}
 					</ul>
@@ -165,6 +358,136 @@
 </aside>
 
 <style>
+	.hl-tools {
+		display: flex;
+		flex-direction: column;
+		gap: 6px;
+		padding: 6px 10px;
+		border-bottom: 1px solid var(--panel-border);
+	}
+	.hl-alpha {
+		display: flex;
+		align-items: center;
+		gap: 6px;
+		color: var(--base5);
+	}
+	.hl-alpha input {
+		flex: 1;
+		accent-color: var(--id-yours);
+	}
+	.hl-alpha__v {
+		width: 3ch;
+		text-align: right;
+		color: var(--fg-muted);
+	}
+	.hl-filters {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 4px;
+	}
+	.hl-filter {
+		font: inherit;
+		display: inline-flex;
+		align-items: center;
+		gap: 4px;
+		padding: 1px 6px;
+		color: var(--base5);
+		background: transparent;
+		border: 1px solid var(--panel-border);
+		border-radius: var(--r-sm);
+		cursor: pointer;
+	}
+	.hl-filter.on {
+		color: var(--fg);
+		background: var(--base2);
+		border-color: var(--base5);
+	}
+	.hl-filter__dot {
+		width: 8px;
+		height: 8px;
+		border-radius: 2px;
+	}
+	.hl-entry-wrap {
+		border-radius: var(--r-sm);
+	}
+	.hl-entry-wrap.selected {
+		background: var(--base1, var(--bg-surface));
+	}
+	@keyframes hl-entry-flash {
+		0%,
+		60% {
+			box-shadow: 0 0 0 2px var(--fg);
+		}
+		100% {
+			box-shadow: 0 0 0 0 transparent;
+		}
+	}
+	.hl-entry-wrap.flash {
+		animation: hl-entry-flash 1.3s ease-out;
+	}
+	.hl-body {
+		display: flex;
+		flex-direction: column;
+		gap: 3px;
+		min-width: 0;
+	}
+	.hl-label {
+		align-self: flex-start;
+		padding: 0 5px;
+		border-radius: 2px;
+		color: #12141c;
+		font-size: calc(var(--t-xs) - 2px);
+	}
+	.hl-actions {
+		display: flex;
+		flex-direction: column;
+		gap: 6px;
+		padding: 4px 8px 8px 16px;
+	}
+	.hl-restyle {
+		display: flex;
+		align-items: flex-start;
+		gap: 6px;
+		flex-wrap: wrap;
+	}
+	.hl-restyle__label {
+		flex: 1;
+		min-width: 90px;
+		font: inherit;
+		color: var(--fg);
+		background: var(--bg-surface);
+		border: 1px solid var(--panel-border);
+		border-radius: var(--r-sm);
+		padding: 3px 6px;
+	}
+	.hl-actions__row {
+		display: flex;
+		align-items: center;
+		gap: 6px;
+	}
+	.hl-actions__hint {
+		flex: 1;
+		color: var(--base5);
+		font-size: calc(var(--t-xs) - 1px);
+	}
+	.hl-act {
+		font: inherit;
+		padding: 3px 8px;
+		color: var(--fg-muted);
+		background: var(--base2);
+		border: 1px solid var(--panel-border);
+		border-radius: var(--r-sm);
+		cursor: pointer;
+	}
+	.hl-act--primary {
+		color: var(--bg);
+		background: var(--id-yours);
+		border-color: var(--id-yours);
+	}
+	.hl-act:disabled {
+		opacity: 0.5;
+		cursor: not-allowed;
+	}
 	.hl-drawer {
 		position: fixed;
 		right: 16px;

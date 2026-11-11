@@ -29,7 +29,13 @@
 	import type { Buffer } from '../types';
 	import { sectionState, segmentSections } from '$lib/compose/state';
 	import { threadContainsId, type ThreadNode } from '$lib/discussions/thread';
-	import { highlightFromEvent, type Highlight } from '$lib/discussions/highlights';
+	import {
+		highlightFromEvent,
+		highlighterFromTags,
+		type Highlight,
+		type Highlighter
+	} from '$lib/discussions/highlights';
+	import { highlighterChoice } from '$lib/discussions/highlighter-choice.svelte';
 	import { identityCanSign } from '$lib/identity/signer';
 	import CommentThread from '$lib/components/CommentThread.svelte';
 	import ReplyBox from '$lib/components/ReplyBox.svelte';
@@ -328,6 +334,46 @@
 		void loadDiscussionCounts('local_only');
 	}
 
+	// Highlighters (docs/highlighters-contract.org): the drawer's label filter
+	// also filters what the reader paints; a mark clicked in the text opens
+	// the drawer on it (`drawerFocus.n` re-triggers the flash).
+	let hlLabelFilter = $state<string | null>(null);
+	let drawerFocus = $state<{ id: string; n: number } | null>(null);
+	function passesLabelFilter(ev: { tags: string[][] }): boolean {
+		return hlLabelFilter === null || (highlighterFromTags(ev.tags)?.label ?? '') === hlLabelFilter;
+	}
+	function onReaderClick(e: MouseEvent) {
+		const mark = (e.target as HTMLElement | null)?.closest<HTMLElement>('mark.hl-overlay');
+		if (!mark) return;
+		if ((e.target as HTMLElement).closest('a, button')) return; // a link under a highlight
+		const sel = window.getSelection();
+		if (sel && !sel.isCollapsed) return; // selecting, not clicking
+		const ids = (mark.dataset.hlIds ?? '').split(' ').filter(Boolean);
+		const id = ids[ids.length - 1];
+		if (!id) return;
+		drawerOpen = true;
+		drawerFocus = { id, n: (drawerFocus?.n ?? 0) + 1 };
+	}
+	async function restyleHighlight(id: string, highlighter: Highlighter | null) {
+		try {
+			const resp = await api.restyleHighlight({ event_id: id, highlighter });
+			const { successful, total } = resp.broadcast;
+			app.pushToast(
+				total === 0
+					? 'Recoloured locally (no publish relays)'
+					: `Recoloured — new highlight published (${successful}/${total} relays)`,
+				successful === 0 && total > 0 ? 'error' : 'success'
+			);
+			refreshDiscussionsLocal();
+		} catch (e) {
+			app.pushToast(api.errorMessage(e, 'Recolour failed'), 'error', 5000);
+		}
+	}
+	function adoptHighlighter(h: Highlighter) {
+		highlighterChoice.set(h);
+		app.pushToast(`Style picked: ${h.label} — your next highlight uses it`, 'info');
+	}
+
 	const canSignNow = $derived(identityCanSign(app.identityStatus));
 
 	// Source content for highlight capture, by section address. No event-id
@@ -478,7 +524,7 @@
 		const out: Highlight[] = [];
 		const seen = new Set<string>();
 		const push = (ev: api.DiscussionEvent) => {
-			if (seen.has(ev.id) || ev.kind !== 9802) return;
+			if (seen.has(ev.id) || ev.kind !== 9802 || !passesLabelFilter(ev)) return;
 			seen.add(ev.id);
 			// Carry offset/context tags through so the engine resolver can pin
 			// exact positions instead of substring-guessing.
@@ -818,7 +864,8 @@
 				pubkey: ev.pubkey,
 				content: ev.content ?? '',
 				created_at: ev.created_at,
-				section_addr: sectionAddr
+				section_addr: sectionAddr,
+				highlighter: highlighterFromTags(ev.tags)
 			});
 		}
 		return out.sort((a, b) => b.created_at - a.created_at);
@@ -2190,7 +2237,13 @@
 
 <!-- Swipe is supplementary — the § toc button is the accessible path. -->
 <!-- svelte-ignore a11y_no_static_element_interactions -->
-<div class="reader-wrap" ontouchstart={onReaderTouchStart} ontouchend={onReaderTouchEnd}>
+<!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
+<div
+	class="reader-wrap"
+	ontouchstart={onReaderTouchStart}
+	ontouchend={onReaderTouchEnd}
+	onclick={onReaderClick}
+>
 	<div class="toolbar" data-tour="reader-toolbar" style:display={note ? 'none' : undefined}>
 		{#if showTocButton}
 			<button
@@ -2768,6 +2821,11 @@
 		open={drawerOpen}
 		onclose={() => (drawerOpen = false)}
 		onnavigate={scrollToHighlight}
+		mypubkey={app.identityStatus?.pubkey ?? null}
+		focus={drawerFocus}
+		bind:labelFilter={hlLabelFilter}
+		onrestyle={canSignNow ? restyleHighlight : null}
+		onadopt={adoptHighlighter}
 		onrefresh={async () => {
 			const authors = new Set<string>(drawerHighlights.map((h) => h.pubkey));
 			if (authors.size > 0) await refreshAuthors([...authors]);
