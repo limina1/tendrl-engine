@@ -7,7 +7,11 @@ Idea + decisions: [[file:zettel/idea-highlighters.org][idea-highlighters]].
 * Event shape
 
 - A highlight's style: =["highlighter", <label>, <#rrggbb>]= on the 9802.
-  Label trimmed, non-empty, ≤ 64 chars; colour lower-case 6-digit hex.
+  Label trimmed, ≤ 64 chars, *optional*: the label is a class with a
+  purpose ("vocabulary"); a style is just a look. An empty label slot
+  (=["highlighter", "", "#hex", "bold"]=) is an unlabelled style — it
+  paints, but is never offered as a picker chip or a drawer filter.
+  Colour lower-case 6-digit hex.
   At most one per highlight (a second is ignored on read).
 - Recolour: a new 9802 copying the old one's tags and content, with the
   new =highlighter= and =["supersedes", <old-id>]=. A dedicated tag, not

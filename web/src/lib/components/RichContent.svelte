@@ -145,7 +145,7 @@
 			y: e.clientY + 14,
 			lines: [...h.layers]
 				.reverse()
-				.map((l) => `${getAuthorDisplayName(l.pubkey)}${l.highlighter ? ` · ${l.highlighter.label}` : ''}`)
+				.map((l) => `${getAuthorDisplayName(l.pubkey)}${l.highlighter?.label ? ` · ${l.highlighter.label}` : ''}`)
 		};
 	}
 

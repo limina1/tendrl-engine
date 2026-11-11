@@ -436,7 +436,7 @@
 	}
 	function adoptHighlighter(h: Highlighter) {
 		highlighterChoice.set(h);
-		app.pushToast(`Style picked: ${h.label} — your next highlight uses it`, 'info');
+		app.pushToast(`Style picked${h.label ? `: ${h.label}` : ""} — your next highlight uses it`, 'info');
 	}
 
 	const canSignNow = $derived(identityCanSign(app.identityStatus));

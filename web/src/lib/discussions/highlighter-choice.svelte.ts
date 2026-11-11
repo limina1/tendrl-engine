@@ -9,7 +9,7 @@ class HighlighterChoice {
 	current = $state<Highlighter | null>(null);
 
 	set(h: Highlighter | null) {
-		this.current = h ? { label: h.label, color: h.color } : null;
+		this.current = h ? { label: h.label, color: h.color, marks: h.marks ? [...h.marks] : undefined } : null;
 	}
 }
 
