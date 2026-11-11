@@ -1,0 +1,78 @@
+#+TITLE: Highlighters — build contract
+#+DATE: 2026-11-11
+#+STATUS: prototype approved (https://claude.ai/artifact/Af8FD6AjTAMKko4vg2uums) — building on feat/highlighters
+
+Idea + decisions: [[file:zettel/idea-highlighters.org][idea-highlighters]].
+
+* Event shape
+
+- A highlight's style: =["highlighter", <label>, <#rrggbb>]= on the 9802.
+  Label trimmed, non-empty, ≤ 64 chars; colour lower-case 6-digit hex.
+  At most one per highlight (a second is ignored on read).
+- Recolour: a new 9802 copying the old one's tags and content, with the
+  new =highlighter= and =["supersedes", <old-id>]=. A dedicated tag, not
+  an =e= marker: in a 9802 every =e= means "the source event" (NIP-84),
+  so =["e", old, "", "supersedes"]= would tell other clients the
+  highlight quotes the old highlight.
+- A 9802 is hidden when a 9802 *by the same author* in the same result
+  set names it in =supersedes=. Applied in =discussions/list= (next to
+  the NIP-09 tombstone filter) and =discussions/counts=.
+
+* Engine
+
+1. =discussions.rs=: =Highlighter { label, color }=, parsed by
+   =highlighter_from_tags= / =highlight_from_event=; =Highlight= and
+   =HighlightSpan= carry =highlighter: Option<Highlighter>=;
+   =superseded_ids(events)= (pure); =build_highlight_template= takes
+   the highlighter; =build_restyle_template(old, highlighter, now)=.
+2. Overlap: =resolve_highlight_spans= no longer drops a highlight that
+   overlaps another — each highlight is placed once (verified offset →
+   context-preferred occurrence → first occurrence). Spans stay sorted
+   by start; they may overlap.
+3. =POST /discussions/highlight= (+ preview) accepts =highlighter=.
+4. =POST /api/v1/discussions/highlight/restyle= ={event_id, highlighter,
+   relays?}= → old 9802 from the store, must be the active signer's own
+   (403 otherwise); sign + ingest + broadcast like the other discussion
+   handlers. =/restyle/preview= returns the template.
+5. =GET /api/v1/highlighters?pubkey=<hex|npub>&policy=local_only|fetch_always=
+   → ={pubkey, highlighters: [{label, color, count, last_used}]}= over
+   that author's 9802s minus superseded ones; newest 9802's colour wins
+   per label; sorted by count desc. =fetch_always= is Confirm-gated
+   (one intent: "Fetch <name>'s highlights").
+
+* Web
+
+- =api.ts=: =Highlighter=, =listHighlighters=, =restyleHighlight=;
+  =highlight= request carries =highlighter=.
+- =highlights.ts=: =highlightFromEvent= reads the =highlighter= tag
+  (the resolver input; the engine re-validates).
+- Display setting: highlight alpha (10–80 %, default 38 %) in the
+  reading prefs; marks paint =span.highlighter.color= at that alpha,
+  else the author hue as today.
+- =buildSegments=: overlapping highlights split into elementary runs;
+  a highlight segment carries every covering highlight
+  (=data-hl-ids= space-separated, already selected with =~==); its
+  background stacks the colours (=background-image= layers over
+  =background-color=).
+- =ColorPicker.svelte=: standard dropdown (Yellow #f7d94c, Green
+  #8fd694, Blue #7fb7f0, Pink #f49ac2, Orange #f7a35c, Purple #b79cf2;
+  "Custom #…" when off-list) + swatch button → HSV popover (SV square,
+  hue bar, hex readout). Label with no pick → stable hash colour.
+- =HighlightCapture= (+ =HighlightComposerModal=): highlighter section —
+  tabs *Your highlights* / *Use another's* (npub → Load), chips
+  (=plain= + pairs with counts), label input, =ColorPicker=, tag
+  preview line.
+- =HighlightsDrawer=: label filter chips (filter the list and the
+  painting), entry stripe + label chip in the highlighter colour;
+  clicking a mark opens the drawer on that entry and flashes it; own
+  entry → recolour (=ColorPicker= + Republish); another's → "Highlight
+  with this style" (next capture starts with it).
+
+* Phases (commit each)
+
+- [X] P1 engine: parse, overlap, publish, restyle, supersede filter,
+      listing + tests
+- [ ] P2 web: api + types, alpha pref, colour + overlap painting
+- [ ] P3 web: ColorPicker + capture picker
+- [ ] P4 web: drawer filter / flash / recolour / adopt
+- [ ] P5 verify on an isolated engine (theforest only), docs

@@ -4165,7 +4165,8 @@ pub async fn discussion_counts_handler(
         .await?;
     let fetched = response.events.len();
 
-    let events = dedup_events_by_id(response.events);
+    let mut events = dedup_events_by_id(response.events);
+    crate::discussions::drop_superseded(&mut events);
     let counts = tally_discussion_counts(&events, &addresses);
 
     if let Some(op) = op {
@@ -4694,6 +4695,10 @@ pub async fn discussions_list_handler(
         }
     }
 
+    // Recoloured highlights: a 9802 superseded by its author's newer one
+    // (`["supersedes", id]`) neither renders nor counts.
+    crate::discussions::drop_superseded(&mut events);
+
     // Tally over the deduped, filtered event set (the `#a`/`#A` filters
     // overlap, so an event matched by both must count once). Addresses-only;
     // an event-id-only query carries no address coordinates, so counts stays
@@ -4901,8 +4906,24 @@ pub struct DiscussionHighlightRequest {
     /// Optional annotation → quote highlight (NIP-84 `comment` tag).
     #[serde(default)]
     pub comment: Option<String>,
+    /// The highlight's style → `["highlighter", label, #rrggbb]`.
+    #[serde(default)]
+    pub highlighter: Option<HighlighterInput>,
     #[serde(default)]
     pub relays: Option<Vec<String>>,
+}
+
+/// A highlighter as the web sends it; validated by `Highlighter::new`.
+#[derive(Debug, Deserialize)]
+pub struct HighlighterInput {
+    pub label: String,
+    pub color: String,
+}
+
+impl HighlighterInput {
+    fn validate(&self) -> Result<crate::discussions::Highlighter, EngineError> {
+        crate::discussions::Highlighter::new(&self.label, &self.color).map_err(EngineError::BadRequest)
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -5375,8 +5396,9 @@ async fn highlight_template_from_request(
         }
     }
 
+    let highlighter = req.highlighter.as_ref().map(HighlighterInput::validate).transpose()?;
     let relay_hint = discussion_relay_hint(engine);
-    build_highlight_template(
+    let mut template = build_highlight_template(
         &source,
         &req.content,
         req.offset,
@@ -5385,7 +5407,11 @@ async fn highlight_template_from_request(
         &relay_hint,
         unix_now_i64(),
     )
-    .map_err(EngineError::BadRequest)
+    .map_err(EngineError::BadRequest)?;
+    if let Some(h) = highlighter {
+        template.tags.push(h.to_tag());
+    }
+    Ok(template)
 }
 
 /// POST /api/v1/discussions/highlight — publish a NIP-84 highlight
@@ -5398,6 +5424,129 @@ pub async fn discussion_highlight_handler(
     let template = highlight_template_from_request(&engine, &req).await?;
     let resp = sign_ingest_broadcast(&engine, &signing, template, req.relays.clone()).await?;
     Ok(Json(resp))
+}
+
+/// Body of `POST /api/v1/discussions/highlight/restyle` (+ `/preview`).
+#[derive(Debug, Deserialize)]
+pub struct HighlightRestyleRequest {
+    /// The 9802 to recolour — must be the active signer's own.
+    pub event_id: String,
+    /// The new style; `None` makes it a plain highlight.
+    #[serde(default)]
+    pub highlighter: Option<HighlighterInput>,
+    #[serde(default)]
+    pub relays: Option<Vec<String>>,
+}
+
+async fn restyle_template_from_request(
+    signing: &crate::signing::SigningController,
+    engine: &AppState,
+    req: &HighlightRestyleRequest,
+) -> Result<crate::signing::EventTemplate, EngineError> {
+    let highlighter = req.highlighter.as_ref().map(HighlighterInput::validate).transpose()?;
+    let old = crate::query::query_by_id(engine.ndb(), &req.event_id)?
+        .ok_or_else(|| EngineError::NotFound(format!("highlight {} is not in the store", req.event_id)))?;
+    let me = require_active_pubkey(signing).await?;
+    if old.get("pubkey").and_then(Value::as_str) != Some(me.as_str()) {
+        return Err(EngineError::BadRequest(
+            "only your own highlights can be recoloured — highlight the passage with this style instead".into(),
+        ));
+    }
+    crate::discussions::build_restyle_template(&old, highlighter.as_ref(), unix_now_i64())
+        .map_err(EngineError::BadRequest)
+}
+
+/// POST /api/v1/discussions/highlight/restyle — recolour one of your
+/// highlights: a new 9802 with the old one's content + tags, the new
+/// `highlighter`, and `["supersedes", <old-id>]`; the old one drops out of
+/// every list (`discussions::drop_superseded`).
+pub async fn discussion_highlight_restyle_handler(
+    State(engine): State<AppState>,
+    Extension(signing): Extension<crate::signing::SigningController>,
+    Json(req): Json<HighlightRestyleRequest>,
+) -> Result<Json<DiscussionPublishResponse>, EngineError> {
+    let template = restyle_template_from_request(&signing, &engine, &req).await?;
+    let resp = sign_ingest_broadcast(&engine, &signing, template, req.relays.clone()).await?;
+    Ok(Json(resp))
+}
+
+/// POST /api/v1/discussions/highlight/restyle/preview — the template the
+/// restyle would sign.
+pub async fn discussion_highlight_restyle_preview_handler(
+    State(engine): State<AppState>,
+    Extension(signing): Extension<crate::signing::SigningController>,
+    Json(req): Json<HighlightRestyleRequest>,
+) -> Result<Json<serde_json::Value>, EngineError> {
+    let mut template = restyle_template_from_request(&signing, &engine, &req).await?;
+    crate::signing::ensure_client_tag(&mut template.tags);
+    template.pubkey = signing.active_pubkey().await;
+    Ok(Json(json!({ "event": template })))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct HighlightersQuery {
+    /// Hex or npub. Omitted → the active signer.
+    #[serde(default)]
+    pub pubkey: Option<String>,
+    /// `local_only` (default) or `fetch_always` (Confirm-gated relay round).
+    #[serde(default)]
+    pub policy: Option<String>,
+}
+
+/// GET /api/v1/highlighters?pubkey=&policy= — the label → colour pairs found
+/// on an author's highlights (`discussions::highlighter_pairs`): the capture
+/// picker's "Your highlights" / "Use another's" chips.
+pub async fn highlighters_handler(
+    State(engine): State<AppState>,
+    Extension(signing): Extension<crate::signing::SigningController>,
+    axum::extract::Query(q): axum::extract::Query<HighlightersQuery>,
+) -> Result<Json<Value>, EngineError> {
+    let pubkey = match q.pubkey.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+        Some(p) if p.starts_with("npub1") => crate::identity::decode_npub(p)
+            .map_err(|e| EngineError::BadRequest(format!("bad npub: {e}")))?,
+        Some(p) if is_hex64(p) => p.to_ascii_lowercase(),
+        Some(p) => return Err(EngineError::BadRequest(format!("{p:?} is not an npub or hex pubkey"))),
+        None => require_active_pubkey(&signing).await?,
+    };
+    let policy: FetchPolicy = match q.policy.as_deref() {
+        Some(p) => p.parse()?,
+        None => FetchPolicy::LocalOnly,
+    };
+    let filter = json!({ "kinds": [9802], "authors": [pubkey], "limit": 2000 });
+    let mut events = engine
+        .get_events_with_options(vec![filter.clone()], FetchPolicy::LocalOnly, None, false)
+        .await?
+        .events;
+    let mut fetched = false;
+    if matches!(policy, FetchPolicy::FetchAlways) {
+        let relays = engine.relays_for_kinds(Some(&[9802]));
+        if let Ok(op) = engine
+            .begin_fetch_operation(
+                crate::network::FetchPattern::Custom,
+                "Fetch highlights for their highlighters".to_string(),
+                vec![format!("Kind 9802 by {}", &pubkey[..12])],
+                relays,
+            )
+            .await
+        {
+            let chosen = op.relays().to_vec();
+            let res = engine
+                .get_events_with_options(vec![filter], FetchPolicy::FetchAlways, Some(&chosen), true)
+                .await;
+            op.complete(res.as_ref().map(|r| r.events.len()).unwrap_or(0));
+            events.extend(res?.events);
+            fetched = true;
+        }
+    }
+    let events = dedup_events_by_id(events);
+    let highlights = events.len() - crate::discussions::superseded_ids(&events).len();
+    let pairs = crate::discussions::highlighter_pairs(&events);
+    Ok(Json(json!({
+        "pubkey": pubkey,
+        "highlights": highlights,
+        "highlighters": pairs,
+        "fetched": fetched,
+    })))
 }
 
 /// POST /api/v1/discussions/highlight/preview — the exact unsigned template

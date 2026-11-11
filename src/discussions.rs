@@ -205,6 +205,173 @@ pub fn group_threads_by_address(
 // This is the single engine-side source of truth; the web only slices the
 // text by the returned spans and renders marks.
 
+/// A highlight's style — tendrl's `["highlighter", <label>, <#rrggbb>]` tag
+/// on a 9802 (docs/zettel/idea-highlighters.org). The style lives on the
+/// highlight itself; the set of highlighters a reader offers is discovered
+/// from existing 9802s (`highlighter_pairs`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Highlighter {
+    pub label: String,
+    /// Lower-case `#rrggbb`.
+    pub color: String,
+}
+
+/// Tag name carrying a highlight's style.
+pub const HIGHLIGHTER_TAG: &str = "highlighter";
+/// Tag naming the 9802 a recoloured highlight replaces. A dedicated tag, not
+/// an `e` marker: in a 9802 every `e` is the highlighted *source* (NIP-84).
+pub const SUPERSEDES_TAG: &str = "supersedes";
+/// Longest label accepted (chars).
+pub const HIGHLIGHTER_LABEL_MAX: usize = 64;
+
+impl Highlighter {
+    /// Validate + normalize: label trimmed, non-empty, ≤ 64 chars; colour
+    /// `#rgb` / `#rrggbb` (the `#` optional, any case) → lower-case `#rrggbb`.
+    pub fn new(label: &str, color: &str) -> Result<Self, String> {
+        let label = label.trim();
+        if label.is_empty() {
+            return Err("a highlighter needs a label".into());
+        }
+        if label.chars().count() > HIGHLIGHTER_LABEL_MAX {
+            return Err(format!("highlighter label is over {HIGHLIGHTER_LABEL_MAX} characters"));
+        }
+        let hex = color.trim().trim_start_matches('#').to_ascii_lowercase();
+        if !hex.chars().all(|c| c.is_ascii_hexdigit()) {
+            return Err(format!("highlighter colour {color:?} is not hex"));
+        }
+        let hex = match hex.len() {
+            6 => hex,
+            3 => hex.chars().flat_map(|c| [c, c]).collect(),
+            _ => return Err(format!("highlighter colour {color:?} is not #rgb or #rrggbb")),
+        };
+        Ok(Self {
+            label: label.to_string(),
+            color: format!("#{hex}"),
+        })
+    }
+
+    /// The event tag.
+    pub fn to_tag(&self) -> Vec<String> {
+        vec![
+            HIGHLIGHTER_TAG.to_string(),
+            self.label.clone(),
+            self.color.clone(),
+        ]
+    }
+}
+
+/// The first well-formed `highlighter` tag of a tag list (a second is ignored).
+pub fn highlighter_from_tags(tags: &[Value]) -> Option<Highlighter> {
+    tags.iter().find_map(|t| {
+        let arr = t.as_array()?;
+        if arr.first()?.as_str()? != HIGHLIGHTER_TAG {
+            return None;
+        }
+        Highlighter::new(arr.get(1)?.as_str()?, arr.get(2)?.as_str()?).ok()
+    })
+}
+
+/// Ids of 9802s replaced by a recolour: named in a `supersedes` tag of
+/// another 9802 *by the same author* within `events`. Pure; callers drop
+/// these before rendering or counting.
+pub fn superseded_ids(events: &[Value]) -> HashSet<String> {
+    let author_of: std::collections::HashMap<&str, &str> = events
+        .iter()
+        .filter(|e| e.get("kind").and_then(Value::as_u64) == Some(9802))
+        .filter_map(|e| {
+            Some((
+                e.get("id")?.as_str()?,
+                e.get("pubkey").and_then(Value::as_str).unwrap_or(""),
+            ))
+        })
+        .collect();
+    let mut out = HashSet::new();
+    for e in events {
+        if e.get("kind").and_then(Value::as_u64) != Some(9802) {
+            continue;
+        }
+        let pk = e.get("pubkey").and_then(Value::as_str).unwrap_or("");
+        let Some(tags) = e.get("tags").and_then(Value::as_array) else {
+            continue;
+        };
+        for t in tags {
+            let Some(arr) = t.as_array() else { continue };
+            if arr.first().and_then(Value::as_str) != Some(SUPERSEDES_TAG) {
+                continue;
+            }
+            if let Some(old) = arr.get(1).and_then(Value::as_str) {
+                if author_of.get(old) == Some(&pk) {
+                    out.insert(old.to_string());
+                }
+            }
+        }
+    }
+    out
+}
+
+/// Drop superseded 9802s from an event list in place (see `superseded_ids`).
+pub fn drop_superseded(events: &mut Vec<Value>) {
+    let gone = superseded_ids(events);
+    if !gone.is_empty() {
+        events.retain(|e| {
+            e.get("id")
+                .and_then(Value::as_str)
+                .map(|id| !gone.contains(id))
+                .unwrap_or(true)
+        });
+    }
+}
+
+/// One label → colour pair found on an author's highlights.
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct HighlighterPair {
+    pub label: String,
+    pub color: String,
+    /// Highlights carrying this label (any colour).
+    pub count: usize,
+    /// `created_at` of the newest one — whose colour this pair carries.
+    pub last_used: i64,
+}
+
+/// The highlighters found on `events` (one author's 9802s): distinct labels,
+/// each with the newest highlight's colour, superseded highlights ignored.
+/// Sorted by count desc, then label.
+pub fn highlighter_pairs(events: &[Value]) -> Vec<HighlighterPair> {
+    let gone = superseded_ids(events);
+    let mut by_label: std::collections::HashMap<String, HighlighterPair> =
+        std::collections::HashMap::new();
+    for e in events {
+        if e.get("kind").and_then(Value::as_u64) != Some(9802) {
+            continue;
+        }
+        if e.get("id").and_then(Value::as_str).is_some_and(|id| gone.contains(id)) {
+            continue;
+        }
+        let Some(h) = e
+            .get("tags")
+            .and_then(Value::as_array)
+            .and_then(|t| highlighter_from_tags(t))
+        else {
+            continue;
+        };
+        let at = e.get("created_at").and_then(Value::as_i64).unwrap_or(0);
+        let entry = by_label.entry(h.label.clone()).or_insert(HighlighterPair {
+            label: h.label.clone(),
+            color: h.color.clone(),
+            count: 0,
+            last_used: i64::MIN,
+        });
+        entry.count += 1;
+        if at >= entry.last_used {
+            entry.last_used = at;
+            entry.color = h.color;
+        }
+    }
+    let mut out: Vec<HighlighterPair> = by_label.into_values().collect();
+    out.sort_by(|a, b| b.count.cmp(&a.count).then_with(|| a.label.cmp(&b.label)));
+    out
+}
+
 /// One NIP-84 highlight to place in a section's text.
 #[derive(Debug, Clone, Deserialize)]
 pub struct Highlight {
@@ -222,6 +389,9 @@ pub struct Highlight {
     /// occurrence when the highlighted phrase repeats.
     #[serde(default)]
     pub context: Option<String>,
+    /// The event's `highlighter` tag — label + colour, carried onto the span.
+    #[serde(default)]
+    pub highlighter: Option<Highlighter>,
 }
 
 /// Extract a resolver input from a raw kind-9802 event. Returns `None` for
@@ -258,12 +428,17 @@ pub fn highlight_from_event(ev: &Value) -> Option<Highlight> {
             }
         }
     }
+    let highlighter = ev
+        .get("tags")
+        .and_then(|v| v.as_array())
+        .and_then(|t| highlighter_from_tags(t));
     Some(Highlight {
         id,
         content,
         pubkey,
         offset,
         context,
+        highlighter,
     })
 }
 
@@ -277,6 +452,8 @@ pub struct HighlightSpan {
     pub end: usize,
     pub id: String,
     pub pubkey: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub highlighter: Option<Highlighter>,
 }
 
 /// First index ≥ `from` at which `needle` occurs in `hay` (UTF-16 slices), or
@@ -304,15 +481,13 @@ fn all_occurrences_u16(hay: &[u16], needle: &[u16]) -> Vec<usize> {
     out
 }
 
-/// Resolve where each highlight sits in `content`, returning non-overlapping
-/// spans sorted by `start`.
+/// Resolve where each highlight sits in `content`, returning spans sorted by
+/// `start` (longer first on a tie). Spans **may overlap**: two readers'
+/// highlights over the same words both render, blended by the web
+/// (docs/highlighters-contract.org).
 ///
-/// Verified offsets place first (an exact pin must never lose its spot to a
-/// fuzzy match); substring-resolved highlights follow, longer text winning
-/// overlap arbitration (ties broken by id), each preferring the occurrence
-/// inside its `context` window. A highlight that would overlap an
-/// already-claimed span takes its next occurrence or is dropped — avoiding
-/// nested `<mark>`s without losing the longer, more informative match.
+/// Each highlight is placed once: a verified offset pin, else the occurrence
+/// inside its `context` window, else the first occurrence.
 pub fn resolve_highlight_spans(content: &str, highlights: &[Highlight]) -> Vec<HighlightSpan> {
     if content.is_empty() || highlights.is_empty() {
         return Vec::new();
@@ -322,10 +497,6 @@ pub fn resolve_highlight_spans(content: &str, highlights: &[Highlight]) -> Vec<H
     let hay_lower: Vec<u16> = content.to_lowercase().encode_utf16().collect();
     // Original (un-lowercased) units for offset verification.
     let content_units: Vec<u16> = content.encode_utf16().collect();
-
-    let overlap_free = |spans: &[HighlightSpan], start: usize, end: usize| {
-        !spans.iter().any(|s| s.start < end && start < s.end)
-    };
 
     let by_length_then_id = |a: &&Highlight, b: &&Highlight| {
         b.content
@@ -351,15 +522,14 @@ pub fn resolve_highlight_spans(content: &str, highlights: &[Highlight]) -> Vec<H
         if slice.trim().to_lowercase() != hl.content.trim().to_lowercase() {
             continue; // stale pin — substring pass takes over
         }
-        if overlap_free(&spans, start, end) {
-            spans.push(HighlightSpan {
-                start,
-                end,
-                id: hl.id.clone(),
-                pubkey: hl.pubkey.clone(),
-            });
-            placed.insert(hl.id.as_str());
-        }
+        spans.push(HighlightSpan {
+            start,
+            end,
+            id: hl.id.clone(),
+            pubkey: hl.pubkey.clone(),
+            highlighter: hl.highlighter.clone(),
+        });
+        placed.insert(hl.id.as_str());
     }
 
     // Pass 2 — substring resolution for everything not pinned. Longer text
@@ -406,28 +576,18 @@ pub fn resolve_highlight_spans(content: &str, highlights: &[Highlight]) -> Vec<H
             None
         };
 
-        // Try the context-preferred occurrence first, then the rest in order.
-        let candidates = preferred.into_iter().chain(
-            occurrences
-                .iter()
-                .copied()
-                .filter(|i| Some(*i) != preferred),
-        );
-        for idx in candidates {
-            let end = idx + needle_len;
-            if overlap_free(&spans, idx, end) {
-                spans.push(HighlightSpan {
-                    start: idx,
-                    end,
-                    id: hl.id.clone(),
-                    pubkey: hl.pubkey.clone(),
-                });
-                break;
-            }
-        }
+        // The context-preferred occurrence, else the first.
+        let idx = preferred.unwrap_or(occurrences[0]);
+        spans.push(HighlightSpan {
+            start: idx,
+            end: idx + needle_len,
+            id: hl.id.clone(),
+            pubkey: hl.pubkey.clone(),
+            highlighter: hl.highlighter.clone(),
+        });
     }
 
-    spans.sort_by_key(|s| s.start);
+    spans.sort_by(|a, b| a.start.cmp(&b.start).then(b.end.cmp(&a.end)).then_with(|| a.id.cmp(&b.id)));
     spans
 }
 
@@ -815,6 +975,57 @@ pub fn build_highlight_template(
     })
 }
 
+/// Recolour a highlight: a new 9802 with the old one's content and tags, its
+/// `highlighter` replaced (`None` = a plain highlight) and a
+/// `["supersedes", <old-id>]` tag, so readers drop the old one
+/// (`superseded_ids`). The caller checks the old event is the signer's own.
+/// The `client` tag is left to the signing chokepoint.
+pub fn build_restyle_template(
+    old: &Value,
+    highlighter: Option<&Highlighter>,
+    created_at: i64,
+) -> Result<EventTemplate, String> {
+    if old.get("kind").and_then(Value::as_u64) != Some(9802) {
+        return Err("only a kind-9802 highlight can be restyled".into());
+    }
+    let old_id = old
+        .get("id")
+        .and_then(Value::as_str)
+        .ok_or("the highlight has no id")?;
+    let mut tags: Vec<Vec<String>> = old
+        .get("tags")
+        .and_then(Value::as_array)
+        .map(|tags| {
+            tags.iter()
+                .filter_map(|t| {
+                    let arr: Vec<String> = t
+                        .as_array()?
+                        .iter()
+                        .map(|v| v.as_str().map(str::to_string))
+                        .collect::<Option<_>>()?;
+                    let name = arr.first()?.as_str();
+                    (!matches!(name, HIGHLIGHTER_TAG | SUPERSEDES_TAG | "client")).then_some(arr)
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    if let Some(h) = highlighter {
+        tags.push(h.to_tag());
+    }
+    tags.push(vec![SUPERSEDES_TAG.to_string(), old_id.to_string()]);
+    Ok(EventTemplate {
+        kind: 9802,
+        created_at,
+        tags,
+        content: old
+            .get("content")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_string(),
+        pubkey: None,
+    })
+}
+
 /// Build a kind-5 deletion request (NIP-09) for one event.
 pub fn build_deletion_template(
     event_id: &str,
@@ -1054,6 +1265,7 @@ mod tests {
             pubkey: "aa".to_string(),
             offset: None,
             context: None,
+            highlighter: None,
         }
     }
 
@@ -1102,16 +1314,16 @@ mod tests {
 
     #[test]
     fn verified_offset_claims_before_longer_substring() {
-        // A verified pin must never lose its spot to a longer fuzzy match:
-        // the pinned "cd" takes 2..4, the substring-resolved "abcdef" then
-        // overlaps everywhere and is dropped.
+        // A verified pin keeps its spot; the substring-resolved "abcdef"
+        // overlaps it and both render.
         let content = "abcdef";
         let spans = resolve_highlight_spans(
             content,
             &[hl("long", "abcdef"), hl_pinned("pin", "cd", (2, 4))],
         );
-        assert_eq!(spans.len(), 1);
-        assert_eq!(spans[0].id, "pin");
+        assert_eq!(spans.len(), 2);
+        let pin = spans.iter().find(|s| s.id == "pin").unwrap();
+        assert_eq!((pin.start, pin.end), (2, 4));
     }
 
     #[test]
@@ -1174,14 +1386,21 @@ mod tests {
     }
 
     #[test]
-    fn longer_highlight_wins_overlap_shorter_dropped() {
+    fn overlapping_highlights_both_kept() {
         let content = "the quick brown fox jumps";
-        // "quick brown" overlaps "brown"; the longer one wins, "brown" dropped.
+        // "quick brown" overlaps "brown"; both render (the web blends them).
         let spans =
             resolve_highlight_spans(content, &[hl("short", "brown"), hl("long", "quick brown")]);
-        assert_eq!(spans.len(), 1);
+        assert_eq!(spans.len(), 2);
         assert_eq!(spans[0].id, "long");
         assert_eq!(&content[spans[0].start..spans[0].end], "quick brown");
+        assert_eq!(&content[spans[1].start..spans[1].end], "brown");
+    }
+
+    #[test]
+    fn same_start_longer_first() {
+        let spans = resolve_highlight_spans("abcdef", &[hl("s", "ab"), hl("l", "abcd")]);
+        assert_eq!(spans.iter().map(|s| s.id.as_str()).collect::<Vec<_>>(), vec!["l", "s"]);
     }
 
     #[test]
@@ -1202,14 +1421,101 @@ mod tests {
     }
 
     #[test]
-    fn second_occurrence_used_when_first_overlaps() {
-        // "ab" appears at 0 and 5. "abc" claims [0,3). "ab" at 0 overlaps, so it
-        // takes its second occurrence at 5.
+    fn overlap_no_longer_pushes_to_next_occurrence() {
+        // "ab" appears at 0 and 5; "abc" covers [0,3). Overlap is allowed, so
+        // "ab" stays on its first occurrence (context / offset pick others).
         let content = "abcxxabxx";
         let spans = resolve_highlight_spans(content, &[hl("long", "abc"), hl("ab", "ab")]);
         assert_eq!(spans.len(), 2);
         let ab = spans.iter().find(|s| s.id == "ab").unwrap();
-        assert_eq!((ab.start, ab.end), (5, 7));
+        assert_eq!((ab.start, ab.end), (0, 2));
+    }
+
+    // === highlighters ===
+
+    #[test]
+    fn highlighter_validates_and_normalizes() {
+        let h = Highlighter::new("  against ", "#F49AC2").unwrap();
+        assert_eq!(h, Highlighter { label: "against".into(), color: "#f49ac2".into() });
+        assert_eq!(Highlighter::new("x", "abc").unwrap().color, "#aabbcc");
+        assert!(Highlighter::new(" ", "#ffffff").is_err());
+        assert!(Highlighter::new("x", "#ggg").is_err());
+        assert!(Highlighter::new("x", "#12345").is_err());
+        assert!(Highlighter::new(&"y".repeat(65), "#ffffff").is_err());
+        assert_eq!(h.to_tag(), vec!["highlighter", "against", "#f49ac2"]);
+    }
+
+    #[test]
+    fn highlight_from_event_reads_first_valid_highlighter() {
+        let ev = json!({
+            "id": "abc", "kind": 9802, "pubkey": "pk", "content": "t",
+            "tags": [["highlighter", "x", "nothex"], ["highlighter", "for", "#8FD694"], ["highlighter", "against", "#f49ac2"]],
+        });
+        let h = highlight_from_event(&ev).unwrap().highlighter.unwrap();
+        assert_eq!((h.label.as_str(), h.color.as_str()), ("for", "#8fd694"));
+        let spans = resolve_highlight_spans("t", &[highlight_from_event(&ev).unwrap()]);
+        assert_eq!(spans[0].highlighter.as_ref().unwrap().label, "for");
+    }
+
+    fn h9802(id: &str, pk: &str, at: i64, tags: Value) -> Value {
+        json!({"id": id, "kind": 9802, "pubkey": pk, "created_at": at, "content": "c", "tags": tags})
+    }
+
+    #[test]
+    fn superseded_only_by_same_author() {
+        let evs = vec![
+            h9802("old", "me", 1, json!([])),
+            h9802("new", "me", 2, json!([["supersedes", "old"]])),
+            h9802("theirs", "you", 1, json!([])),
+            h9802("hijack", "me", 3, json!([["supersedes", "theirs"]])),
+        ];
+        let gone = superseded_ids(&evs);
+        assert!(gone.contains("old"));
+        assert!(!gone.contains("theirs"));
+        let mut kept = evs.clone();
+        drop_superseded(&mut kept);
+        assert_eq!(kept.len(), 3);
+    }
+
+    #[test]
+    fn pairs_newest_colour_wins_and_superseded_ignored() {
+        let evs = vec![
+            h9802("a", "me", 1, json!([["highlighter", "for", "#8fd694"]])),
+            h9802("b", "me", 5, json!([["highlighter", "for", "#00ff00"]])),
+            h9802("c", "me", 3, json!([["highlighter", "against", "#f49ac2"]])),
+            h9802("d", "me", 9, json!([["highlighter", "against", "#ff0000"], ["supersedes", "c"]])),
+            h9802("e", "me", 4, json!([])),
+        ];
+        let pairs = highlighter_pairs(&evs);
+        assert_eq!(pairs.len(), 2);
+        assert_eq!((pairs[0].label.as_str(), pairs[0].color.as_str(), pairs[0].count), ("for", "#00ff00", 2));
+        assert_eq!((pairs[1].label.as_str(), pairs[1].color.as_str(), pairs[1].count, pairs[1].last_used), ("against", "#ff0000", 1, 9));
+    }
+
+    #[test]
+    fn restyle_copies_tags_and_supersedes() {
+        let old = h9802(
+            "old1",
+            "me",
+            1,
+            json!([["a", "30041:pk:d", "wss://r"], ["highlighter", "for", "#8fd694"], ["client", "tendrl"], ["context", "ctx"], ["supersedes", "older"]]),
+        );
+        let h = Highlighter::new("against", "#f49ac2").unwrap();
+        let tpl = build_restyle_template(&old, Some(&h), 10).unwrap();
+        assert_eq!(tpl.kind, 9802);
+        assert_eq!(tpl.content, "c");
+        assert_eq!(
+            tpl.tags,
+            vec![
+                vec!["a".to_string(), "30041:pk:d".into(), "wss://r".into()],
+                vec!["context".to_string(), "ctx".into()],
+                vec!["highlighter".to_string(), "against".into(), "#f49ac2".into()],
+                vec!["supersedes".to_string(), "old1".into()],
+            ]
+        );
+        let plain = build_restyle_template(&old, None, 10).unwrap();
+        assert!(!plain.tags.iter().any(|t| t[0] == "highlighter"));
+        assert!(build_restyle_template(&json!({"id": "x", "kind": 1}), None, 1).is_err());
     }
 
     #[test]
