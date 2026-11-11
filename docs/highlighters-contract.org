@@ -75,6 +75,30 @@ Idea + decisions: [[file:zettel/idea-highlighters.org][idea-highlighters]].
   (same author) in one kind-5, so older colours don't resurface; the
   =/highlighters= listing drops the author's own tombstoned highlights.
 
+* Marks (2026-11-11)
+
+=["highlighter", label, color, …marks]= — =fill= / =underline= / =bold= /
+=italic=, combinable, canonical order; no marks = fill (3-element tags stay
+valid); unknown marks 400 on write, skipped on read. All drawn in the
+highlighter's ink; bold/italic change the letters (tinted when no fill
+under them). Attribution: a tiny tooltip at the pointer naming who
+published each layer; a click flashes it in the drawer.
+
+* Comments and annotations on a highlight (2026-11-11)
+
+Two icons per drawer entry:
+- *Comment* (anyone) — social, conversational: a kind-1111 rooted at the
+  9802 (=E=/=K=/=P= + =e=/=k=/=p= = the highlight), broadcast like any
+  comment.
+- *Annotate* (the highlighter only) — the "why", for knowledge-base
+  clients: an NKBIP-01 insertion-extension annotation one grain finer than
+  a section annotation — kind 30041, root =A=/=K=/=P= = the publication
+  (so =#A= discovery and the annotations table find it), parent
+  =e=/=k=/=p= = the 9802, no =insert= tag, =d= kept on revision. Shown
+  under the entry as "why".
+=POST /highlights/attached {ids}= returns both per highlight;
+=POST /highlights/annotate {highlight_id, content, root?}=.
+
 * Phases (commit each)
 
 - [X] P1 engine: parse, overlap, publish, restyle, supersede filter,

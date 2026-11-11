@@ -301,6 +301,9 @@
 				for (const m of matched) byAddr[m].push(ev);
 			}
 			discussionEvents = byAddr;
+			void loadHighlightAttached(
+				resp.events.filter((ev) => ev.kind === 9802).map((ev) => ev.id)
+			);
 			// Per-section thread forests, built engine-side (threaded: true).
 			threadsBySection = resp.threads_by_address ?? {};
 			discussionCounts = resp.counts;
@@ -382,6 +385,53 @@
 			refreshDiscussionsLocal();
 		} catch (e) {
 			app.pushToast(api.errorMessage(e, 'Delete failed'), 'error', 5000);
+		}
+	}
+	// Per-highlight annotation + comments for the drawer, loaded after each
+	// discussions load (not from an effect — see the drawer's focus note).
+	let hlAttached = $state<Record<string, api.HighlightAttached>>({});
+	async function loadHighlightAttached(ids: string[]) {
+		if (ids.length === 0) return;
+		try {
+			hlAttached = (await api.highlightsAttached(ids)).items;
+		} catch (e) {
+			console.warn('[ReaderBuffer] highlight annotations/comments failed', e);
+		}
+	}
+	async function commentOnHighlight(id: string, text: string) {
+		const ev = drawerHighlights.find((h) => h.id === id);
+		try {
+			const resp = await api.publishComment({
+				root: { event_id: id, kind: 9802, pubkey: ev?.pubkey },
+				content: text
+			});
+			const { successful, total } = resp.broadcast;
+			app.pushToast(
+				total === 0 ? 'Comment saved locally (no publish relays)' : `Comment published (${successful}/${total} relays)`,
+				successful === 0 && total > 0 ? 'error' : 'success'
+			);
+			refreshDiscussionsLocal();
+		} catch (e) {
+			app.pushToast(api.errorMessage(e, 'Comment failed'), 'error', 5000);
+			throw e;
+		}
+	}
+	async function annotateHighlight(id: string, text: string) {
+		try {
+			const resp = await api.annotateHighlight({
+				highlight_id: id,
+				content: text,
+				root: publication ? addrKey(publication.addr) : undefined
+			});
+			const { successful, total } = resp.broadcast;
+			app.pushToast(
+				total === 0 ? 'Annotation saved locally (no publish relays)' : `Annotation published (${successful}/${total} relays)`,
+				successful === 0 && total > 0 ? 'error' : 'success'
+			);
+			refreshDiscussionsLocal();
+		} catch (e) {
+			app.pushToast(api.errorMessage(e, 'Annotation failed'), 'error', 5000);
+			throw e;
 		}
 	}
 	function adoptHighlighter(h: Highlighter) {
@@ -2842,6 +2892,10 @@
 		onrestyle={canSignNow ? restyleHighlight : null}
 		onadopt={adoptHighlighter}
 		ondelete={canSignNow ? deleteHighlight : null}
+		attached={hlAttached}
+		canSign={canSignNow}
+		oncomment={commentOnHighlight}
+		onannotate={annotateHighlight}
 		onrefresh={async () => {
 			const authors = new Set<string>(drawerHighlights.map((h) => h.pubkey));
 			if (authors.size > 0) await refreshAuthors([...authors]);

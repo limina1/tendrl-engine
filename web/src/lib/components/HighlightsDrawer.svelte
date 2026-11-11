@@ -8,6 +8,8 @@
 	import { marksOf, type Highlighter, type HighlightMark } from '$lib/discussions/highlights';
 	import { markSampleStyle } from '$lib/discussions/colors';
 	import MarkToggles from './MarkToggles.svelte';
+	import type { HighlightAttached } from '$lib/api';
+	import { flattenThread } from '$lib/discussions/thread';
 	import {
 		highlightDisplay,
 		ALPHA_MIN,
@@ -42,7 +44,11 @@
 		labelFilter = $bindable(null),
 		onrestyle = null,
 		onadopt = null,
-		ondelete = null
+		ondelete = null,
+		attached = {},
+		canSign = false,
+		oncomment = null,
+		onannotate = null
 	}: {
 		highlights: DrawerHighlight[];
 		open: boolean;
@@ -67,7 +73,41 @@
 		/** Publish a NIP-09 deletion for one of yours (and the versions it
 		 *  superseded); the reader drops it from the list on success. */
 		ondelete?: ((id: string) => Promise<void>) | null;
+		/** Per highlight id: its author's annotation + the comments on it. */
+		attached?: Record<string, HighlightAttached>;
+		canSign?: boolean;
+		/** Comment on a highlight — social (kind 1111), anyone. */
+		oncomment?: ((id: string, text: string) => Promise<void>) | null;
+		/** Annotate your own highlight — why it was made (kind 30041). */
+		onannotate?: ((id: string, text: string) => Promise<void>) | null;
 	} = $props();
+
+	// One panel open at a time, under its entry: the comment thread + reply
+	// box, or the annotation editor. Text is view state; cleared on send.
+	let panel = $state<{ id: string; kind: 'comment' | 'annotate' } | null>(null);
+	let draft = $state('');
+	let sending = $state(false);
+	function openPanel(id: string, kind: 'comment' | 'annotate') {
+		if (panel?.id === id && panel.kind === kind) {
+			panel = null;
+			return;
+		}
+		panel = { id, kind };
+		draft = kind === 'annotate' ? (attached[id]?.annotation?.content ?? '') : '';
+	}
+	async function send() {
+		if (!panel || sending || !draft.trim()) return;
+		const fn = panel.kind === 'comment' ? oncomment : onannotate;
+		if (!fn) return;
+		sending = true;
+		try {
+			await fn(panel.id, draft.trim());
+			draft = '';
+			if (panel.kind === 'annotate') panel = null;
+		} finally {
+			sending = false;
+		}
+	}
 
 	// Two-step armed delete (feat-ui-patterns): first × arms for 4 s, the
 	// second publishes the deletion.
@@ -315,6 +355,7 @@
 					<ul class="hl-entries">
 						{#each group.highlights as entry (entry.id)}
 							{@const mine = !!mypubkey && entry.pubkey === mypubkey}
+							{@const att = attached[entry.id]}
 							<li
 								class="hl-entry-wrap"
 								class:selected={selected === entry.id}
@@ -345,6 +386,31 @@
 										<span class="hl-preview">{preview(entry.content)}</span>
 									</span>
 								</button>
+								<button
+									class="hl-icon"
+									class:on={panel?.id === entry.id && panel.kind === 'comment'}
+									onclick={() => openPanel(entry.id, 'comment')}
+									aria-label="Comments ({att?.comment_count ?? 0})"
+									title="Comment — a social reply anyone can make"
+								>
+									<svg viewBox="0 0 16 16" width="13" height="13" aria-hidden="true"
+										><path d="M2.5 3.5h11v7h-6l-3 2.5v-2.5h-2z" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round" /></svg
+									>{#if att?.comment_count}<span class="hl-icon__n">{att.comment_count}</span>{/if}
+								</button>
+								{#if mine && onannotate}
+									<button
+										class="hl-icon"
+										class:on={panel?.id === entry.id && panel.kind === 'annotate'}
+										class:has={!!att?.annotation}
+										onclick={() => openPanel(entry.id, 'annotate')}
+										aria-label={att?.annotation ? 'Edit your annotation' : 'Annotate — why you highlighted this'}
+										title="Annotate — why you highlighted this (kept with the highlight for knowledge-base readers)"
+									>
+										<svg viewBox="0 0 16 16" width="13" height="13" aria-hidden="true"
+											><path d="M3 13l1-3.5 6.5-6.5 2.5 2.5-6.5 6.5zM9.5 4l2.5 2.5" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round" /></svg
+										>
+									</button>
+								{/if}
 								{#if mine && ondelete}
 									<button
 										class="hl-del"
@@ -359,6 +425,53 @@
 									>
 								{/if}
 								</div>
+								{#if att?.annotation && !(panel?.id === entry.id && panel.kind === 'annotate')}
+									<div class="hl-why" title="The highlighter's annotation">{att.annotation.content}</div>
+								{/if}
+								{#if panel?.id === entry.id}
+									<div class="hl-panel">
+										{#if panel.kind === 'comment'}
+											{#each flattenThread(att?.comments ?? []) as node (node.event.id)}
+												<div class="hl-cmt" style="margin-left: {Math.min(node.depth, 4) * 10}px">
+													<span class="hl-cmt__by">{getAuthorDisplayName(node.event.pubkey)}</span>
+													<span class="hl-cmt__t">{node.event.content}</span>
+												</div>
+											{:else}
+												<div class="hl-actions__hint">no comments yet</div>
+											{/each}
+										{/if}
+										{#if canSign}
+											<textarea
+												class="hl-draft"
+												data-entry
+												rows="2"
+												placeholder={panel.kind === 'comment'
+													? 'Comment — goes to social clients'
+													: 'Why did you highlight this?'}
+												bind:value={draft}
+												disabled={sending}
+												onkeydown={(e) => {
+													if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+														e.preventDefault();
+														void send();
+													}
+												}}
+											></textarea>
+											<div class="hl-actions__row">
+												<span class="hl-actions__hint"
+													>{panel.kind === 'comment'
+														? 'kind 1111 · broadcast'
+														: 'kind 30041 annotation · kept with the highlight'}</span
+												>
+												<button class="hl-act hl-act--primary" disabled={sending || !draft.trim()} onclick={send}>
+													{sending ? '…' : panel.kind === 'comment' ? 'Comment' : 'Save'}
+												</button>
+											</div>
+										{:else}
+											<div class="hl-actions__hint">sign in to {panel.kind === 'comment' ? 'comment' : 'annotate'}</div>
+										{/if}
+									</div>
+								{/if}
 								{#if selected === entry.id}
 									<div class="hl-actions">
 										{#if mine && onrestyle}
@@ -467,6 +580,75 @@
 	.hl-entry-row .hl-entry {
 		flex: 1;
 		min-width: 0;
+	}
+	.hl-icon {
+		flex-shrink: 0;
+		display: inline-flex;
+		align-items: center;
+		gap: 2px;
+		margin: 4px 0 0;
+		padding: 1px 4px;
+		font: inherit;
+		font-size: calc(var(--t-xs) - 2px);
+		color: var(--base5);
+		background: transparent;
+		border: 1px solid transparent;
+		border-radius: var(--r-sm);
+		cursor: pointer;
+	}
+	.hl-icon:hover,
+	.hl-icon.on {
+		color: var(--fg);
+		border-color: var(--panel-border);
+	}
+	.hl-icon.has {
+		color: var(--id-yours);
+	}
+	.hl-why {
+		margin: 0 8px 4px 22px;
+		padding-left: 6px;
+		border-left: 2px solid var(--id-yours);
+		font-family: var(--font-serif);
+		font-style: italic;
+		font-size: var(--t-xs);
+		color: var(--fg-muted);
+		white-space: pre-wrap;
+	}
+	.hl-panel {
+		display: flex;
+		flex-direction: column;
+		gap: 5px;
+		padding: 2px 8px 8px 22px;
+	}
+	.hl-cmt {
+		display: flex;
+		flex-direction: column;
+		gap: 1px;
+		padding: 3px 6px;
+		border-left: 2px solid var(--panel-border);
+	}
+	.hl-cmt__by {
+		font-size: calc(var(--t-xs) - 2px);
+		color: var(--base5);
+	}
+	.hl-cmt__t {
+		font-family: var(--font-sans);
+		color: var(--fg);
+		white-space: pre-wrap;
+	}
+	.hl-draft {
+		font-family: var(--font-sans);
+		font-size: var(--t-xs);
+		color: var(--fg);
+		background: var(--bg-surface);
+		border: 1px solid var(--panel-border);
+		border-radius: var(--r-sm);
+		padding: 4px 6px;
+		resize: vertical;
+	}
+	.hl-draft:focus {
+		outline: none;
+		border-color: var(--id-yours);
 	}
 	.hl-del {
 		flex-shrink: 0;

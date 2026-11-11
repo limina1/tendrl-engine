@@ -2813,6 +2813,39 @@ export function restyleHighlight(req: {
 	});
 }
 
+/** What hangs off one highlight (engine `highlights_attached_handler`). */
+export interface HighlightAttached {
+	/** The highlighter's own annotation — a kind-30041 parented on the 9802. */
+	annotation: DiscussionEvent | null;
+	/** Kind-1111 comments rooted at the 9802, threaded engine-side. */
+	comments: import('./discussions/thread').ThreadNode[];
+	comment_count: number;
+}
+
+export function highlightsAttached(
+	ids: string[],
+	policy: 'local_only' | 'local_first' | 'fetch_always' = 'local_only'
+): Promise<{ items: Record<string, HighlightAttached> }> {
+	return fetchJson('/api/v1/highlights/attached', {
+		method: 'POST',
+		body: JSON.stringify({ ids, policy })
+	});
+}
+
+/** Publish (or revise) your annotation on one of your highlights — the why,
+ *  for knowledge-base readers. `root` = the publication you're reading. */
+export function annotateHighlight(req: {
+	highlight_id: string;
+	content: string;
+	root?: string;
+	relays?: string[];
+}) {
+	return fetchJson<DiscussionPublishResponse>('/api/v1/highlights/annotate', {
+		method: 'POST',
+		body: JSON.stringify(req)
+	});
+}
+
 export function deleteDiscussion(req: { event_id: string; reason?: string; relays?: string[] }) {
 	return fetchJson<DiscussionPublishResponse>('/api/v1/discussions/delete', {
 		method: 'POST',
