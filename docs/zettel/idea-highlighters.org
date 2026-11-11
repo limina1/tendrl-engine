@@ -70,10 +70,9 @@ Shown when capturing a highlight:
 - *Overlap*: highlight display settings carry one alpha level for all
   highlights, so overlapping highlights stay legible; one =highlighter=
   tag per highlight (overlap comes from separate highlights).
-- *Behaviour* is opt-in: the highlight modal has an "annotation" button
-  that pulls in the annotation functionality for that highlight (e.g.
-  =vocabulary= → a vocabulary ask, =for= / =against= → a pro/con view);
-  without it, every label is plain.
+- *No behaviour on highlights.* A highlight focuses on a passage; an
+  annotation request is what acts on it (vocabulary asks, pro/con, …).
+  The two stay separate — every label is plain colour.
 - *No NIP-32 label* — the =highlighter= tag is enough.
 
 * Open questions
