@@ -102,13 +102,6 @@
 		}
 	}
 
-	const tagLine = $derived(
-		label.trim()
-			? `["highlighter", "${label.trim()}", "${color}"${
-					marks.length === 1 && marks[0] === 'fill' ? '' : marks.map((m) => `, "${m}"`).join('')
-				}]`
-			: 'plain highlight — no highlighter tag'
-	);
 </script>
 
 <div class="hp" data-tour="highlighter-picker">
@@ -216,7 +209,6 @@
 			emit();
 		}}
 	/>
-	<div class="hp-tag">{tagLine}</div>
 </div>
 
 <style>
@@ -354,15 +346,5 @@
 	.hp-label {
 		flex: 1;
 		min-width: 110px;
-	}
-	.hp-tag {
-		font-family: var(--font-mono);
-		font-size: calc(var(--t-xs) - 2px);
-		color: var(--base5);
-		background: var(--panel-rail-bg, var(--bg-alt));
-		border: 1px solid var(--panel-border);
-		border-radius: var(--r-sm);
-		padding: 3px 6px;
-		overflow-wrap: anywhere;
 	}
 </style>

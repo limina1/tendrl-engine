@@ -9,6 +9,8 @@
 	import EmbedCard from './EmbedCard.svelte';
 	import { highlightFill, highlightStroke } from '$lib/discussions/colors';
 	import { marksOf } from '$lib/discussions/highlights';
+	import { highlightPreview } from '$lib/discussions/highlight-preview.svelte';
+	import { highlighterChoice } from '$lib/discussions/highlighter-choice.svelte';
 	import { getAuthorDisplayName } from '$lib/discussions/authors.svelte';
 	import { highlightDisplay } from '$lib/discussions/highlight-display.svelte';
 	import type { HighlightSpan } from '$lib/discussions/highlights';
@@ -65,8 +67,24 @@
 
 	let rootEl = $state<HTMLElement | undefined>();
 
+	// The highlight being captured, painted live in the style being picked
+	// (plain = your identity hue), only in the section it was selected in.
+	const liveSpans = $derived.by<HighlightSpan[]>(() => {
+		const t = highlightPreview.target;
+		if (!t || t.content !== content) return spans;
+		return [
+			...spans,
+			{
+				start: t.start,
+				end: t.end,
+				id: 'capture-preview',
+				pubkey: app.identityStatus?.pubkey ?? '',
+				highlighter: highlighterChoice.current ?? undefined
+			}
+		];
+	});
 	const segments = $derived(
-		applyStyles(buildSegments(content, spans, refs, tokens, focusedHighlightId), styles)
+		applyStyles(buildSegments(content, liveSpans, refs, tokens, focusedHighlightId), styles)
 	);
 
 	// Progress is reported by the embed/quote/slot cards themselves (each knows

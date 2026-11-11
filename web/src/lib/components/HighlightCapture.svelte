@@ -31,6 +31,8 @@
 	import { shell } from '$lib/wm/shell.svelte';
 	import { highlighterChoice } from '$lib/discussions/highlighter-choice.svelte';
 	import HighlighterPicker from './HighlighterPicker.svelte';
+	import { highlightPreview } from '$lib/discussions/highlight-preview.svelte';
+	import { markSampleStyle } from '$lib/discussions/colors';
 
 	let {
 		getContent,
@@ -234,6 +236,7 @@
 			text: hit.text
 		};
 		text = hit.text;
+		highlightPreview.target = { content: hit.content, start: hit.start, end: hit.end };
 		annotation = '';
 		contextText = '';
 		contextOpen = false;
@@ -272,6 +275,7 @@
 	function dismiss() {
 		clearTimeout(selTimer);
 		pending = null;
+		highlightPreview.target = null;
 		text = '';
 		annotation = '';
 		contextText = '';
@@ -352,13 +356,19 @@
 		class:hc-popover--mobile={mobile}
 		role="dialog"
 		aria-label="Publish highlight"
-		onfocusin={() => (touched = true)}
+		onfocusin={() => {
+			// Engaging the card drops the browser's selection so the live
+			// preview of the chosen style shows on the passage itself.
+			if (!touched) window.getSelection()?.removeAllRanges();
+			touched = true;
+		}}
 	>
 		<textarea
 			class="hc-text"
 			rows={mobile ? 4 : 3}
 			bind:value={text}
 			disabled={posting}
+			style={highlighterChoice.current ? markSampleStyle(highlighterChoice.current) : ''}
 			aria-label="Highlighted text (editable)"
 		></textarea>
 		{#if edited}
