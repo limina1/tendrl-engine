@@ -12,59 +12,25 @@
 	const app = getAppState();
 	const store = getActiveStore();
 
-	type ComposeMode = 'full' | 'plain' | 'preview';
+	type ComposeMode = 'plain' | 'preview';
 
-	// View state survives buffer switches: a remount restores the last mode +
-	// cursor from the store's per-buffer stash instead of resetting to the
-	// settings default.
-	type ComposerViewState = { mode: ComposeMode; cursor: number };
+	// View state survives buffer switches: a remount restores the last mode
+	// from the store's per-buffer stash. (A stash from before Composer v2 may
+	// say 'full' — the one editor took its place.)
+	type ComposerViewState = { mode: ComposeMode | 'full' };
 	// The initial-value capture is deliberate: BufferRenderer keys this
 	// component on buffer.id, so a different id is a fresh mount anyway.
 	// svelte-ignore state_referenced_locally
 	const savedView = store.bufferState.get(buffer.id) as ComposerViewState | undefined;
 
-	let cursor = $state(savedView?.cursor ?? 0);
-	let mode = $state<ComposeMode>(savedView?.mode ?? app.composeDefaultMode);
+	let mode = $state<ComposeMode>(savedView?.mode === 'preview' ? 'preview' : 'plain');
 
 	$effect(() => {
 		return () => {
-			store.bufferState.set(buffer.id, { mode, cursor } satisfies ComposerViewState);
+			store.bufferState.set(buffer.id, { mode } satisfies ComposerViewState);
 		};
 	});
-	let sectionsListEl: HTMLDivElement | undefined = $state();
 	let plainCmView: EditorView | null = $state(null);
-
-	$effect(() => {
-		const len = app.compose.sections.length;
-		if (cursor >= len) cursor = Math.max(0, len - 1);
-	});
-
-	function scrollCursorIntoView() {
-		if (!sectionsListEl) return;
-		const row = sectionsListEl.querySelector<HTMLElement>(`[data-cursor="${cursor}"]`);
-		if (!row) return;
-		const listRect = sectionsListEl.getBoundingClientRect();
-		const rowRect = row.getBoundingClientRect();
-		if (rowRect.top < listRect.top) {
-			sectionsListEl.scrollTop -= listRect.top - rowRect.top;
-		} else if (rowRect.bottom > listRect.bottom) {
-			sectionsListEl.scrollTop += rowRect.bottom - listRect.bottom;
-		}
-	}
-
-	function focusCursoredSection(): boolean {
-		if (!sectionsListEl) return false;
-		const row = sectionsListEl.querySelector<HTMLElement>(`[data-cursor="${cursor}"]`);
-		if (!row) return false;
-		// Prefer the content textarea over the title input — the textarea is
-		// the main editing surface. focusin will flip mode → 'insert'.
-		const textarea = row.querySelector<HTMLTextAreaElement>('textarea');
-		const target =
-			textarea ?? row.querySelector<HTMLInputElement>('input[class~="compose-section-title"]');
-		if (!target) return false;
-		target.focus();
-		return true;
-	}
 
 	function focusPlainEditor(): boolean {
 		if (!plainCmView) return false;
@@ -73,46 +39,13 @@
 	}
 
 	function handleNav(action: NavAction): boolean {
-		// In plain (and preview) mode there's no per-section cursor — h/l
-		// still cycles back to full. 'insert' focuses the plain textarea.
-		if (mode !== 'full') {
-			if (action === 'left' || action === 'right') {
-				mode = mode === 'plain' ? 'full' : 'plain';
-				return true;
-			}
-			if (action === 'insert' && mode === 'plain') return focusPlainEditor();
-			return false;
-		}
-
-		const total = app.compose.sections.length;
+		// One editor: `insert` / `select` focus it; h/l flip to the read view
+		// and back.
 		if (action === 'left' || action === 'right') {
-			mode = 'plain';
+			mode = mode === 'plain' ? 'preview' : 'plain';
 			return true;
 		}
-		if (total === 0) return false;
-		if (action === 'down') {
-			cursor = Math.min(total - 1, cursor + 1);
-			queueMicrotask(scrollCursorIntoView);
-			return true;
-		}
-		if (action === 'up') {
-			cursor = Math.max(0, cursor - 1);
-			queueMicrotask(scrollCursorIntoView);
-			return true;
-		}
-		if (action === 'top') {
-			cursor = 0;
-			queueMicrotask(scrollCursorIntoView);
-			return true;
-		}
-		if (action === 'bottom') {
-			cursor = total - 1;
-			queueMicrotask(scrollCursorIntoView);
-			return true;
-		}
-		if (action === 'select' || action === 'insert') {
-			return focusCursoredSection();
-		}
+		if ((action === 'insert' || action === 'select') && mode === 'plain') return focusPlainEditor();
 		return false;
 	}
 
@@ -143,9 +76,7 @@
 
 <ComposeView
 	bind:mode
-	bind:sectionsListEl
 	bind:plainCmView
-	{cursor}
 	compose={app.compose}
 	canPublish={identityCanSign(app.identityStatus)}
 	onupdate={app.handleComposeUpdate}

@@ -320,64 +320,47 @@ export const TIPS: Record<string, TourTip> = {
 	},
 
 	// ── Composer tours (on demand: the composer's own W dropdown) ─────────
-	// Six discrete tutorials, never auto-fired — the in-chrome W lists them all
-	// and `runTour(key)` plays one. `mode`-tagged tours (registry.ts) switch the
-	// editor to that view on select. The shared `?` modal is the flat reference.
+	// Discrete tutorials, never auto-fired — the in-chrome W lists them all
+	// and `runTour(key)` plays one. The shared `?` modal is the flat reference.
 	//
-	// A · Output — the kind selector (Publication vs atomic blog/wiki/custom).
+	// A · Output — Type and Style.
 	'compose-output': {
 		key: 'compose-output',
 		anchor: 'compose-kind',
-		title: 'Output — what you publish',
-		body: 'The `kind` selector sets your output. *Publication* parses the editor into a `30040` index over `30041` sections (the default). *Blog* (`30023`), *Wiki* (`30818`), or a *Custom* kind instead publish the whole body as a single atomic event — no section graph, delimiter, or nesting.',
+		title: 'Type and Style',
+		body: '*Type* is what a Sign publishes: a *Publication* (a `30040` index over `30041` sections), *Notes* (each section a standalone `30041`), or one event of a *Wiki* (`30818`), *Spec* (`30817`), *Blog* (`30023`) or custom kind. *Style* is the markup — Markdown, Org, AsciiDoc or plain — stamped as the `m` tag. Changing the style re-reads your text; nothing is converted.',
 		placement: 'bottom'
 	},
-	// B · Views — the Full / Plain / Read switch (view-agnostic; no mode tag).
+	// B · Views — Rendered / Show markers / Source.
 	'compose-views': {
 		key: 'compose-views',
 		anchor: 'compose-view',
-		title: 'Views — Full, Plain, Read',
-		body: '`Full` shows each section as an editable card. `Plain` is one text buffer whose headings parse live into a *Detected* outline. `Read` previews the rendered result in its own buffer.',
+		title: 'Rendered, markers, source',
+		body: '*Rendered* styles the text and hides the markup, except on the line you are editing. *Show markers* keeps the markup visible, dimmed. *Source* is the plain text. It is the same document in all three — always real Markdown / Org / AsciiDoc.',
 		placement: 'bottom'
 	},
-	// C · Plain chain — the markup mechanics: write → shape → delim/nest → tags.
+	// C · The editor chain — write → headings → tags.
 	'compose-plain': {
 		key: 'compose-plain',
 		anchor: 'compose-plain',
-		title: 'Plain — one buffer, live sections',
-		body: 'Write freely on the left; your headings parse live into the *Detected* panel — each heading becomes a `30041` section. Nothing is split until you sign.',
+		title: 'One editor, live sections',
+		body: 'Write on the left. A level-1 heading is the title, each level-2 heading starts a section (a `30041`), and a level-3 heading nests under it (its level-2 becomes a sub-index). Level 4 and deeper stay inside the text. Type the heading in your style (`## `, `** `, `== `) or use the H1–H4 buttons.',
 		placement: 'top',
-		next: 'compose-shape'
-	},
-	'compose-shape': {
-		key: 'compose-shape',
-		anchor: 'compose-shape',
-		title: 'Publication or Notes — your title decides',
-		body: 'The shape pill reads your top-level `= Title`. *With* a title → `Publication`: the sections bind under one `30040` index. *Without* one → `Notes` (tinted): each section publishes as a standalone `30041`, no index — scattered notes. It is read-only — add or remove the document title to flip between them.',
-		placement: 'bottom',
-		next: 'compose-nest'
-	},
-	'compose-nest': {
-		key: 'compose-nest',
-		anchor: 'compose-nest',
-		title: 'Delimiter & nesting',
-		body: "`delim` is your markup's heading character — `=` by default, `#` for Markdown. Level 1 (`= Title`) is the publication, level 2 (`== Heading`) a section. `nest` sets how deep that folds: `flat` keeps one index over a flat list of sections; each tier turns one more heading level into nested `30040` sub-indices — books → chapters → sections.",
-		placement: 'bottom',
 		next: 'compose-tags'
 	},
 	'compose-tags': {
 		key: 'compose-tags',
-		anchor: 'compose-plain',
-		title: 'Tags inline',
-		body: 'Under any heading, `:name: value` adds a `["name","value"]` tag and `:tags: a, b, c` expands to three `t` tags. This works in every mode — including the atomic body, where a leading `:tag:` block is parsed, stripped, and shown as *tags from body* chips.',
-		placement: 'top'
+		anchor: 'compose-tags',
+		title: 'Tags',
+		body: 'Tags live in the rail, not in the text. Each tag is a name and one or more values — `+ value` adds another, so `["r", "wss://…", "read"]` is one row. The *Publication* tab holds the index’s tags; the section tab follows your cursor. Tags the engine sets (`d`, `title`, `m`, `a`) are listed below, read-only.',
+		placement: 'left'
 	},
-	// D · Detected — the live outline rail (Plain only).
+	// D · Outline — the live outline rail.
 	'compose-detected': {
 		key: 'compose-detected',
 		anchor: 'compose-detected',
-		title: 'Detected — the live outline',
-		body: "The right rail mirrors the parse in real time: the document title, a tag count, and every section indented by its nesting depth. Reorder with `↑`/`↓`, send a section to chat, or read its provenance badge. Sections you haven't saved yet show a `new` pill.",
+		title: 'The outline',
+		body: "The rail mirrors the parse as you type: the title and every section, indented by depth. Click one to jump to it, reorder with `↑`/`↓`, send it to chat, or read its provenance badge. A section you are editing inside someone's publication shows its siblings *locked* (read-only) until you `Unlock all`.",
 		placement: 'left'
 	},
 	// Nostrdown chain — reference other events from your prose (builder → forms).
@@ -385,7 +368,7 @@ export const TIPS: Record<string, TourTip> = {
 		key: 'compose-nostrdown',
 		anchor: 'compose-ref',
 		title: 'Nostrdown — link & quote',
-		body: "Reference other Nostr events right in your prose. This `{{ }}` button opens the reference builder — pick a sibling section, wiki topic, embed, slot, quote, or profile mention and the token lands at your cursor. The `auto` checkbox keeps inline autocomplete on: type `{{` and pick a kind, then `Tab`/`Enter` to accept. In the reader (and here), plain-click a reference to *preview* it, `⌘/Ctrl-click` to *follow*.",
+		body: "Reference other Nostr events right in your prose. The `{{ }}` toolbar button opens the reference builder — pick a sibling section, wiki topic, embed, slot, quote, or profile mention and the token lands at your cursor. With `auto refs` on, type `{{` and pick a kind, then `Tab`/`Enter` to accept. Plain-click a reference to *preview* it, `⌘/Ctrl-click` to *follow*.",
 		placement: 'bottom',
 		next: 'compose-nostrdown-syntax'
 	},
@@ -396,44 +379,12 @@ export const TIPS: Record<string, TourTip> = {
 		body: "`{{ref:Section Title}}` links a sibling section · `{{wiki:topic}}` a wiki/article · `{{embed:naddr…}}` transcludes *any* event — a note, an article, even an `npub` profile — as a card · `{{quote:naddr…|the text}}` quotes a passage inline, attributed (markup-agnostic, no headings) · `{{slot:naddr…}}` (own line) slots a whole 30040/30041 in as a child section · `{{@npub…}}` mentions a profile. Each reference also lands as a resolution tag (`a`/`e`/`p`/`wikilink`) on the event — check *Preview events* before you sign.",
 		placement: 'top'
 	},
-	// E · Sections chain — the Full-view cards: cards → lock/claim → select → trash.
-	'compose-sections': {
-		key: 'compose-sections',
-		anchor: 'compose-sections',
-		title: 'Sections — each card is an event',
-		body: 'Every card becomes a `30041` — its own title, content, and tags. *Drag* to reorder; *collapse* to titles for a quick outline.',
-		placement: 'top',
-		next: 'compose-lock'
-	},
-	'compose-lock': {
-		key: 'compose-lock',
-		anchor: 'compose-sections',
-		title: 'Locked until you claim',
-		body: "Imported and new sections arrive *locked*. Claim one (it turns yellow) to edit it; with a source publication, `Unlock all` / `Lock all` do it in bulk. An unlocked-but-*untouched* section still publishes as a transclusion of the original — you'll get a confirm before it does.",
-		placement: 'top',
-		next: 'compose-select'
-	},
-	'compose-select': {
-		key: 'compose-select',
-		anchor: 'compose-toolbar',
-		title: 'Act on a selection',
-		body: '`All` / `Inv` build a selection; `◂` sends it to chat, `▸` publishes just those sections, and `▸ all` collapses every card to reorder the outline quickly.',
-		placement: 'bottom',
-		next: 'compose-trash'
-	},
-	'compose-trash': {
-		key: 'compose-trash',
-		anchor: 'compose-toolbar',
-		title: 'Two-stage delete',
-		body: '`🗑` first removes the selection from the composer only. Arm it again and it becomes *delete everywhere* with a 10-second countdown — a deliberate second step.',
-		placement: 'bottom'
-	},
 	// F · Publish chain — sign → diff/republish (view-agnostic).
 	'compose-publish': {
 		key: 'compose-publish',
 		anchor: 'compose-actions',
 		title: 'Sign → snapshot → broadcast',
-		body: '`Sign` turns the draft into a signed snapshot — the only way an event enters the db. `Sign (N)` signs just the checked sections. *Broadcasting* to relays is a separate, later step. `Preview events` shows the exact JSON first.',
+		body: '`Sign` turns the draft into a signed snapshot — the only way an event enters the db. *Broadcasting* to relays is a separate, later step. `Preview events` shows the exact JSON first.',
 		placement: 'top',
 		next: 'compose-diff'
 	},

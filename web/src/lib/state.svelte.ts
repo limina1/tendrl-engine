@@ -100,6 +100,21 @@ export type AgentServicesModalState = {
 };
 import { identityCanSign } from '$lib/identity/signer';
 import { sectionDiverged } from '$lib/compose/state';
+import { tagFromStored, wireTag } from '$lib/types';
+
+/** What the composer was opened to edit from an event menu. */
+export type ComposeEdit = {
+	mode: 'section' | 'publication' | 'atomic';
+	/** The edited event's author. */
+	owner: string;
+	/** The editor is that author — republish instead of fork + request. */
+	own: boolean;
+	/** The publication the edit is placed in (`30040:pk:d`). */
+	indexCoord?: string;
+	/** Atomic: the edited version's id. */
+	baseId?: string;
+	title: string;
+};
 
 /** Replaceable kind-0 events can pile up multiple historical versions in
  *  the DB / relay results. A search should surface only the *current*
@@ -208,6 +223,9 @@ function _createAppState() {
 	// 30023 blog / 30818 wiki / custom = a single atomic event. Owned here (not
 	// in ComposeView) so resuming a draft can restore the editor's mode.
 	let composeKind = $state(30040);
+	// Type = Notes: a 30040-kind compose whose sections publish standalone
+	// (no index). Picked in the composer's Type select.
+	let composeNotes = $state(false);
 	// Default content format for every section (canonical mimetype). The
 	// composer's own heading syntax is Markdown, so that is the default; the
 	// engine stamps the resolved value as each 30041's `m` tag at publish.
@@ -579,6 +597,14 @@ function _createAppState() {
 	// the whole form (template, custom kind, content, per-field values,
 	// extra tag rows), remembered across close like the highlighter's.
 	let eventComposer: { template?: string; prefill?: EventComposerPrefill } | null = $state(null);
+	// The edit the composer was opened for from an event menu (Edit section /
+	// Edit publication / Edit): Sign routes through /api/v1/section-edit —
+	// own → republish, someone else's → fork + kind-818 merge request.
+	let composeEdit: ComposeEdit | null = $state(null);
+	// The review step a Sign opens for a ComposeEdit (EditReviewModal).
+	let editReview: api.SectionEditRequest[] | null = $state(null);
+	// The merge-requests modal (M-x tendrl-merge-requests / event menu).
+	let mergeRequests: { targets?: string[] } | null = $state(null);
 	let eventDraft: EventComposerDraft | null = $state(null);
 
 	// Republish diff prompt: set when Publish detects a same-title
@@ -980,7 +1006,11 @@ function _createAppState() {
 			original_content: e.original,
 			original_title: e.title,
 			original_tags: [],
-			tags: e.tags.map((t) => ({ name: t[0] ?? '', value: t.slice(1).join(', ') })),
+			tags: e.tags.map((t) =>
+				t.length > 2
+					? { name: t[0] ?? '', value: t[1] ?? '', values: t.slice(1) }
+					: { name: t[0] ?? '', value: t[1] ?? '' }
+			),
 			source_event_id:
 				e.source.type === 'event' ? e.source.id : e.source.type === 'addr' ? e.source.event_id : undefined,
 			source_addr:
@@ -2343,7 +2373,7 @@ function _createAppState() {
 	// untouched → imported (linked in place, no new event).
 	function toPublishBlocks(sections: ContextItem[]): api.PublishBlock[] {
 		return sections.map((s) => {
-			const baseTags = s.tags.map((t) => [t.name, t.value] as [string, string]);
+			const baseTags = s.tags.map(wireTag);
 			if (!s.source_addr) {
 				return { kind: 'editable', title: s.title, format: s.format, tags: baseTags, content: s.content };
 			}
@@ -2402,7 +2432,7 @@ function _createAppState() {
 				resp = await api.publishBlocks({
 					title: pubTitle,
 					format: composeFormat,
-					tags: pubTags.map((t) => [t.name, t.value] as [string, string]),
+					tags: pubTags.map(wireTag),
 					blocks,
 					source_publication_addr: composeSourcePubAddr,
 					source_publication_event_id: composeSourcePubEventId,
@@ -2414,13 +2444,13 @@ function _createAppState() {
 				resp = await api.publish({
 					title: pubTitle,
 					format: composeFormat,
-					tags: pubTags.map((t) => [t.name, t.value] as [string, string]),
+					tags: pubTags.map(wireTag),
 					sections: sections.map((s) => ({
 						title: s.title,
 						content: s.content,
 						format: s.format,
 						level: s.level,
-						tags: s.tags.map((t) => [t.name, t.value] as [string, string]),
+						tags: s.tags.map(wireTag),
 						// Reuse the matched section's d-tag on republish, else
 						// the section's own pinned coordinate (set on draft
 						// resume) so the 30041 replaces rather than forks.
@@ -2487,7 +2517,7 @@ function _createAppState() {
 			const resp = await api.publish({
 				title,
 				format: composeFormat,
-				tags: tags.map((t) => [t.name, t.value] as [string, string]),
+				tags: tags.map(wireTag),
 				sections: [],
 				kind,
 				content,
@@ -2526,12 +2556,12 @@ function _createAppState() {
 		try {
 			const resp = await api.diffVsPublished({
 				title,
-				tags: tags.map((t) => [t.name, t.value] as [string, string]),
+				tags: tags.map(wireTag),
 				sections: sections.map((s) => ({
 					title: s.title,
 					content: s.content,
 					level: s.level,
-					tags: s.tags.map((t) => [t.name, t.value] as [string, string])
+					tags: s.tags.map(wireTag)
 				})),
 				// The PUBLISHED d-tag (when this compose was seeded from a published
 				// publication), NOT the draft's d-tag — those are independent nanoid
@@ -2657,13 +2687,13 @@ function _createAppState() {
 			const resp = await api.saveDraft({
 				title,
 				format: composeFormat,
-				tags: tags.map((t) => [t.name, t.value] as [string, string]),
+				tags: tags.map(wireTag),
 				sections: sections.map((s) => ({
 					title: s.title,
 					content: s.content,
 					format: s.format,
 					level: s.level,
-					tags: s.tags.map((t) => [t.name, t.value] as [string, string]),
+					tags: s.tags.map(wireTag),
 					slot: s.slot,
 					// Preserve pinned section coordinates across save/resume
 					// cycles — losing them would re-mint on the next publish.
@@ -2697,7 +2727,7 @@ function _createAppState() {
 					{
 						title: s.title,
 						content: s.content,
-						tags: s.tags.map((t) => ({ name: t.name, value: t.value })),
+						tags: s.tags.map(tagFromStored),
 						original_content: s.content,
 						origin: 'compose' as const,
 						level: s.level,
@@ -2712,12 +2742,14 @@ function _createAppState() {
 			);
 			items = [...items.map((e) => ({ ...e, in_compose: false })), ...draftItems];
 			composeTitle = cs.title;
-			composeTags = cs.tags.map((t) => ({ name: t.name, value: t.value }));
+			composeTags = cs.tags.map(tagFromStored);
 			// Resume onto the same publication identity so the next save adds a
 			// version rather than forking.
 			composeDTag = cs.d_tag ?? null;
 			// Restore the output kind so an atomic draft reopens atomic.
 			composeKind = cs.kind ?? 30040;
+			composeNotes = false;
+			composeEdit = null;
 			// Legacy drafts carry no format: fall back to the composer default.
 			composeFormat = cs.format ?? DEFAULT_COMPOSE_FORMAT;
 			// Blank + unseeded so ComposeView re-seeds the atomic body from the
@@ -2788,7 +2820,7 @@ function _createAppState() {
 				const resp = await api.previewPublication({
 					title: meta.title,
 					format: composeFormat,
-					tags: meta.tags.map((t) => [t.name, t.value] as [string, string]),
+					tags: meta.tags.map(wireTag),
 					sections: [],
 					kind: meta.kind,
 					content,
@@ -2822,7 +2854,7 @@ function _createAppState() {
 				const resp = await api.previewPublicationBlocks({
 					title: pubTitle,
 					format: composeFormat,
-					tags: pubTags.map((t) => [t.name, t.value] as [string, string]),
+					tags: pubTags.map(wireTag),
 					blocks: toPublishBlocks(sections),
 					source_publication_addr: composeSourcePubAddr,
 					source_publication_event_id: composeSourcePubEventId,
@@ -2834,13 +2866,13 @@ function _createAppState() {
 				const resp = await api.previewPublication({
 					title: pubTitle,
 					format: composeFormat,
-					tags: pubTags.map((t) => [t.name, t.value] as [string, string]),
+					tags: pubTags.map(wireTag),
 					sections: sections.map((s) => ({
 						title: s.title,
 						content: s.content,
 						format: s.format,
 						level: s.level,
-						tags: s.tags.map((t) => [t.name, t.value] as [string, string]),
+						tags: s.tags.map(wireTag),
 						slot: s.slot
 					})),
 					notes,
@@ -3458,6 +3490,7 @@ function _createAppState() {
 	// provenance so a follow-up seed can reset it cleanly.
 	function clearComposePool() {
 		items = items.map((e) => (e.in_compose ? { ...e, in_compose: false } : e));
+		composeEdit = null;
 		composeSourcePubAddr = null;
 		composeSourcePubEventId = null;
 		composeSourceSectionOrder = [];
@@ -3492,6 +3525,124 @@ function _createAppState() {
 		const src = composeSourcePubAddr;
 		if (!src) return;
 		navigateToPublication(src.pubkey, src.d_tag);
+	}
+
+	// ── Edit from an event menu ──────────────────────────────────────────
+	// Tags the engine sets itself (or that bind an event to its place) are
+	// not the author's to edit; everything else loads into the tags panel.
+	const STRUCTURAL_TAGS = new Set([
+		'd', 'title', 'a', 'e', 'p', 'm', 'client', 'T', 'N', 'auto-update', 'alt',
+		'E', 'A', 'K', 'P', 'published_at', 'format', 'w', 'q', 'ref'
+	]);
+	function editableTags(tags: string[][]): TagEntry[] {
+		return tags
+			.filter((t) => t.length > 0 && !STRUCTURAL_TAGS.has(t[0]))
+			.map((t) =>
+				t.length > 2
+					? { name: t[0], value: t[1] ?? '', values: t.slice(1) }
+					: { name: t[0], value: t[1] ?? '' }
+			);
+	}
+	const tagOf = (ev: { tags: string[][] }, name: string) =>
+		ev.tags.find((t) => t[0] === name)?.[1];
+	const coordOf = (ev: { kind: number; pubkey: string; tags: string[][] }) =>
+		`${ev.kind}:${ev.pubkey}:${tagOf(ev, 'd') ?? ''}`;
+	const KIND_FORMAT: Record<number, string> = { 30023: 'text/markdown', 30818: 'text/asciidoc' };
+
+	/** Open the composer on a publication: every section in TOC order, the
+	 *  `focus` one (Edit section) unlocked and the rest locked — or all of
+	 *  them unlocked (Edit publication). Nested indexes ride as slot lines. */
+	async function editPublicationInComposer(
+		index: api.AttachedEvent,
+		opts: { focus?: api.AttachedEvent } = {}
+	): Promise<boolean> {
+		let children: api.AttachedEvent[] = [];
+		try {
+			children = (await api.getAttached({ id: index.id, policy: 'local_only' })).sections ?? [];
+		} catch (e) {
+			pushToast(`Could not load the publication: ${api.errorMessage(e)}`, 'error');
+			return false;
+		}
+		const me = identityStatus?.pubkey ?? '';
+		clearComposePool();
+		const pubAddr = { kind: 30040, pubkey: index.pubkey, d_tag: tagOf(index, 'd') ?? '' };
+		const sectionAddrs: NAddr[] = [];
+		for (const ev of children) {
+			const addr = { kind: ev.kind, pubkey: ev.pubkey, d_tag: tagOf(ev, 'd') ?? '' };
+			sectionAddrs.push(addr);
+			if (ev.kind !== 30041) {
+				addToPool(
+					{ title: '', content: '', tags: [], original_content: '', origin: 'compose', slot: coordOf(ev) },
+					{ compose: true }
+				);
+				continue;
+			}
+			addToPool(
+				{
+					title: tagOf(ev, 'title') ?? '',
+					content: ev.content,
+					tags: editableTags(ev.tags),
+					source_addr: addr,
+					source_event_id: ev.id,
+					original_content: ev.content,
+					format: tagOf(ev, 'm'),
+					origin: 'import'
+				},
+				{ compose: true }
+			);
+		}
+		// Unlock what the edit is for: the focused section, or all of them.
+		items = items.map((it) =>
+			it.in_compose && it.source_event_id
+				? { ...it, readonly: opts.focus ? it.source_event_id !== opts.focus.id : false }
+				: it
+		);
+		seedDraftMetadata(tagOf(index, 'title') ?? '', editableTags(index.tags), {
+			pub_addr: pubAddr,
+			pub_event_id: index.id,
+			section_order: sectionAddrs
+		});
+		composeKind = 30040;
+		composeNotes = false;
+		composeFormat =
+			(opts.focus && tagOf(opts.focus, 'm')) ??
+			children.map((c) => tagOf(c, 'm')).find(Boolean) ??
+			DEFAULT_COMPOSE_FORMAT;
+		composeAtomicBody = '';
+		composeAtomicSeeded = false;
+		composeEdit = {
+			mode: opts.focus ? 'section' : 'publication',
+			owner: index.pubkey,
+			own: !!me && index.pubkey === me,
+			indexCoord: coordOf(index),
+			title: (opts.focus ? tagOf(opts.focus, 'title') : tagOf(index, 'title')) ?? ''
+		};
+		navigateToCompose();
+		return true;
+	}
+
+	/** Open the composer on one atomic event (30023 / 30818 / 30817): its
+	 *  title as the level-1 heading, its content, its tags. */
+	function editAtomicInComposer(ev: api.AttachedEvent) {
+		const me = identityStatus?.pubkey ?? '';
+		clearComposePool();
+		const format = tagOf(ev, 'm') ?? KIND_FORMAT[ev.kind] ?? DEFAULT_COMPOSE_FORMAT;
+		const head = format === 'text/org' ? '* ' : format === 'text/markdown' ? '# ' : '= ';
+		const title = tagOf(ev, 'title') ?? tagOf(ev, 'd') ?? '';
+		seedDraftMetadata(title, editableTags(ev.tags));
+		composeKind = ev.kind;
+		composeNotes = false;
+		composeFormat = format;
+		composeAtomicBody = `${head}${title}\n\n${ev.content}`;
+		composeAtomicSeeded = true;
+		composeEdit = {
+			mode: 'atomic',
+			owner: ev.pubkey,
+			own: !!me && ev.pubkey === me,
+			baseId: ev.id,
+			title
+		};
+		navigateToCompose();
 	}
 
 	// Set the publication-level draft fields (title + topic tags) and
@@ -3860,6 +4011,8 @@ function _createAppState() {
 		composeTags = [];
 		composeDTag = null; // fresh publication identity
 		composeKind = 30040; // default back to publication
+		composeNotes = false;
+		composeEdit = null;
 		composeFormat = DEFAULT_COMPOSE_FORMAT;
 		composeAtomicBody = '';
 		composeAtomicSeeded = false;
@@ -5550,6 +5703,14 @@ function _createAppState() {
 		set composeDefaultMode(v: ComposeDefaultMode) { composeDefaultMode = v; },
 		get composeKind() { return composeKind; },
 		set composeKind(v: number) { composeKind = v; },
+		get composeNotes() { return composeNotes; },
+		get composeEdit() { return composeEdit; },
+		set composeEdit(v: ComposeEdit | null) { composeEdit = v; },
+		get mergeRequests() { return mergeRequests; },
+		set mergeRequests(v: { targets?: string[] } | null) { mergeRequests = v; },
+		get editReview() { return editReview; },
+		set editReview(v: api.SectionEditRequest[] | null) { editReview = v; },
+		set composeNotes(v: boolean) { composeNotes = v; },
 		get composeFormat() { return composeFormat; },
 		set composeFormat(v: string) { composeFormat = v; },
 		get composeAtomicBody() { return composeAtomicBody; },
@@ -5718,6 +5879,8 @@ function _createAppState() {
 		importSectionToCompose,
 		clearComposePool,
 		seedDraftMetadata,
+		editPublicationInComposer,
+		editAtomicInComposer,
 		reorderComposeSection,
 		previewDraft,
 

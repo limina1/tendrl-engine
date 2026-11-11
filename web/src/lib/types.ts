@@ -444,7 +444,27 @@ export interface SearchResponse {
 
 export interface TagEntry {
 	name: string;
+	/** The first value (the whole value for a plain pair). */
 	value: string;
+	/** Every value, for a multi-value tag set in the tags panel — sent as
+	 *  `{name, values}` and emitted verbatim as `[name, values…]` (no comma
+	 *  split, no `tags` → `t` expansion). Absent = a plain `[name, value]`
+	 *  pair with the legacy inline-syntax rules. */
+	values?: string[];
+}
+
+/** A compose tag on the wire: the legacy pair, or `{name, values}`. */
+export type WireTag = [string, string] | { name: string; values: string[] };
+
+/** A stored tag (draft / engine) → the composer's TagEntry. */
+export function tagFromStored(t: { name: string; value: string; extra?: string[]; verbatim?: boolean }): TagEntry {
+	return t.verbatim
+		? { name: t.name, value: t.value, values: [t.value, ...(t.extra ?? [])] }
+		: { name: t.name, value: t.value };
+}
+
+export function wireTag(t: TagEntry): WireTag {
+	return t.values ? { name: t.name, values: t.values } : [t.name, t.value];
 }
 
 export interface ContextItem {

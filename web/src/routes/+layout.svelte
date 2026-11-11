@@ -21,6 +21,8 @@
 	import FetchActivityModal from '$lib/components/FetchActivityModal.svelte';
 	import HighlightComposerModal from '$lib/components/HighlightComposerModal.svelte';
 	import EventComposerModal from '$lib/components/EventComposerModal.svelte';
+	import EditReviewModal from '$lib/components/EditReviewModal.svelte';
+	import MergeRequestsModal from '$lib/components/MergeRequestsModal.svelte';
 	import AgentServicesModal from '$lib/components/AgentServicesModal.svelte';
 	import NarrateModal from '$lib/components/NarrateModal.svelte';
 	import NarrationPlayer from '$lib/components/NarrationPlayer.svelte';
@@ -228,6 +230,14 @@
 
 {#if app.eventComposer}
 	<EventComposerModal />
+{/if}
+
+{#if app.editReview}
+	<EditReviewModal />
+{/if}
+
+{#if app.mergeRequests}
+	<MergeRequestsModal />
 {/if}
 
 {#if app.agentServicesModal}

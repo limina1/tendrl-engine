@@ -1220,6 +1220,7 @@ fn tag_pairs(v: Option<&Value>) -> Vec<crate::publication::compose::TagEntry> {
                     Some(crate::publication::compose::TagEntry {
                         name: t.first()?.as_str()?.to_string(),
                         value: t.get(1)?.as_str()?.to_string(),
+                        ..Default::default()
                     })
                 })
                 .collect()

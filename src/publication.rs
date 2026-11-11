@@ -17,6 +17,9 @@ use serde_json::Value;
 
 pub mod compose;
 pub mod tree_emit;
+pub mod event_util;
+pub mod merge_request;
+pub mod section_edit;
 
 /// Kind constants for NKBIP-01 publications
 pub const KIND_PUBLICATION_INDEX: u64 = 30040;
@@ -4024,6 +4027,7 @@ pub fn build_block_publication_events(
                     tags: block.tags.iter().map(|t| crate::publication::compose::TagEntry {
                         name: t.name.clone(),
                         value: t.value.clone(),
+                        ..Default::default()
                     }).collect(),
                     ..Default::default()
                 };
@@ -4578,6 +4582,7 @@ mod tests {
         let tags = vec![TagEntry {
             name: "tags".to_string(),
             value: "rust, nostr".to_string(),
+            ..Default::default()
         }];
         let event = build_atomic_event(
             30023,

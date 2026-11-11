@@ -12,7 +12,7 @@ import type { ClassName } from './types';
  *  `TIPS` (see discovery.svelte.ts); `mode` ties a tour to a composer view. */
 export type BufferTour = {
 	key: string;
-	mode?: 'full' | 'plain';
+	mode?: 'plain';
 };
 
 /** A buffer kind's non-component metadata. */
@@ -44,7 +44,6 @@ export const BUFFER_KIND_META: BufferKindMeta[] = [
 			{ key: 'compose-plain', mode: 'plain' },
 			{ key: 'compose-detected', mode: 'plain' },
 			{ key: 'compose-nostrdown', mode: 'plain' },
-			{ key: 'compose-sections', mode: 'full' },
 			{ key: 'compose-publish' }
 		]
 	},
@@ -86,9 +85,9 @@ export function toursForKind(kind: string | undefined): BufferTour[] {
  *  kinds and deduped by tour key; each row carries the owning buffer's label. */
 export function toursForClass(
 	className: ClassName
-): { kind: string; label: string; key: string; mode?: 'full' | 'plain' }[] {
+): { kind: string; label: string; key: string; mode?: 'plain' }[] {
 	const seen = new Set<string>();
-	const out: { kind: string; label: string; key: string; mode?: 'full' | 'plain' }[] = [];
+	const out: { kind: string; label: string; key: string; mode?: 'plain' }[] = [];
 	for (const e of BUFFER_KIND_META) {
 		if (e.className !== className) continue;
 		for (const t of toursForKind(e.kind)) {
