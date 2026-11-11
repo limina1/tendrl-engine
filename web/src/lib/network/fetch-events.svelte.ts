@@ -58,6 +58,10 @@ let pendingReplace = false;
 const opToasts = new Map<string, number>();
 // Determinate totals + op kind, for the progress bar and the completion line.
 const opTotals = new Map<string, number>();
+// Intents that went to the confirm modal instead of opening a toast. Once
+// approved, the op's first progress/relay/completion event opens its toast
+// from here — without this a confirmed operation reported nothing.
+const confirmedIntents = new Map<string, Extract<FetchEvent, { type: 'intent' | 'publish_intent' }>>();
 const opModes = new Map<string, 'fetch' | 'publish'>();
 
 /** Resolve the AppState lazily — it's created by +layout, which may run
@@ -97,6 +101,7 @@ function handleEvent(ev: FetchEvent) {
 	// `intent` → FetchConfirmModal, `publish_intent` → PublishConfirmModal
 	// (both keyed off `confirmState.intent`; +layout branches on type).
 	if ((ev.type === 'intent' || ev.type === 'publish_intent') && ev.needs_confirmation) {
+		confirmedIntents.set(ev.operation_id, ev);
 		if (pendingReplace) {
 			// A reissue is in flight — swap this re-composed intent into the
 			// open modal in place. No close/reopen.
@@ -119,6 +124,23 @@ function handleEvent(ev: FetchEvent) {
 
 	const app = appOrNull();
 	if (!app) return;
+
+	// An approved confirm-mode operation: open its activity toast on its
+	// first sign of life.
+	if (
+		(ev.type === 'progress' || ev.type === 'relay_status' || ev.type === 'completed' || ev.type === 'failed') &&
+		!opToasts.has(ev.operation_id)
+	) {
+		const intent = confirmedIntents.get(ev.operation_id);
+		if (intent) {
+			confirmedIntents.delete(ev.operation_id);
+			if (!(ev.type === 'failed' && ev.error === 'cancelled')) {
+				const mode = intent.type === 'publish_intent' ? 'publish' : 'fetch';
+				opModes.set(ev.operation_id, mode);
+				openActivityToast(app, ev.operation_id, intent.label, mode, intent);
+			}
+		}
+	}
 
 	switch (ev.type) {
 		case 'intent':
