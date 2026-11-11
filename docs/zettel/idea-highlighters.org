@@ -60,19 +60,23 @@ Shown when capturing a highlight:
   HSV popover, overlay paints spans in the highlight's colour, the
   highlights drawer filters by label.
 
+* Decisions (2026-11-11)
+
+- *Recolour* publishes a new 9802 carrying a supersede pointer
+  (=["e", <old-id>, "", "supersedes"]=); the engine drops superseded
+  highlights, so the old one leaves the list and the reader. Only your
+  own highlights can be recoloured — on someone else's, the click offers
+  "highlight with this style".
+- *Overlap*: highlight display settings carry one alpha level for all
+  highlights, so overlapping highlights stay legible; one =highlighter=
+  tag per highlight (overlap comes from separate highlights).
+- *Behaviour* is opt-in: the highlight modal has an "annotation" button
+  that pulls in the annotation functionality for that highlight (e.g.
+  =vocabulary= → a vocabulary ask, =for= / =against= → a pro/con view);
+  without it, every label is plain.
+- *No NIP-32 label* — the =highlighter= tag is enough.
+
 * Open questions
 
-- [ ] Recolour = a new 9802 (9802 is a regular event, not replaceable):
-      how is the old one hidden? A supersede pointer on the new one
-      (=["e", <old-id>, "", "supersedes"]=, engine drops superseded
-      highlights) works everywhere; a kind-5 deletion also tells other
-      clients but some relays refuse kind 5 (thecitadel). Only your own
-      highlights can be recoloured — on someone else's, the click offers
-      "highlight with this style" instead?
-- [ ] One highlighter per highlight, or several =highlighter= tags?
-- [ ] Do some labels carry behaviour (=vocabulary= → a vocabulary ask;
-      =for= / =against= → a pro/con view), or are all labels plain?
-- [ ] Interop: also stamp a NIP-32 =l= with the label so other clients
-      see it?
 - [ ] Contrast: a custom colour on a dark theme — adjust lightness at
       render, or paint as published?
