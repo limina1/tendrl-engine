@@ -1,76 +1,82 @@
-#+TITLE: Idea: highlighters — function + colour pairs
+#+TITLE: Idea: highlighters — labelled, coloured highlight events
 #+TYPE: idea
-#+STATUS: design — colour picker settled 2026-11-11; prototype next
+#+STATUS: design — model settled 2026-11-11 (labels as events, like writing styles); prototype next
 #+DATE: 2026-11-11
 
 * What it means
 
 A highlight today (kind 9802) carries the text, context, an optional
 note and its source — no /function/, and its colour is only the
-yours/theirs theme tint. A *highlighter* is a named function paired with
-a colour: =vocabulary=, =for=, =against=, or anything the reader names.
+yours/theirs theme tint. A *highlighter* is a label paired with a
+colour: =vocabulary=, =for=, =against=, or anything the reader names.
 Highlighting with one marks /what the passage is/, and the reader paints
-each function in its own colour.
+it in that highlighter's colour.
 
-Highlighters become their own selection, apart from plain highlights:
+* Highlighters are events, like writing styles
 
-- *Your highlighters* — the functions you have already used, gathered
-  from your own labelled 9802s (plus your palette, if published).
-- *Use another's* — a separate button: enter an npub, pull in that
-  reader's highlighters (their palette event, else the functions found
-  on their labelled 9802s with auto colours); adopt the set or single
-  highlighters.
+Same pattern as the annotation requests' writing styles
+(=src/api/styles.rs= on =feat/annotations-table=): a style is a kind-30078
+event (=t: tendrl-style=, =title=, instructions as content), the picker
+lists the style events found in the store, a new one can be written
+inline, and a request names its style by coordinate (=["style", …]=) so
+"everything in this style" is one tag search.
 
-* On the event
-
-The function rides on the 9802 as a NIP-32 label, so other clients
-ignore it harmlessly and it is a queryable, post-hoc reader label
-([[file:idea-post-hoc-labeling.org][post-hoc labeling]] gets its most
-natural write path):
+A highlighter is the same shape:
 
 #+begin_src
-["L", "tendrl.highlighter"]
-["l", "vocabulary", "tendrl.highlighter"]
+kind 30078 (NIP-78 app data, addressable)
+["d", <nanoid>]
+["t", "tendrl-highlighter"]
+["title", "against"]
+["color", "#ff6b6b"]
+content: what this label means — "a passage that argues against the thesis"
 #+end_src
 
-The colour is not on the 9802 — the event says what the passage is, the
-reader decides how it looks. Colours are shared through an optional
-addressable *palette* event (=function → colour, description= entries),
-which is what lets "use another's" carry colours, not just names.
+and a highlight names it by coordinate:
 
-* Colour: auto, standard, or picked
+#+begin_src
+kind 9802
+["highlighter", "30078:<pk>:<d>"]
+#+end_src
 
-- *Auto* (default): a stable hash of the function name picks from a
-  theme-tuned palette, so =against= is the same colour everywhere with
-  no choice made.
+So the label set is picked up from existing events, not a fixed list:
+- the colour travels on the highlighter event (no separate palette);
+- "everything highlighted /against/" = =#highlighter= search;
+- the content tells a reader — or the assistant — what to mark with it;
+- local until broadcast, newest version per coordinate wins.
+
+* The picker
+
+- *Your highlighters* — highlighter events signed by you, from the store.
+- *Use another's* — a separate button: enter an npub, fetch that
+  reader's =t: tendrl-highlighter= events (Confirm-gated like any relay
+  fetch), and highlight with theirs. A highlighter referenced by a 9802
+  already in the store is discovered the same way.
+- *New highlighter* inline: title, meaning, colour.
+
+* Colour
+
+Chosen when the highlighter is made (or edited — a new version):
 - *Standard*: a dropdown of the standard highlighter colours (yellow,
   green, blue, pink, orange, purple …).
-- *Custom*: a button beside the dropdown pops up an HSV colour picker
-  for any other colour.
-
-Whatever is chosen overrides auto for that function, locally; publishing
-the palette shares it.
-
-* Functions with behaviour (open)
-
-Some functions could /do/ something beyond colour:
-- =vocabulary= → offer a vocabulary ask on the term (the requests flow,
-  [[file:../vocabulary-workflow.org][vocabulary workflow]]).
-- =for= / =against= → an argument view: a document's pro and con
-  highlights side by side.
-Free-form functions just colour.
+- *Custom*: a button beside the dropdown pops up an HSV colour picker.
+- Default when none is picked: a stable colour from the title hash.
 
 * Reader
 
 Highlight resolution (=POST /api/v1/highlights/resolve=) carries the
-label through; the overlay paints spans by function colour; the
-highlights drawer filters by highlighter (only =against=, only another
-reader's =vocabulary=).
+highlighter coordinate through; the engine resolves it to title + colour;
+the overlay paints spans in that colour; the highlights drawer filters by
+highlighter (only =against=, only another reader's =vocabulary=).
 
 * Open questions
 
-- [ ] One function per highlight, or several (NIP-32 allows several)?
-- [ ] Ship =vocabulary= / =for= / =against= with behaviour, or free-form
-      names + colours first?
-- [ ] Palette event kind / shape (NIP-51-style list vs. a new
-      addressable kind).
+- [ ] Branch base: =api/styles.rs= lives on the unmerged
+      =feat/annotations-table= chain, not master — share the 30078
+      list/create plumbing (branch off that chain, or port the generic
+      part to master first).
+- [ ] One highlighter per highlight, or several =highlighter= tags?
+- [ ] Do some labels carry behaviour (=vocabulary= → a vocabulary ask;
+      =for= / =against= → a pro/con view), or are all labels plain?
+- [ ] Interop: also stamp a NIP-32 =l= with the title so other clients
+      see the label?
