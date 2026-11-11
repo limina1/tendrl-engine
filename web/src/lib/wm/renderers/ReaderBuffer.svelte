@@ -369,6 +369,21 @@
 			app.pushToast(api.errorMessage(e, 'Recolour failed'), 'error', 5000);
 		}
 	}
+	async function deleteHighlight(id: string) {
+		try {
+			const resp = await api.deleteDiscussion({ event_id: id, reason: 'deleted by author' });
+			const { successful, total } = resp.broadcast;
+			app.pushToast(
+				total === 0
+					? 'Highlight deleted locally (no publish relays)'
+					: `Highlight deleted — deletion request sent (${successful}/${total} relays)`,
+				successful === 0 && total > 0 ? 'error' : 'success'
+			);
+			refreshDiscussionsLocal();
+		} catch (e) {
+			app.pushToast(api.errorMessage(e, 'Delete failed'), 'error', 5000);
+		}
+	}
 	function adoptHighlighter(h: Highlighter) {
 		highlighterChoice.set(h);
 		app.pushToast(`Style picked: ${h.label} — your next highlight uses it`, 'info');
@@ -2826,6 +2841,7 @@
 		bind:labelFilter={hlLabelFilter}
 		onrestyle={canSignNow ? restyleHighlight : null}
 		onadopt={adoptHighlighter}
+		ondelete={canSignNow ? deleteHighlight : null}
 		onrefresh={async () => {
 			const authors = new Set<string>(drawerHighlights.map((h) => h.pubkey));
 			if (authors.size > 0) await refreshAuthors([...authors]);

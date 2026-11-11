@@ -39,7 +39,8 @@
 		mypubkey = null,
 		labelFilter = $bindable(null),
 		onrestyle = null,
-		onadopt = null
+		onadopt = null,
+		ondelete = null
 	}: {
 		highlights: DrawerHighlight[];
 		open: boolean;
@@ -61,7 +62,34 @@
 		onrestyle?: ((id: string, highlighter: Highlighter | null) => Promise<void>) | null;
 		/** Someone else's style → the next capture starts with it. */
 		onadopt?: ((h: Highlighter) => void) | null;
+		/** Publish a NIP-09 deletion for one of yours (and the versions it
+		 *  superseded); the reader drops it from the list on success. */
+		ondelete?: ((id: string) => Promise<void>) | null;
 	} = $props();
+
+	// Two-step armed delete (feat-ui-patterns): first × arms for 4 s, the
+	// second publishes the deletion.
+	let armed = $state<string | null>(null);
+	let deleting = $state<string | null>(null);
+	let armTimer: ReturnType<typeof setTimeout> | undefined;
+	async function onDeleteClick(id: string) {
+		if (!ondelete || deleting) return;
+		if (armed !== id) {
+			armed = id;
+			clearTimeout(armTimer);
+			armTimer = setTimeout(() => (armed = null), 4000);
+			return;
+		}
+		clearTimeout(armTimer);
+		armed = null;
+		deleting = id;
+		try {
+			await ondelete(id);
+			if (selected === id) selected = null;
+		} finally {
+			deleting = null;
+		}
+	}
 
 	// The selected entry (actions open under it) + the one flashing.
 	let selected = $state<string | null>(null);
@@ -288,6 +316,7 @@
 								class:flash={flashing === entry.id}
 								data-hl-id={entry.id}
 							>
+								<div class="hl-entry-row">
 								<button
 									class="hl-entry"
 									onclick={() => {
@@ -312,6 +341,20 @@
 										<span class="hl-preview">{preview(entry.content)}</span>
 									</span>
 								</button>
+								{#if mine && ondelete}
+									<button
+										class="hl-del"
+										class:armed={armed === entry.id}
+										disabled={deleting === entry.id}
+										onclick={() => onDeleteClick(entry.id)}
+										aria-label={armed === entry.id ? 'Confirm: publish a deletion request' : 'Delete this highlight'}
+										title={armed === entry.id
+											? 'Click again to publish a deletion request (NIP-09)'
+											: 'Delete — publishes a deletion request for this highlight'}
+										>{deleting === entry.id ? '…' : armed === entry.id ? 'delete?' : '×'}</button
+									>
+								{/if}
+								</div>
 								{#if selected === entry.id}
 									<div class="hl-actions">
 										{#if mine && onrestyle}
@@ -411,6 +454,35 @@
 	}
 	.hl-entry-wrap {
 		border-radius: var(--r-sm);
+	}
+	.hl-entry-row {
+		display: flex;
+		align-items: flex-start;
+	}
+	.hl-entry-row .hl-entry {
+		flex: 1;
+		min-width: 0;
+	}
+	.hl-del {
+		flex-shrink: 0;
+		margin: 4px 4px 0 0;
+		padding: 0 6px;
+		font: inherit;
+		line-height: 18px;
+		color: var(--base5);
+		background: transparent;
+		border: 1px solid transparent;
+		border-radius: var(--r-sm);
+		cursor: pointer;
+	}
+	.hl-del:hover:not(:disabled) {
+		color: var(--danger);
+		border-color: var(--panel-border);
+	}
+	.hl-del.armed {
+		color: var(--bg);
+		background: var(--danger);
+		border-color: var(--danger);
 	}
 	.hl-entry-wrap.selected {
 		background: var(--base1, var(--bg-surface));

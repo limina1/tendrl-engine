@@ -309,6 +309,49 @@ pub fn superseded_ids(events: &[Value]) -> HashSet<String> {
     out
 }
 
+/// The ids a 9802 replaced, transitively — its `supersedes` chain, followed
+/// through `lookup` (a local by-id read), same author only, cycle-safe and
+/// capped. Deleting a recoloured highlight deletes the whole chain, or the
+/// old versions would surface again (here once the newest is tombstoned,
+/// and in every client that never knew about `supersedes`).
+pub fn supersedes_chain(ev: &Value, lookup: impl Fn(&str) -> Option<Value>) -> Vec<String> {
+    let author = ev.get("pubkey").and_then(Value::as_str).unwrap_or("").to_string();
+    let mut out: Vec<String> = Vec::new();
+    let mut frontier = vec![ev.clone()];
+    while let Some(cur) = frontier.pop() {
+        if out.len() >= 64 {
+            break;
+        }
+        let olds: Vec<String> = cur
+            .get("tags")
+            .and_then(Value::as_array)
+            .map(|tags| {
+                tags.iter()
+                    .filter_map(|t| {
+                        let arr = t.as_array()?;
+                        (arr.first()?.as_str()? == SUPERSEDES_TAG)
+                            .then(|| arr.get(1)?.as_str().map(str::to_string))?
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        for old in olds {
+            if out.contains(&old) {
+                continue;
+            }
+            let Some(prev) = lookup(&old) else { continue };
+            if prev.get("kind").and_then(Value::as_u64) != Some(9802)
+                || prev.get("pubkey").and_then(Value::as_str) != Some(author.as_str())
+            {
+                continue;
+            }
+            out.push(old);
+            frontier.push(prev);
+        }
+    }
+    out
+}
+
 /// Drop superseded 9802s from an event list in place (see `superseded_ids`).
 pub fn drop_superseded(events: &mut Vec<Value>) {
     let gone = superseded_ids(events);
@@ -1034,7 +1077,22 @@ pub fn build_deletion_template(
     reason: &str,
     created_at: i64,
 ) -> EventTemplate {
-    let mut tags = vec![vec!["e".to_string(), event_id.to_string()]];
+    build_deletion_template_many(&[event_id.to_string()], event_kind, address, reason, created_at)
+}
+
+/// One kind-5 naming several events of the same kind (NIP-09 allows many
+/// `e` tags) — a recoloured highlight and the versions it superseded.
+pub fn build_deletion_template_many(
+    event_ids: &[String],
+    event_kind: u32,
+    address: Option<&str>,
+    reason: &str,
+    created_at: i64,
+) -> EventTemplate {
+    let mut tags: Vec<Vec<String>> = event_ids
+        .iter()
+        .map(|id| vec!["e".to_string(), id.clone()])
+        .collect();
     if let Some(addr) = address {
         tags.push(vec!["a".to_string(), addr.to_string()]);
     }
@@ -1490,6 +1548,23 @@ mod tests {
         assert_eq!(pairs.len(), 2);
         assert_eq!((pairs[0].label.as_str(), pairs[0].color.as_str(), pairs[0].count), ("for", "#00ff00", 2));
         assert_eq!((pairs[1].label.as_str(), pairs[1].color.as_str(), pairs[1].count, pairs[1].last_used), ("against", "#ff0000", 1, 9));
+    }
+
+    #[test]
+    fn supersedes_chain_follows_same_author_only() {
+        let evs = vec![
+            h9802("v1", "me", 1, json!([])),
+            h9802("v2", "me", 2, json!([["supersedes", "v1"]])),
+            h9802("v3", "me", 3, json!([["supersedes", "v2"], ["supersedes", "theirs"]])),
+            h9802("theirs", "you", 1, json!([])),
+        ];
+        let lookup = |id: &str| evs.iter().find(|e| e["id"] == id).cloned();
+        let mut chain = supersedes_chain(&evs[2], lookup);
+        chain.sort();
+        assert_eq!(chain, vec!["v1", "v2"]);
+        let tpl = build_deletion_template_many(&["v3".into(), "v2".into(), "v1".into()], 9802, None, "", 5);
+        assert_eq!(tpl.tags.iter().filter(|t| t[0] == "e").count(), 3);
+        assert_eq!(tpl.tags.last().unwrap(), &vec!["k".to_string(), "9802".to_string()]);
     }
 
     #[test]

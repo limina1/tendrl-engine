@@ -5538,7 +5538,37 @@ pub async fn highlighters_handler(
             fetched = true;
         }
     }
-    let events = dedup_events_by_id(events);
+    let mut events = dedup_events_by_id(events);
+    // The author's own NIP-09 deletions hide those highlights here too.
+    let ids: Vec<String> = events
+        .iter()
+        .filter_map(|e| e.get("id").and_then(Value::as_str).map(str::to_string))
+        .collect();
+    if !ids.is_empty() {
+        let dels = engine
+            .get_events_with_options(
+                vec![json!({"kinds": [5], "authors": [pubkey], "#e": ids})],
+                FetchPolicy::LocalOnly,
+                None,
+                false,
+            )
+            .await?;
+        let gone: std::collections::HashSet<String> = dels
+            .events
+            .iter()
+            .flat_map(|d| {
+                d.get("tags")
+                    .and_then(Value::as_array)
+                    .into_iter()
+                    .flatten()
+                    .filter_map(|t| {
+                        let arr = t.as_array()?;
+                        (arr.first()?.as_str()? == "e").then(|| arr.get(1)?.as_str().map(str::to_string))?
+                    })
+            })
+            .collect();
+        events.retain(|e| !e.get("id").and_then(Value::as_str).is_some_and(|id| gone.contains(id)));
+    }
     let highlights = events.len() - crate::discussions::superseded_ids(&events).len();
     let pairs = crate::discussions::highlighter_pairs(&events);
     Ok(Json(json!({
@@ -5659,8 +5689,6 @@ pub async fn discussion_delete_handler(
     Extension(signing): Extension<crate::signing::SigningController>,
     Json(req): Json<DiscussionDeleteRequest>,
 ) -> Result<Json<DiscussionPublishResponse>, EngineError> {
-    use crate::discussions::build_deletion_template;
-
     if !is_hex64(&req.event_id) {
         return Err(EngineError::BadRequest(
             "event_id must be 64-char hex".into(),
@@ -5700,8 +5728,16 @@ pub async fn discussion_delete_handler(
         None
     };
 
-    let template = build_deletion_template(
-        &req.event_id,
+    // A recoloured highlight: delete the versions it superseded too.
+    let mut ids = vec![req.event_id.clone()];
+    if kind == 9802 {
+        let ndb = engine.ndb();
+        ids.extend(crate::discussions::supersedes_chain(&target, |id| {
+            crate::query::query_by_id(ndb, id).ok().flatten()
+        }));
+    }
+    let template = crate::discussions::build_deletion_template_many(
+        &ids,
         kind,
         address.as_deref(),
         req.reason.as_deref().unwrap_or(""),

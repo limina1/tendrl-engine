@@ -68,6 +68,13 @@ Idea + decisions: [[file:zettel/idea-highlighters.org][idea-highlighters]].
   entry → recolour (=ColorPicker= + Republish); another's → "Highlight
   with this style" (next capture starts with it).
 
+* Delete (2026-11-11)
+
+- Own drawer entries get a × (two-step armed: × → "delete?" → publish).
+- =POST /discussions/delete= on a 9802 names the whole =supersedes= chain
+  (same author) in one kind-5, so older colours don't resurface; the
+  =/highlighters= listing drops the author's own tombstoned highlights.
+
 * Phases (commit each)
 
 - [X] P1 engine: parse, overlap, publish, restyle, supersede filter,
