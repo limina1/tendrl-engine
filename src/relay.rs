@@ -536,9 +536,26 @@ pub struct PublishResult {
     /// The socket that carried this result had authenticated.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub authenticated: bool,
+    /// Sent, but the relay never answered with `OK` (some relays never do;
+    /// a stalled one doesn't). Kept `success` for single-event callers, as
+    /// before; batch publishers read the events back and settle it.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub unconfirmed: bool,
 }
 
 impl PublishResult {
+    fn unconfirmed(relay_url: &str, event_id: String, authenticated: bool) -> Self {
+        Self {
+            relay_url: relay_url.to_string(),
+            success: true,
+            message: Some(UNCONFIRMED_MSG.to_string()),
+            event_id,
+            refusal: None,
+            authenticated,
+            unconfirmed: true,
+        }
+    }
+
     fn ok(relay_url: &str, event_id: String, message: Option<String>, authenticated: bool) -> Self {
         Self {
             relay_url: relay_url.to_string(),
@@ -547,6 +564,7 @@ impl PublishResult {
             event_id,
             refusal: None,
             authenticated,
+            unconfirmed: false,
         }
     }
 
@@ -564,6 +582,7 @@ impl PublishResult {
             event_id,
             refusal,
             authenticated,
+            unconfirmed: false,
         }
     }
 }
@@ -584,265 +603,364 @@ fn event_id_of(event: &Value) -> String {
 /// first encounter) happens at most once for the whole batch instead of
 /// once per event.
 pub async fn publish_batch(relay_url: &str, events: &[String], auth: &RelayAuth) -> Vec<PublishResult> {
+    publish_batch_with(relay_url, events, auth, &|_| {}).await
+}
+
+/// Most events awaiting an `OK` at once on one socket. A relay that
+/// rate-limits per pubkey (Buzz: 10 events/s) silently drops a 400-event
+/// burst; a window keeps the relay's queue short and the pace honest.
+const PUBLISH_WINDOW: usize = 10;
+/// Floor between two EVENT frames on one socket — at most 10 per second.
+const PUBLISH_GAP: Duration = Duration::from_millis(100);
+/// A socket the relay drops mid-batch is reopened (and re-AUTHed) this
+/// many times; the unanswered events are re-sent on the new socket.
+const PUBLISH_RECONNECTS: usize = 3;
+/// `rate-limited:` refusals of one event are retried this many times,
+/// pausing 1 s, 2 s, 4 s, 8 s.
+const PUBLISH_RATE_RETRIES: u32 = 4;
+/// Message on an event the relay never answered (see `PublishResult::unconfirmed`).
+pub const UNCONFIRMED_MSG: &str = "no OK from the relay — unconfirmed";
+
+/// [`publish_batch`] with a callback per finished event, for progress.
+///
+/// Windowed: at most [`PUBLISH_WINDOW`] events in flight, one EVENT per
+/// [`PUBLISH_GAP`]; the next goes out as each `OK` lands. `rate-limited:`
+/// refusals back off and retry; a dropped socket is reopened and the
+/// unanswered events re-sent ([`PUBLISH_RECONNECTS`]); NIP-42 AUTH is
+/// answered once per socket. A relay that never sends `OK` (some don't)
+/// is detected after its first silent window and the rest are sent
+/// without waiting; events it never answered come back `success` +
+/// [`PublishResult::unconfirmed`], for a read-back to settle.
+pub async fn publish_batch_with(
+    relay_url: &str,
+    events: &[String],
+    auth: &RelayAuth,
+    on_result: &(dyn Fn(&PublishResult) + Send + Sync),
+) -> Vec<PublishResult> {
     // Parse up front; a malformed event fails on its own, the rest go.
     let mut results: Vec<Option<PublishResult>> = Vec::with_capacity(events.len());
-    let mut ids: Vec<String> = Vec::with_capacity(events.len());
-    // (index, id, event) for the events that parsed.
-    let mut live: Vec<(usize, String, Value)> = Vec::with_capacity(events.len());
+    let mut live: HashMap<usize, (String, Value)> = HashMap::new();
+    let mut queue: VecDeque<usize> = VecDeque::new();
     for (i, json_text) in events.iter().enumerate() {
         match serde_json::from_str::<Value>(json_text) {
             Ok(v) => {
-                let id = event_id_of(&v);
-                ids.push(id.clone());
-                live.push((i, id, v));
+                live.insert(i, (event_id_of(&v), v));
+                queue.push_back(i);
                 results.push(None);
             }
             Err(e) => {
-                ids.push(String::new());
-                results.push(Some(PublishResult::failed(
-                    relay_url,
-                    String::new(),
-                    format!("Invalid event JSON: {e}"),
-                    None,
-                    false,
-                )));
+                let r = PublishResult::failed(relay_url, String::new(), format!("Invalid event JSON: {e}"), None, false);
+                on_result(&r);
+                results.push(Some(r));
             }
         }
     }
 
-    if live.is_empty() {
-        return finish_results(results, relay_url, &ids, &Ending::Failed("Invalid event JSON".into()), false);
-    }
-
-    let mut conn = match RelayConn::connect(relay_url, auth.clone()).await {
-        Ok(c) => c,
-        Err(e) => {
-            warn!("Failed to publish to {}: {}", relay_url, e);
-            return finish_results(results, relay_url, &ids, &Ending::Failed(e), false);
-        }
+    let finish = |results: &mut Vec<Option<PublishResult>>, idx: usize, r: PublishResult| {
+        on_result(&r);
+        results[idx] = Some(r);
     };
 
-    // id → index of the event awaiting an OK.
-    let mut pending: HashMap<String, usize> = HashMap::new();
-    for (i, id, v) in &live {
-        if let Err(e) = conn.send(json!(["EVENT", v])).await {
-            warn!("Failed to publish to {}: {}", relay_url, e);
-            conn.close().await;
-            return finish_results(results, relay_url, &ids, &Ending::Failed(e), false);
-        }
-        pending.insert(id.clone(), *i);
-    }
-    // Events the relay refused with auth-required while we had no
-    // challenge yet — re-sent once the AUTH round-trip completes.
-    let mut awaiting_auth: Vec<usize> = Vec::new();
-    // Events already re-sent after AUTH; a second auth-required for one of
-    // these is final.
-    let mut resent: HashSet<usize> = HashSet::new();
-
-    let total_budget = Duration::from_secs(10) + Duration::from_millis(500) * live.len() as u32;
-    let total_budget = total_budget.min(Duration::from_secs(60));
+    let budget = (Duration::from_secs(30) + Duration::from_millis(400) * queue.len() as u32)
+        .min(Duration::from_secs(20 * 60));
     let start = Instant::now();
-    let mut ending = Ending::Budget;
+    let mut reconnects = 0usize;
+    let mut rate_tries: HashMap<usize, u32> = HashMap::new();
+    // The relay has answered at least one EVENT with `OK` — silence from it
+    // is then a stall, not a relay that never acknowledges.
+    let mut ever_ok = false;
+    let mut fire_and_forget = false;
+    let mut last_error: Option<String> = None;
+    let mut authed_any = false;
 
-    while !pending.is_empty() && start.elapsed() < total_budget {
-        match conn.next(PUBLISH_IDLE).await {
-            Frame::Msg(RelayMessage::Ok {
-                id,
-                accepted,
-                message,
-            }) => {
-                let Some(idx) = pending.remove(&id) else {
-                    continue;
-                };
-                if accepted {
-                    results[idx] = Some(PublishResult::ok(
-                        relay_url,
-                        id,
-                        (!message.is_empty()).then_some(message),
-                        conn.authed,
-                    ));
-                    continue;
+    'conn: while !queue.is_empty() {
+        if start.elapsed() >= budget {
+            last_error = Some(format!("gave up after {}s", budget.as_secs()));
+            break;
+        }
+        let mut conn = match RelayConn::connect(relay_url, auth.clone()).await {
+            Ok(c) => c,
+            Err(e) => {
+                reconnects += 1;
+                if reconnects > PUBLISH_RECONNECTS {
+                    warn!("Failed to publish to {}: {}", relay_url, e);
+                    last_error = Some(e);
+                    break;
                 }
-                match Refusal::classify(&message) {
-                    Refusal::AuthRequired if conn.authed && !resent.contains(&idx) => {
-                        // Refused before our AUTH landed (the relay
-                        // challenged and refused in one breath) — re-send.
-                        resent.insert(idx);
-                        if let Err(e) = resend_event(&mut conn, &live, idx, &mut pending).await {
-                            ending = Ending::Failed(e);
-                            break;
-                        }
+                tokio::time::sleep(Duration::from_secs(reconnects as u64)).await;
+                continue;
+            }
+        };
+
+        // id → index, events sent on this socket and not yet answered.
+        let mut inflight: HashMap<String, usize> = HashMap::new();
+        // Refused with auth-required before the relay sent its challenge.
+        let mut awaiting_auth: Vec<usize> = Vec::new();
+        // Re-sent after AUTH; a second auth-required for one is final.
+        let mut resent: HashSet<usize> = HashSet::new();
+        let mut last_send: Option<Instant> = None;
+        let mut last_heard = Instant::now();
+        let mut pause_until = Instant::now();
+        let mut dropped: Option<String> = None;
+
+        loop {
+            let window = if fire_and_forget { usize::MAX } else { PUBLISH_WINDOW };
+            // Fill the window, one EVENT per gap.
+            while inflight.len() + awaiting_auth.len() < window
+                && Instant::now() >= pause_until
+                && last_send.map_or(true, |t| t.elapsed() >= PUBLISH_GAP)
+            {
+                let Some(idx) = queue.pop_front() else { break };
+                let (id, v) = &live[&idx];
+                if let Err(e) = conn.send(json!(["EVENT", v])).await {
+                    queue.push_front(idx);
+                    dropped = Some(e);
+                    break;
+                }
+                if inflight.is_empty() {
+                    last_heard = Instant::now();
+                }
+                inflight.insert(id.clone(), idx);
+                last_send = Some(Instant::now());
+            }
+            if dropped.is_some() {
+                break;
+            }
+            if queue.is_empty() && inflight.is_empty() && awaiting_auth.is_empty() {
+                break;
+            }
+            if start.elapsed() >= budget {
+                break;
+            }
+
+            let can_send = !queue.is_empty() && inflight.len() + awaiting_auth.len() < window;
+            let now = Instant::now();
+            let wait = if can_send {
+                pause_until
+                    .saturating_duration_since(now)
+                    .max(PUBLISH_GAP.saturating_sub(last_send.map_or(PUBLISH_GAP, |t| t.elapsed())))
+                    .max(Duration::from_millis(5))
+                    .min(PUBLISH_IDLE)
+            } else {
+                PUBLISH_IDLE
+            };
+
+            match conn.next(wait).await {
+                Frame::Msg(RelayMessage::Ok { id, accepted, message }) => {
+                    last_heard = Instant::now();
+                    let Some(idx) = inflight.remove(&id) else { continue };
+                    ever_ok = true;
+                    if accepted {
+                        let r = PublishResult::ok(relay_url, id, (!message.is_empty()).then_some(message), conn.authed);
+                        finish(&mut results, idx, r);
+                        continue;
                     }
-                    Refusal::AuthRequired if conn.permits() && !conn.authed && !conn.auth_attempted => {
-                        if conn.challenge.is_some() {
-                            match conn.authenticate().await {
-                                Ok(()) => {
-                                    resent.insert(idx);
-                                    if let Err(e) = resend_event(&mut conn, &live, idx, &mut pending).await {
-                                        ending = Ending::Failed(e);
-                                        break;
+                    if is_rate_limited(&message) {
+                        let tries = rate_tries.entry(idx).or_insert(0);
+                        *tries += 1;
+                        if *tries <= PUBLISH_RATE_RETRIES {
+                            let pause = Duration::from_secs(1u64 << (*tries - 1));
+                            debug!("{relay_url} rate-limited ({message}) — retrying in {}s", pause.as_secs());
+                            pause_until = pause_until.max(Instant::now() + pause);
+                            queue.push_back(idx);
+                            continue;
+                        }
+                        let r = PublishResult::failed(relay_url, id, message, None, conn.authed);
+                        finish(&mut results, idx, r);
+                        continue;
+                    }
+                    match Refusal::classify(&message) {
+                        Refusal::AuthRequired if conn.authed && !resent.contains(&idx) => {
+                            // Refused before our AUTH landed — re-send.
+                            resent.insert(idx);
+                            let (id, v) = &live[&idx];
+                            if let Err(e) = conn.send(json!(["EVENT", v])).await {
+                                queue.push_front(idx);
+                                dropped = Some(e);
+                                break;
+                            }
+                            inflight.insert(id.clone(), idx);
+                        }
+                        Refusal::AuthRequired if conn.permits() && !conn.authed && !conn.auth_attempted => {
+                            if conn.challenge.is_some() {
+                                match conn.authenticate().await {
+                                    Ok(()) => {
+                                        resent.insert(idx);
+                                        let (id, v) = &live[&idx];
+                                        if let Err(e) = conn.send(json!(["EVENT", v])).await {
+                                            queue.push_front(idx);
+                                            dropped = Some(e);
+                                            break;
+                                        }
+                                        inflight.insert(id.clone(), idx);
+                                    }
+                                    Err(f) => {
+                                        let r = PublishResult::failed(relay_url, id, f.message(), Some(Refusal::AuthRequired), false);
+                                        finish(&mut results, idx, r);
                                     }
                                 }
-                                Err(f) => {
-                                    results[idx] = Some(PublishResult::failed(
-                                        relay_url,
-                                        id,
-                                        f.message(),
-                                        Some(Refusal::AuthRequired),
-                                        false,
-                                    ));
-                                }
+                            } else {
+                                awaiting_auth.push(idx);
                             }
-                        } else {
-                            awaiting_auth.push(idx);
+                        }
+                        refusal => {
+                            let refusal = match refusal {
+                                Refusal::Other => None,
+                                r => Some(r),
+                            };
+                            let r = PublishResult::failed(relay_url, id, message, refusal, conn.authed);
+                            finish(&mut results, idx, r);
                         }
                     }
-                    refusal => {
-                        let refusal = match refusal {
-                            Refusal::Other => None,
-                            r => Some(r),
-                        };
-                        results[idx] = Some(PublishResult::failed(relay_url, id, message, refusal, conn.authed));
-                    }
                 }
-            }
-            Frame::Msg(RelayMessage::Auth { challenge }) => {
-                if conn.on_challenge(challenge) {
-                    match conn.authenticate().await {
-                        Ok(()) => {
-                            let mut failed = None;
-                            for idx in std::mem::take(&mut awaiting_auth) {
-                                resent.insert(idx);
-                                if let Err(e) = resend_event(&mut conn, &live, idx, &mut pending).await {
-                                    failed = Some(e);
+                Frame::Msg(RelayMessage::Auth { challenge }) => {
+                    last_heard = Instant::now();
+                    if conn.on_challenge(challenge) {
+                        match conn.authenticate().await {
+                            Ok(()) => {
+                                for idx in std::mem::take(&mut awaiting_auth) {
+                                    resent.insert(idx);
+                                    let (id, v) = &live[&idx];
+                                    if let Err(e) = conn.send(json!(["EVENT", v])).await {
+                                        queue.push_front(idx);
+                                        dropped = Some(e);
+                                        break;
+                                    }
+                                    inflight.insert(id.clone(), idx);
+                                }
+                                if dropped.is_some() {
                                     break;
                                 }
                             }
-                            if let Some(e) = failed {
-                                ending = Ending::Failed(e);
-                                break;
-                            }
-                        }
-                        Err(f) => {
-                            for idx in std::mem::take(&mut awaiting_auth) {
-                                results[idx] = Some(PublishResult::failed(
-                                    relay_url,
-                                    ids[idx].clone(),
-                                    f.message(),
-                                    Some(Refusal::AuthRequired),
-                                    false,
-                                ));
+                            Err(f) => {
+                                for idx in std::mem::take(&mut awaiting_auth) {
+                                    let r = PublishResult::failed(relay_url, live[&idx].0.clone(), f.message(), Some(Refusal::AuthRequired), false);
+                                    finish(&mut results, idx, r);
+                                }
                             }
                         }
                     }
                 }
+                Frame::Msg(RelayMessage::Notice { message }) => {
+                    last_heard = Instant::now();
+                    warn!("Relay notice from {}: {}", relay_url, message);
+                }
+                Frame::Msg(_) => {
+                    last_heard = Instant::now();
+                }
+                Frame::Idle => {
+                    if !inflight.is_empty() && last_heard.elapsed() >= PUBLISH_IDLE {
+                        // A whole window went unanswered. A relay that has
+                        // never sent OK doesn't send them: stop waiting per
+                        // window. Either way these stay unconfirmed.
+                        if !ever_ok && !fire_and_forget {
+                            debug!("{relay_url} sends no OK — publishing the rest without waiting");
+                            fire_and_forget = true;
+                        }
+                        for (id, idx) in inflight.drain() {
+                            let r = PublishResult::unconfirmed(relay_url, id, conn.authed);
+                            finish(&mut results, idx, r);
+                        }
+                        last_heard = Instant::now();
+                    }
+                }
+                Frame::Ended => {
+                    dropped = Some("connection closed".into());
+                    break;
+                }
+                Frame::Error(e) => {
+                    dropped = Some(format!("WebSocket error: {e}"));
+                    break;
+                }
             }
-            Frame::Msg(RelayMessage::Notice { message }) => {
-                warn!("Relay notice from {}: {}", relay_url, message);
+        }
+
+        authed_any |= conn.authed;
+        for idx in std::mem::take(&mut awaiting_auth) {
+            let r = PublishResult::failed(relay_url, live[&idx].0.clone(), "auth-required: relay sent no AUTH challenge".into(), Some(Refusal::AuthRequired), false);
+            finish(&mut results, idx, r);
+        }
+
+        if let Some(e) = dropped {
+            // Re-send what the dropped socket never answered, in order.
+            let mut back: Vec<usize> = inflight.drain().map(|(_, i)| i).collect();
+            back.sort_unstable();
+            for idx in back.into_iter().rev() {
+                queue.push_front(idx);
             }
-            Frame::Msg(_) => {}
-            Frame::Idle => {
-                ending = Ending::Silent;
-                break;
+            reconnects += 1;
+            if reconnects > PUBLISH_RECONNECTS {
+                warn!("Failed to publish to {}: {} ({} events unsent)", relay_url, e, queue.len());
+                last_error = Some(e);
+                break 'conn;
             }
-            Frame::Ended => {
-                ending = Ending::Failed("Connection closed".into());
-                break;
-            }
-            Frame::Error(e) => {
-                ending = Ending::Failed(format!("WebSocket error: {e}"));
-                break;
-            }
+            warn!("{relay_url}: {e} mid-batch — reconnecting ({reconnects}/{PUBLISH_RECONNECTS}), {} events left", queue.len());
+            tokio::time::sleep(Duration::from_secs(reconnects as u64)).await;
+            continue 'conn;
+        }
+
+        // Out of budget with events still unanswered.
+        for (id, idx) in inflight.drain() {
+            let r = PublishResult::unconfirmed(relay_url, id, conn.authed);
+            finish(&mut results, idx, r);
+        }
+        conn.close().await;
+        if !queue.is_empty() {
+            last_error = Some(format!("gave up after {}s", budget.as_secs()));
+            break;
         }
     }
 
-    // Events refused with auth-required while we waited for a challenge
-    // that never came.
-    for idx in awaiting_auth {
-        pending.retain(|_, i| *i != idx);
-        results[idx] = Some(PublishResult::failed(
+    let err = last_error.unwrap_or_else(|| "not sent".into());
+    for idx in std::mem::take(&mut queue) {
+        let r = PublishResult::failed(relay_url, live[&idx].0.clone(), err.clone(), None, authed_any);
+        finish(&mut results, idx, r);
+    }
+
+    let out: Vec<PublishResult> = results.into_iter().map(|r| r.expect("every event finished")).collect();
+    let ok = out.iter().filter(|r| r.success && !r.unconfirmed).count();
+    let unconfirmed = out.iter().filter(|r| r.unconfirmed).count();
+    let failed = out.len() - ok - unconfirmed;
+    if failed == 0 && unconfirmed == 0 {
+        info!("Published {} event(s) to {}", ok, relay_url);
+    } else {
+        let first = out.iter().find(|r| !r.success).and_then(|r| r.message.clone()).unwrap_or_default();
+        warn!(
+            "Published to {}: {} accepted, {} unconfirmed, {} failed{}",
             relay_url,
-            ids[idx].clone(),
-            "auth-required: relay sent no AUTH challenge".into(),
-            Some(Refusal::AuthRequired),
-            false,
-        ));
-    }
-
-    let authed = conn.authed;
-    conn.close().await;
-
-    let out = finish_results(results, relay_url, &ids, &ending, authed);
-    for r in &out {
-        if r.success {
-            info!("Published event to {}", relay_url);
-        } else {
-            warn!(
-                "Failed to publish to {}: {}",
-                relay_url,
-                r.message.as_deref().unwrap_or("rejected")
-            );
-        }
+            ok,
+            unconfirmed,
+            failed,
+            if first.is_empty() { String::new() } else { format!(" (first: {first})") }
+        );
     }
     out
 }
 
-/// How a publish loop stopped — decides the verdict for events the relay
-/// never answered.
-enum Ending {
-    /// Socket died / send failed: unanswered events failed with this message.
-    Failed(String),
-    /// Relay went quiet. Some relays don't send OK — assume success
-    /// (pre-existing behaviour, kept so silent relays don't read as failures).
-    Silent,
-    /// Ran out of total budget with OKs still outstanding.
-    Budget,
+/// `rate-limited:` (NIP-01 machine-readable prefix), any case.
+fn is_rate_limited(message: &str) -> bool {
+    let m = message.trim_start();
+    m.len() >= 13 && m[..13].eq_ignore_ascii_case("rate-limited:")
 }
 
-fn finish_results(
-    results: Vec<Option<PublishResult>>,
-    relay_url: &str,
-    ids: &[String],
-    ending: &Ending,
-    authenticated: bool,
-) -> Vec<PublishResult> {
-    results
-        .into_iter()
-        .enumerate()
-        .map(|(i, r)| {
-            r.unwrap_or_else(|| {
-                let id = ids[i].clone();
-                match ending {
-                    Ending::Failed(e) => PublishResult::failed(relay_url, id, e.clone(), None, authenticated),
-                    Ending::Silent => PublishResult::ok(
-                        relay_url,
-                        id,
-                        Some("No response (assumed success)".into()),
-                        authenticated,
-                    ),
-                    Ending::Budget => PublishResult::ok(
-                        relay_url,
-                        id,
-                        Some("Timeout waiting for confirmation".into()),
-                        authenticated,
-                    ),
-                }
-            })
-        })
-        .collect()
-}
-
-/// Re-send a refused event after a successful AUTH.
-async fn resend_event(
-    conn: &mut RelayConn,
-    live: &[(usize, String, Value)],
-    idx: usize,
-    pending: &mut HashMap<String, usize>,
-) -> std::result::Result<(), String> {
-    let (_, id, v) = live.iter().find(|(i, _, _)| *i == idx).expect("live index");
-    conn.send(json!(["EVENT", v])).await?;
-    pending.insert(id.clone(), idx);
-    Ok(())
+/// Read events back from a relay by id — what it actually stored, not what
+/// it said. Ingests what comes back (recording the relay's provenance) and
+/// returns the ids found. Ids go 100 per filter, 5 filters per REQ.
+pub async fn verify_on_relay(ndb: &Ndb, relay_url: &str, ids: &[String], auth: &RelayAuth) -> Result<HashSet<String>> {
+    let mut found = HashSet::new();
+    for group in ids.chunks(500) {
+        let filters: Vec<Value> = group
+            .chunks(100)
+            .map(|c| json!({ "ids": c, "limit": c.len() }))
+            .collect();
+        let outcome = fetch_with_filters(ndb, relay_url, &filters, auth).await?;
+        for ev in outcome.events {
+            if let Some(id) = ev.get("id").and_then(Value::as_str) {
+                found.insert(id.to_ascii_lowercase());
+            }
+        }
+    }
+    Ok(found)
 }
 
 /// Publish an event to a single relay.
@@ -904,34 +1022,71 @@ where
     // Owned per-task inputs: an `&String` iterator item captured by the
     // async block trips rustc's higher-ranked `Send` inference (the
     // "`Send` is not general enough" error at the agent SSE boxing site).
-    let mut stream = futures::stream::iter((0..total_relays).map(|ri| {
-        let relay_url = relays[ri].clone();
-        let events = events.to_vec();
-        let auth = auth.clone();
-        async move {
-            let results = publish_batch(&relay_url, &events, &auth).await;
-            (ri, results)
-        }
-    }))
-    .buffer_unordered(MAX_CONCURRENT_RELAYS);
+    // Per-event results stream back while the relays run, so the caller can
+    // drive a progress bar over (relay, event) pairs.
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<(usize, bool)>();
+    // Built eagerly so every sender clone exists before the original drops —
+    // the channel then closes exactly when the last relay finishes.
+    let tasks: Vec<_> = (0..total_relays)
+        .map(|ri| {
+            let relay_url = relays[ri].clone();
+            let events = events.to_vec();
+            let auth = auth.clone();
+            let tx = tx.clone();
+            async move {
+                let cb = move |r: &PublishResult| {
+                    let _ = tx.send((ri, r.success && !r.unconfirmed));
+                };
+                let results = publish_batch_with(&relay_url, &events, &auth, &cb).await;
+                (ri, results)
+            }
+        })
+        .collect();
+    drop(tx);
+    let mut stream = futures::stream::iter(tasks).buffer_unordered(MAX_CONCURRENT_RELAYS);
 
     let mut per_relay: Vec<Option<Vec<PublishResult>>> = (0..total_relays).map(|_| None).collect();
-    let mut done_relays = 0;
     let mut done_pairs = 0;
+    let mut confirmed = 0;
     let total_pairs = total_relays * total_events;
-
-    while let Some((ri, results)) = stream.next().await {
-        done_relays += 1;
-        done_pairs += results.len();
-        on_progress(BroadcastProgress {
-            current_relay: done_relays,
-            total_relays,
-            current_event: done_pairs,
-            total_events,
-            relay_name: relays[ri].clone(),
-            status: format!("{done_pairs}/{total_pairs} sent"),
-        });
-        per_relay[ri] = Some(results);
+    let mut relays_done = 0;
+    loop {
+        tokio::select! {
+            Some((ri, ok)) = rx.recv() => {
+                done_pairs += 1;
+                if ok { confirmed += 1; }
+                on_progress(BroadcastProgress {
+                    current_relay: relays_done,
+                    total_relays,
+                    current_event: done_pairs,
+                    total_events: total_pairs,
+                    relay_name: relays[ri].clone(),
+                    status: format!("{done_pairs}/{total_pairs} sent, {confirmed} accepted"),
+                });
+            }
+            next = stream.next() => match next {
+                Some((ri, results)) => {
+                    relays_done += 1;
+                    per_relay[ri] = Some(results);
+                }
+                None => {
+                    // Drain any progress still queued, then stop.
+                    while let Ok((ri, ok)) = rx.try_recv() {
+                        done_pairs += 1;
+                        if ok { confirmed += 1; }
+                        on_progress(BroadcastProgress {
+                            current_relay: relays_done,
+                            total_relays,
+                            current_event: done_pairs,
+                            total_events: total_pairs,
+                            relay_name: relays[ri].clone(),
+                            status: format!("{done_pairs}/{total_pairs} sent, {confirmed} accepted"),
+                        });
+                    }
+                    break;
+                }
+            }
+        }
     }
 
     // A relay counts as a success only if every one of its events landed.
@@ -1394,6 +1549,124 @@ mod tests {
             assert!(r.authenticated);
             assert_eq!(r.event_id, fake_event(n)["id"]);
         }
+    }
+
+    /// Accept `n` connections in turn, handing each to `f(conn_index, ws)`.
+    async fn serve_many<F, Fut>(n: usize, f: F) -> String
+    where
+        F: Fn(usize, ServerWs) -> Fut + Send + Sync + 'static,
+        Fut: std::future::Future<Output = ()> + Send + 'static,
+    {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            for i in 0..n {
+                let (sock, _) = listener.accept().await.unwrap();
+                let ws = tokio_tungstenite::accept_async(sock).await.unwrap();
+                f(i, ws).await;
+            }
+        });
+        format!("ws://{}", addr)
+    }
+
+    #[tokio::test]
+    async fn publish_batch_keeps_a_window_of_ten() {
+        let url = serve_one(|mut ws| async move {
+            let mut answered = 0;
+            let mut outstanding: Vec<String> = Vec::new();
+            while answered < 25 {
+                // Read until the client stops sending (window full or done).
+                loop {
+                    match timeout(Duration::from_millis(400), ws.next()).await {
+                        Ok(Some(Ok(Message::Text(t)))) => {
+                            let f: Vec<Value> = serde_json::from_str(&t).unwrap();
+                            assert_eq!(f[0], "EVENT");
+                            outstanding.push(f[1]["id"].as_str().unwrap().to_string());
+                            assert!(outstanding.len() <= PUBLISH_WINDOW, "window exceeded: {}", outstanding.len());
+                        }
+                        Ok(Some(Ok(_))) => {}
+                        _ => break,
+                    }
+                }
+                for id in outstanding.drain(..) {
+                    send(&mut ws, json!(["OK", id, true, ""])).await;
+                    answered += 1;
+                }
+            }
+        })
+        .await;
+        let events: Vec<String> = (100..125).map(|n| fake_event(n).to_string()).collect();
+        let progress = std::sync::atomic::AtomicUsize::new(0);
+        let results = publish_batch_with(&url, &events, &RelayAuth::none(), &|_| {
+            progress.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        })
+        .await;
+        assert_eq!(results.len(), 25);
+        assert!(results.iter().all(|r| r.success && !r.unconfirmed));
+        assert_eq!(progress.load(std::sync::atomic::Ordering::Relaxed), 25);
+    }
+
+    #[tokio::test]
+    async fn publish_batch_retries_rate_limited() {
+        let url = serve_one(|mut ws| async move {
+            let f = recv(&mut ws).await;
+            let id = f[1]["id"].as_str().unwrap().to_string();
+            send(&mut ws, json!(["OK", id, false, "rate-limited: slow down"])).await;
+            let f = recv(&mut ws).await;
+            assert_eq!(f[0], "EVENT");
+            assert_eq!(f[1]["id"], id);
+            send(&mut ws, json!(["OK", id, true, ""])).await;
+        })
+        .await;
+        let r = publish_event(&url, &fake_event(140).to_string(), &RelayAuth::none()).await;
+        assert!(r.success && !r.unconfirmed, "{:?}", r.message);
+    }
+
+    #[tokio::test]
+    async fn publish_batch_reconnects_and_resumes_after_a_drop() {
+        let url = serve_many(2, |i, mut ws| async move {
+            if i == 0 {
+                // Accept three, then hang up with the rest unanswered.
+                for _ in 0..3 {
+                    let f = recv(&mut ws).await;
+                    send(&mut ws, json!(["OK", f[1]["id"], true, ""])).await;
+                }
+                let _ = ws.close(None).await;
+            } else {
+                loop {
+                    match timeout(Duration::from_secs(3), ws.next()).await {
+                        Ok(Some(Ok(Message::Text(t)))) => {
+                            let f: Vec<Value> = serde_json::from_str(&t).unwrap();
+                            send(&mut ws, json!(["OK", f[1]["id"], true, ""])).await;
+                        }
+                        Ok(Some(Ok(_))) => {}
+                        _ => break,
+                    }
+                }
+            }
+        })
+        .await;
+        let events: Vec<String> = (150..162).map(|n| fake_event(n).to_string()).collect();
+        let results = publish_batch(&url, &events, &RelayAuth::none()).await;
+        assert_eq!(results.len(), 12);
+        assert!(results.iter().all(|r| r.success && !r.unconfirmed), "{:?}", results.iter().map(|r| &r.message).collect::<Vec<_>>());
+    }
+
+    #[tokio::test]
+    async fn publish_batch_marks_a_silent_relay_unconfirmed_and_sends_everything() {
+        let (tx, rx) = tokio::sync::oneshot::channel::<usize>();
+        let url = serve_one(|mut ws| async move {
+            let mut n = 0;
+            while let Ok(Some(Ok(Message::Text(_)))) = timeout(Duration::from_secs(8), ws.next()).await {
+                n += 1;
+            }
+            let _ = tx.send(n);
+        })
+        .await;
+        let events: Vec<String> = (170..195).map(|n| fake_event(n).to_string()).collect();
+        let results = publish_batch(&url, &events, &RelayAuth::none()).await;
+        assert!(results.iter().all(|r| r.success && r.unconfirmed));
+        assert_eq!(rx.await.unwrap(), 25, "every event must still be sent");
     }
 
     #[tokio::test]

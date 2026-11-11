@@ -35,6 +35,70 @@ pub(crate) fn publish_result_status(r: &crate::relay::PublishResult) -> crate::n
     }
 }
 
+/// Publish `event_jsons` to `relays` for `op` — windowed and paced
+/// (`relay::publish_batch_with`), with a per-event progress bar on the
+/// operation — then read every event back from each relay by id: what the
+/// relay stored settles each result, not what it said. Found → accepted
+/// (and its provenance recorded by the ingest); answered `OK true` but not
+/// found → failed; unconfirmed and not found → failed. A relay the
+/// read-back can't reach keeps its publish verdicts.
+pub(crate) async fn publish_and_verify(
+    engine: &AppState,
+    op: &crate::network::PublishOperation,
+    relays: &[String],
+    event_jsons: &[String],
+) -> Vec<crate::relay::PublishResult> {
+    let total = relays.len() * event_jsons.len();
+    let (_, _, mut results) = crate::relay::publish_events_to_relays_with_progress(
+        relays,
+        event_jsons,
+        &engine.relay_auth(),
+        |p| {
+            let host = p.relay_name.trim_start_matches("wss://").trim_start_matches("ws://").trim_end_matches('/');
+            op.progress(format!("Sending · {host} · {}", p.status), p.current_event, Some(p.total_events));
+        },
+    )
+    .await;
+
+    for (i, relay) in relays.iter().enumerate() {
+        let host = relay.trim_start_matches("wss://").trim_start_matches("ws://").trim_end_matches('/');
+        op.progress(format!("Reading back from {host}"), i, Some(relays.len()));
+        let ids: Vec<String> = results
+            .iter()
+            .filter(|r| &r.relay_url == relay && !r.event_id.is_empty())
+            .map(|r| r.event_id.to_ascii_lowercase())
+            .collect();
+        if ids.is_empty() {
+            continue;
+        }
+        match crate::relay::verify_on_relay(engine.ndb(), relay, &ids, &engine.relay_auth()).await {
+            Ok(found) => {
+                for r in results.iter_mut().filter(|r| &r.relay_url == relay) {
+                    if found.contains(&r.event_id.to_ascii_lowercase()) {
+                        r.success = true;
+                        r.unconfirmed = false;
+                        if r.message.as_deref().map_or(true, |m| m.is_empty() || m == crate::relay::UNCONFIRMED_MSG) {
+                            r.message = Some("verified on the relay".into());
+                        }
+                    } else if r.success {
+                        r.success = false;
+                        r.message = Some(if r.unconfirmed {
+                            "never acknowledged and not on the relay afterwards".into()
+                        } else {
+                            "accepted, but not on the relay afterwards (read-back)".into()
+                        });
+                        r.unconfirmed = false;
+                    }
+                }
+            }
+            Err(e) => warn!("read-back from {relay} failed: {e} — keeping the publish verdicts"),
+        }
+    }
+    let confirmed = results.iter().filter(|r| r.success && !r.unconfirmed).count();
+    op.progress(format!("{confirmed}/{total} confirmed on the relays"), confirmed, Some(total));
+    results
+}
+
 /// Query request body
 #[derive(Debug, Deserialize)]
 pub struct QueryRequest {
@@ -6632,9 +6696,7 @@ pub(crate) async fn finalize_publish(
                 op.relay_status(url.clone(), crate::network::RelayStatusValue::Connecting);
             }
 
-            let (_, _, results) =
-                crate::relay::publish_events_to_relays(&chosen, &event_jsons, &engine.relay_auth())
-                    .await;
+            let results = publish_and_verify(&engine, &op, &chosen, &event_jsons).await;
 
             // One Accepted/Rejected per (relay, event) — the UI's expanded
             // toast renders them grouped by relay.
@@ -7433,8 +7495,7 @@ pub async fn broadcast_publication_handler(
     for url in &chosen {
         op.relay_status(url.clone(), crate::network::RelayStatusValue::Connecting);
     }
-    let (_, _, results) =
-        crate::relay::publish_events_to_relays(&chosen, &event_jsons, &engine.relay_auth()).await;
+    let results = publish_and_verify(&engine, &op, &chosen, &event_jsons).await;
     for r in &results {
         op.relay_status(r.relay_url.clone(), publish_result_status(r));
     }

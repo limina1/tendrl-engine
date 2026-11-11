@@ -56,6 +56,9 @@ let pendingReplace = false;
 // operation_id → toast id, so progress/relay_status/completed update
 // the right toast.
 const opToasts = new Map<string, number>();
+// Determinate totals + op kind, for the progress bar and the completion line.
+const opTotals = new Map<string, number>();
+const opModes = new Map<string, 'fetch' | 'publish'>();
 
 /** Resolve the AppState lazily — it's created by +layout, which may run
  *  after this module is first evaluated. Returns null if not ready. */
@@ -119,16 +122,23 @@ function handleEvent(ev: FetchEvent) {
 
 	switch (ev.type) {
 		case 'intent':
+			opModes.set(ev.operation_id, 'fetch');
 			openActivityToast(app, ev.operation_id, ev.label, 'fetch', ev);
 			break;
 		case 'publish_intent':
+			opModes.set(ev.operation_id, 'publish');
 			openActivityToast(app, ev.operation_id, ev.label, 'publish', ev);
 			break;
 		case 'progress': {
 			const id = opToasts.get(ev.operation_id);
 			if (id === undefined) break;
-			const suffix = ev.total != null ? ` ${ev.done}/${ev.total}` : '';
-			app.updateToast(id, { message: ev.label + suffix });
+			if (ev.total != null && ev.total > 0) {
+				// Determinate: a bar, the label carries its own counts.
+				opTotals.set(ev.operation_id, ev.total);
+				app.updateToast(id, { message: ev.label, progress: { done: ev.done, total: ev.total } });
+			} else {
+				app.updateToast(id, { message: ev.label });
+			}
 			break;
 		}
 		case 'relay_status': {
@@ -140,12 +150,31 @@ function handleEvent(ev: FetchEvent) {
 			const id = opToasts.get(ev.operation_id);
 			if (id !== undefined) {
 				const n = ev.event_count;
-				app.updateToast(
-					id,
-					{ message: `Done — ${n} relay${n === 1 ? '' : 's'} accepted`, kind: 'success' },
-					2500
-				);
+				const total = opTotals.get(ev.operation_id);
+				if (opModes.get(ev.operation_id) === 'publish' && total) {
+					// A verified publish: confirmed (event, relay) pairs of all.
+					const all = n === total;
+					app.updateToast(
+						id,
+						{
+							message: all
+								? `Done — all ${total} confirmed on the relays`
+								: `Done — ${n}/${total} confirmed on the relays · expand for the rest`,
+							kind: all ? 'success' : 'error',
+							progress: { done: n, total }
+						},
+						all ? 4000 : 12000
+					);
+				} else {
+					app.updateToast(
+						id,
+						{ message: `Done — ${n} relay${n === 1 ? '' : 's'} accepted`, kind: 'success' },
+						2500
+					);
+				}
 				opToasts.delete(ev.operation_id);
+				opTotals.delete(ev.operation_id);
+				opModes.delete(ev.operation_id);
 			}
 			break;
 		}
