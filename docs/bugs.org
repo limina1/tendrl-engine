@@ -372,6 +372,32 @@ only the first was audited for the copy affordance.
 clipboard+toast pattern: EventViewModal (reuses its =copyText=), the
 legacy json-modal header, and ProfileResultItem's fold-out.
 
+* FIXED — broadcast of a large tree silently loses most of it (relay rate limits)
+:PROPERTIES:
+:found: 2026-11-11 (broadcasting naddr …nostr-archive-standards, 468 events, to wss://buzz.nostr4.co)
+:fixed: 2026-11-11 on =bugs=
+:END:
+=publish_batch= fired every event of a tree down one socket at once, then
+treated 5 s of relay silence (and a spent 60 s budget) as *success* for
+whatever was unanswered. buzz.nostr4.co (Buzz 0.2.1: AUTH + restricted
+writes, documented default 10 events/s per pubkey) took the first 51
+events in tree order and nothing after — 416 of 468 never landed. AUTH
+and membership were fine (the 52 that landed are readable with AUTH).
+
+Fix (=src/relay.rs=, =src/api.rs::publish_and_verify=, web toast):
+- windowed send: ≤ 10 events awaiting OK, one EVENT per 100 ms;
+- =rate-limited:= refusals retried with 1/2/4/8 s backoff;
+- a socket dropped mid-batch is reopened (re-AUTH) and the unanswered
+  events re-sent, up to 3 times;
+- a relay that never sends OK is detected after one silent window; the
+  rest go out without waiting, marked =unconfirmed=;
+- after a publish/broadcast every event is *read back* from each relay by
+  id; what the relay stored settles each result (and records provenance);
+- the activity toast shows a determinate progress bar (per event, per
+  relay) and closes with "N/M confirmed on the relays".
+Note: buzz also requires AUTH to *read* — a client that doesn't AUTH (or
+isn't a member) sees none of it.
+
 * OPEN — relay working-set UX: no removal from confirm modals; no NIP-65 seeding (UPSTREAM: tendrl-web)
 :PROPERTIES:
 :found: 2026-08-10 (Android device pass, feat/mobile-shell)

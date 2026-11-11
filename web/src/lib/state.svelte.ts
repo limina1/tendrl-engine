@@ -337,6 +337,9 @@ function _createAppState() {
 		// Present for SSE-driven activity toasts. Drives Expand button
 		// + modal content.
 		activity?: ToastActivity;
+		// A determinate operation (a publish's per-event sends): drawn as a
+		// progress bar under the message.
+		progress?: { done: number; total: number };
 	};
 	let toasts: Toast[] = $state([]);
 	let nextToastId = 1;
@@ -452,7 +455,7 @@ function _createAppState() {
 	 */
 	function updateToast(
 		id: number,
-		patch: Partial<Pick<Toast, 'message' | 'kind'>>,
+		patch: Partial<Pick<Toast, 'message' | 'kind' | 'progress'>>,
 		ttlMs?: number
 	): void {
 		toasts = toasts.map((t) => (t.id === id ? { ...t, ...patch } : t));
