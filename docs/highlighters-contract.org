@@ -73,6 +73,6 @@ Idea + decisions: [[file:zettel/idea-highlighters.org][idea-highlighters]].
 - [X] P1 engine: parse, overlap, publish, restyle, supersede filter,
       listing + tests
 - [X] P2 web: api + types, alpha pref, colour + overlap painting
-- [ ] P3 web: ColorPicker + capture picker
+- [X] P3 web: ColorPicker + capture picker
 - [ ] P4 web: drawer filter / flash / recolour / adopt
 - [ ] P5 verify on an isolated engine (theforest only), docs

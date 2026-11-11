@@ -8,6 +8,8 @@
 	// `/decode` for bech32, shown live as a badge so the user sees what the
 	// event will cite before publishing. No offset tag — pasted text has no
 	// pinned reference frame; NIP-84 context is an optional pasted entry.
+	import { highlighterChoice } from '$lib/discussions/highlighter-choice.svelte';
+	import HighlighterPicker from './HighlighterPicker.svelte';
 	import * as api from '$lib/api';
 	import { getAppState } from '$lib/state.svelte';
 	import { identityCanSign } from '$lib/identity/signer';
@@ -141,6 +143,7 @@
 		const content = text.trim();
 		const comment = annotation.trim();
 		const ctx = context.trim();
+		const style = highlighterChoice.current;
 		clearTimeout(jsonTimer);
 		jsonTimer = setTimeout(async () => {
 			const token = ++jsonToken;
@@ -154,7 +157,8 @@
 					target,
 					content,
 					context: ctx || undefined,
-					comment: comment || undefined
+					comment: comment || undefined,
+					highlighter: style ?? undefined
 				});
 				if (token !== jsonToken) return;
 				jsonText = JSON.stringify(resp.event, null, 2);
@@ -184,7 +188,8 @@
 				target: resolved.target,
 				content: text.trim(),
 				context: context.trim() || undefined,
-				comment: annotation.trim() || undefined
+				comment: annotation.trim() || undefined,
+				highlighter: highlighterChoice.current ?? undefined
 			});
 			const { successful, total } = resp.broadcast;
 			app.pushToast(
@@ -292,6 +297,8 @@
 			bind:value={annotation}
 			disabled={posting}
 		/>
+
+		<HighlighterPicker bind:value={highlighterChoice.current} disabled={posting} />
 
 		{#if text.trim()}
 			<!-- Markup kept tight: .ghl-preview is white-space:pre-wrap, so

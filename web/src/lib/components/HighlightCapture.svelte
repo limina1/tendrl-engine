@@ -29,6 +29,8 @@
 	import { getAppState } from '$lib/state.svelte';
 	import { identityCanSign } from '$lib/identity/signer';
 	import { shell } from '$lib/wm/shell.svelte';
+	import { highlighterChoice } from '$lib/discussions/highlighter-choice.svelte';
+	import HighlighterPicker from './HighlighterPicker.svelte';
 
 	let {
 		getContent,
@@ -294,7 +296,8 @@
 				context:
 					contextText.trim() ||
 					(isEdited ? undefined : contextAround(pending.content, pending.start, pending.end)),
-				comment: annotation.trim() || undefined
+				comment: annotation.trim() || undefined,
+				highlighter: highlighterChoice.current ?? undefined
 			});
 			const { successful, total } = resp.broadcast;
 			app.pushToast(
@@ -388,6 +391,7 @@
 				>select in text</button>
 			</div>
 		{/if}
+		<HighlighterPicker bind:value={highlighterChoice.current} disabled={posting} />
 		<div class="hc-foot">
 			{#if !contextOpen}
 				<button
@@ -420,7 +424,7 @@
 		left: 50%;
 		top: calc(50% - var(--kb-inset, 0px) / 2);
 		transform: translate(-50%, -50%);
-		width: min(360px, 92vw);
+		width: min(400px, 92vw);
 		max-height: calc(100dvh - var(--kb-inset, 0px) - 24px);
 		overflow-y: auto;
 		background: var(--bg);
