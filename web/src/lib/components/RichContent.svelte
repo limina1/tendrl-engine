@@ -8,6 +8,8 @@
 	import { getAppState } from '$lib/state.svelte';
 	import EmbedCard from './EmbedCard.svelte';
 	import { highlightFill, highlightStroke } from '$lib/discussions/colors';
+	import { marksOf } from '$lib/discussions/highlights';
+	import { getAuthorDisplayName } from '$lib/discussions/authors.svelte';
 	import { highlightDisplay } from '$lib/discussions/highlight-display.svelte';
 	import type { HighlightSpan } from '$lib/discussions/highlights';
 	import {
@@ -72,37 +74,66 @@
 	// step), so the tracker is passed straight through to EmbedCard below. Inline
 	// ref/wiki/mention links resolve instantly and aren't counted.
 
-	// A mark paints every highlight covering its run: the bottom layer as the
-	// background colour, each layer above as a flat gradient image over it
-	// (CSS lists images top-first), all at the one display alpha — so
-	// overlapping highlights blend. The stripe takes the top layer's colour.
+	// A mark paints every highlight covering its run, each in its own ink
+	// (highlighter colour, else the author hue), at the one display alpha:
+	// fills stack as flat gradient layers, underlines as 2px lines (offset
+	// so stacked underlines stay distinct), bold/italic change the letters
+	// and tint them when no fill sits under them. CSS lists layers top-first.
 	function styleFor(h: HighlightSegmentInfo): string {
 		const a = highlightDisplay.alpha / 100;
-		const [bottom, ...above] = h.layers;
-		let css = `background-color: ${highlightFill(bottom, a)};`;
-		if (above.length) {
-			css += ` background-image: ${above
-				.slice()
-				.reverse()
-				.map((l) => {
-					const c = highlightFill(l, a);
-					return `linear-gradient(${c}, ${c})`;
-				})
-				.join(', ')};`;
+		const topFirst = [...h.layers].reverse();
+		const unders: string[] = [];
+		const fills: string[] = [];
+		let bold = false;
+		let italic = false;
+		let ink: string | null = null;
+		for (const l of topFirst) {
+			const marks = l.highlighter ? marksOf(l.highlighter) : ['fill'];
+			const color = highlightStroke(l);
+			if (marks.includes('underline'))
+				unders.push(
+					`linear-gradient(${color}, ${color}) 0 calc(100% - ${unders.length * 3}px) / 100% 2px no-repeat`
+				);
+			if (marks.includes('fill')) {
+				const c = highlightFill(l, a);
+				fills.push(`linear-gradient(${c}, ${c})`);
+			}
+			const shape = marks.includes('bold') || marks.includes('italic');
+			if (marks.includes('bold')) bold = true;
+			if (marks.includes('italic')) italic = true;
+			if (shape && ink === null && !marks.includes('fill')) ink = color;
 		}
-		const stroke = highlightStroke(h.layers[h.layers.length - 1]);
-		return h.focused
-			? `${css} box-shadow: inset 3px 0 0 ${stroke}, 0 0 0 2px var(--state-online);`
-			: `${css} box-shadow: inset 3px 0 0 ${stroke};`;
+		const layers = [...unders, ...fills];
+		let css = layers.length ? `background: ${layers.join(', ')};` : 'background: none;';
+		if (bold) css += ' font-weight: 700;';
+		if (italic) css += ' font-style: italic;';
+		if (ink) css += ` color: ${ink};`;
+		const top = h.layers[h.layers.length - 1];
+		const stripe = (top.highlighter ? marksOf(top.highlighter) : ['fill']).includes('fill')
+			? `inset 3px 0 0 ${highlightStroke(top)}`
+			: '';
+		const ring = h.focused ? '0 0 0 2px var(--state-online)' : '';
+		const shadow = [stripe, ring].filter(Boolean).join(', ');
+		return shadow ? `${css} box-shadow: ${shadow};` : css;
+	}
+
+	// Attribution: a highlight is someone's mark on the page — hovering it
+	// shows a tiny tooltip at the pointer naming who published it (every
+	// layer, top first); clicking it opens the drawer on it (ReaderBuffer).
+	let tip = $state<{ x: number; y: number; lines: string[] } | null>(null);
+	function showTip(e: MouseEvent, h: HighlightSegmentInfo) {
+		tip = {
+			x: e.clientX + 12,
+			y: e.clientY + 14,
+			lines: [...h.layers]
+				.reverse()
+				.map((l) => `${getAuthorDisplayName(l.pubkey)}${l.highlighter ? ` · ${l.highlighter.label}` : ''}`)
+		};
 	}
 
 	type HighlightSegmentInfo = Extract<ContentSegment, { type: 'highlight' }>['highlight'];
 
-	function markTitle(h: HighlightSegmentInfo): string {
-		return h.layers
-			.map((l) => `${l.highlighter ? `${l.highlighter.label} — ` : ''}highlight ${l.id.slice(0, 8)}… by ${l.pubkey.slice(0, 12)}…`)
-			.join('\n');
-	}
+
 
 	// A ref that resolved to a sibling section rendered in the same enclosing
 	// view (the continuous reader / draft preview stamps `data-section-addr` on
@@ -198,7 +229,8 @@
      spans), so a wikilink under a highlight stays a live link. The mark
      carries no data-src-end: selection capture resolves the innermost stamped
      element, which is always one of the parts. -->
-<pre class="section-content" class:muted bind:this={rootEl}>{#each segments as seg, i (i)}{#if seg.type === 'highlight'}<mark class="hl-overlay" data-hl-ids={seg.highlight.layers.map((l) => l.id).join(' ')} data-src-start={seg.srcStart} style={styleFor(seg.highlight)} title={markTitle(seg.highlight)}>{#each seg.parts as part, j (j)}{@render atom(part)}{/each}</mark>{:else}{@render atom(seg)}{/if}{/each}</pre>
+<pre class="section-content" class:muted bind:this={rootEl}>{#each segments as seg, i (i)}{#if seg.type === 'highlight'}<mark class="hl-overlay" data-hl-ids={seg.highlight.layers.map((l) => l.id).join(' ')} data-src-start={seg.srcStart} style={styleFor(seg.highlight)} onmousemove={(e) => showTip(e, seg.highlight)} onmouseleave={() => (tip = null)}>{#each seg.parts as part, j (j)}{@render atom(part)}{/each}</mark>{:else}{@render atom(seg)}{/if}{/each}</pre>
+{#if tip}<div class="hl-tip" use:portal style="left: {tip.x}px; top: {tip.y}px" role="tooltip">{#each tip.lines as line, i (i)}<div>{line}</div>{/each}</div>{/if}
 {#if preview}
 	<!-- svelte-ignore a11y_no_static_element_interactions -->
 	<div
@@ -288,6 +320,21 @@
 	   tables, headings or hard breaks — the base decides. */
 	.section-content :global(.ly-soft) { white-space: normal; }
 
+	:global(.hl-tip) {
+		position: fixed;
+		z-index: 400;
+		pointer-events: none;
+		padding: 1px 5px;
+		font-family: var(--font-sans);
+		font-size: 10px;
+		line-height: 1.4;
+		color: var(--fg);
+		background: var(--bg);
+		border: 1px solid var(--panel-border);
+		border-radius: 2px;
+		box-shadow: 0 2px 6px rgba(0, 0, 0, 0.35);
+		white-space: nowrap;
+	}
 	.hl-overlay {
 		color: inherit;
 		padding: 1px 2px;

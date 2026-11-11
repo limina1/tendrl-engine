@@ -95,3 +95,17 @@ export function highlightFill(
 export function highlightStroke(layer: { pubkey: string; highlighter?: { color: string } }): string {
 	return layer.highlighter ? layer.highlighter.color : pubkeyToHighlightStroke(layer.pubkey);
 }
+
+/** Inline CSS showing a highlighter's marks on a short sample (chips,
+ *  drawer labels): fill tint, underline, bold, italic — all in its ink. */
+export function markSampleStyle(h: { color: string; marks?: string[] }): string {
+	const m = h.marks?.length ? h.marks : ['fill'];
+	let css = '';
+	if (m.includes('fill')) css += `background: ${hexToRgba(h.color, 0.45)};`;
+	if (m.includes('underline'))
+		css += ` text-decoration: underline 2px ${h.color}; text-underline-offset: 2px;`;
+	if (m.includes('bold')) css += ' font-weight: 700;';
+	if (m.includes('italic')) css += ' font-style: italic;';
+	if (!m.includes('fill')) css += ` color: ${h.color};`;
+	return css;
+}

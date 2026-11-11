@@ -14,10 +14,22 @@
 
 /** A highlight's style — `["highlighter", label, #rrggbb]` on the 9802
  *  (docs/highlighters-contract.org). */
+export type HighlightMark = 'fill' | 'underline' | 'bold' | 'italic';
+/** Canonical order (mirrors Rust `HIGHLIGHT_MARKS`). */
+export const HIGHLIGHT_MARKS: HighlightMark[] = ['fill', 'underline', 'bold', 'italic'];
+
 export interface Highlighter {
 	label: string;
-	/** Lower-case `#rrggbb`. */
+	/** Lower-case `#rrggbb` — the ink every mark is drawn in. */
 	color: string;
+	/** Combinable marks; absent/empty = `fill`. */
+	marks?: HighlightMark[];
+}
+
+/** A highlighter's marks, canonical, never empty. */
+export function marksOf(h: { marks?: string[] } | undefined): HighlightMark[] {
+	const m = HIGHLIGHT_MARKS.filter((k) => h?.marks?.includes(k));
+	return m.length ? m : ['fill'];
 }
 
 /** First well-formed `highlighter` tag (mirrors Rust
@@ -29,7 +41,8 @@ export function highlighterFromTags(tags: string[][]): Highlighter | undefined {
 		const m = /^#?([0-9a-f]{6}|[0-9a-f]{3})$/i.exec((t[2] ?? '').trim());
 		if (!label || !m) continue;
 		const hex = m[1].length === 3 ? [...m[1]].map((c) => c + c).join('') : m[1];
-		return { label, color: `#${hex.toLowerCase()}` };
+		const marks = marksOf({ marks: t.slice(3).map((x) => x.trim().toLowerCase()) });
+		return { label, color: `#${hex.toLowerCase()}`, marks };
 	}
 	return undefined;
 }

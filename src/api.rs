@@ -4918,11 +4918,15 @@ pub struct DiscussionHighlightRequest {
 pub struct HighlighterInput {
     pub label: String,
     pub color: String,
+    /// `fill` / `underline` / `bold` / `italic`, combinable; none = fill.
+    #[serde(default)]
+    pub marks: Vec<String>,
 }
 
 impl HighlighterInput {
     fn validate(&self) -> Result<crate::discussions::Highlighter, EngineError> {
-        crate::discussions::Highlighter::new(&self.label, &self.color).map_err(EngineError::BadRequest)
+        crate::discussions::Highlighter::with_marks(&self.label, &self.color, &self.marks)
+            .map_err(EngineError::BadRequest)
     }
 }
 

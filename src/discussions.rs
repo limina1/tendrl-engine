@@ -212,9 +212,18 @@ pub fn group_threads_by_address(
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Highlighter {
     pub label: String,
-    /// Lower-case `#rrggbb`.
+    /// Lower-case `#rrggbb` — the ink every mark is drawn in.
     pub color: String,
+    /// How the passage is marked, combinable, in canonical order
+    /// (`HIGHLIGHT_MARKS`). Empty on the wire = `fill` (every highlight made
+    /// before marks existed); never empty after `Highlighter::new`.
+    #[serde(default)]
+    pub marks: Vec<String>,
 }
+
+/// The marks a highlighter can draw, in canonical order: a tinted
+/// background, an underline, bold or italic letters — all in its colour.
+pub const HIGHLIGHT_MARKS: [&str; 4] = ["fill", "underline", "bold", "italic"];
 
 /// Tag name carrying a highlight's style.
 pub const HIGHLIGHTER_TAG: &str = "highlighter";
@@ -228,6 +237,31 @@ impl Highlighter {
     /// Validate + normalize: label trimmed, non-empty, ≤ 64 chars; colour
     /// `#rgb` / `#rrggbb` (the `#` optional, any case) → lower-case `#rrggbb`.
     pub fn new(label: &str, color: &str) -> Result<Self, String> {
+        Self::with_marks(label, color, &[] as &[&str])
+    }
+
+    /// `new` + marks: unknown marks are an error, duplicates collapse, order
+    /// is canonical, none = `fill`.
+    pub fn with_marks<S: AsRef<str>>(label: &str, color: &str, marks: &[S]) -> Result<Self, String> {
+        let mut want: Vec<&str> = Vec::new();
+        for m in marks {
+            let m = m.as_ref().trim();
+            if m.is_empty() {
+                continue;
+            }
+            let Some(known) = HIGHLIGHT_MARKS.iter().find(|k| k.eq_ignore_ascii_case(m)) else {
+                return Err(format!("unknown highlight mark {m:?} (fill, underline, bold, italic)"));
+            };
+            want.push(known);
+        }
+        let mut marks: Vec<String> = HIGHLIGHT_MARKS
+            .iter()
+            .filter(|k| want.contains(k))
+            .map(|k| k.to_string())
+            .collect();
+        if marks.is_empty() {
+            marks.push("fill".to_string());
+        }
         let label = label.trim();
         if label.is_empty() {
             return Err("a highlighter needs a label".into());
@@ -247,16 +281,23 @@ impl Highlighter {
         Ok(Self {
             label: label.to_string(),
             color: format!("#{hex}"),
+            marks,
         })
     }
 
     /// The event tag.
+    /// The event tag; a fill-only highlighter omits the marks (the
+    /// pre-marks shape, which every reader already understands).
     pub fn to_tag(&self) -> Vec<String> {
-        vec![
+        let mut t = vec![
             HIGHLIGHTER_TAG.to_string(),
             self.label.clone(),
             self.color.clone(),
-        ]
+        ];
+        if self.marks != ["fill"] {
+            t.extend(self.marks.iter().cloned());
+        }
+        t
     }
 }
 
@@ -267,7 +308,15 @@ pub fn highlighter_from_tags(tags: &[Value]) -> Option<Highlighter> {
         if arr.first()?.as_str()? != HIGHLIGHTER_TAG {
             return None;
         }
-        Highlighter::new(arr.get(1)?.as_str()?, arr.get(2)?.as_str()?).ok()
+        // Unknown marks are skipped on read (a newer client's mark must not
+        // make the whole style unreadable).
+        let marks: Vec<&str> = arr
+            .iter()
+            .skip(3)
+            .filter_map(Value::as_str)
+            .filter(|m| HIGHLIGHT_MARKS.iter().any(|k| k.eq_ignore_ascii_case(m.trim())))
+            .collect();
+        Highlighter::with_marks(arr.get(1)?.as_str()?, arr.get(2)?.as_str()?, &marks).ok()
     })
 }
 
@@ -370,6 +419,8 @@ pub fn drop_superseded(events: &mut Vec<Value>) {
 pub struct HighlighterPair {
     pub label: String,
     pub color: String,
+    /// The newest highlight's marks.
+    pub marks: Vec<String>,
     /// Highlights carrying this label (any colour).
     pub count: usize,
     /// `created_at` of the newest one — whose colour this pair carries.
@@ -401,6 +452,7 @@ pub fn highlighter_pairs(events: &[Value]) -> Vec<HighlighterPair> {
         let entry = by_label.entry(h.label.clone()).or_insert(HighlighterPair {
             label: h.label.clone(),
             color: h.color.clone(),
+            marks: h.marks.clone(),
             count: 0,
             last_used: i64::MIN,
         });
@@ -408,6 +460,7 @@ pub fn highlighter_pairs(events: &[Value]) -> Vec<HighlighterPair> {
         if at >= entry.last_used {
             entry.last_used = at;
             entry.color = h.color;
+            entry.marks = h.marks;
         }
     }
     let mut out: Vec<HighlighterPair> = by_label.into_values().collect();
@@ -1494,13 +1547,31 @@ mod tests {
     #[test]
     fn highlighter_validates_and_normalizes() {
         let h = Highlighter::new("  against ", "#F49AC2").unwrap();
-        assert_eq!(h, Highlighter { label: "against".into(), color: "#f49ac2".into() });
+        assert_eq!(
+            h,
+            Highlighter { label: "against".into(), color: "#f49ac2".into(), marks: vec!["fill".into()] }
+        );
         assert_eq!(Highlighter::new("x", "abc").unwrap().color, "#aabbcc");
         assert!(Highlighter::new(" ", "#ffffff").is_err());
         assert!(Highlighter::new("x", "#ggg").is_err());
         assert!(Highlighter::new("x", "#12345").is_err());
         assert!(Highlighter::new(&"y".repeat(65), "#ffffff").is_err());
         assert_eq!(h.to_tag(), vec!["highlighter", "against", "#f49ac2"]);
+    }
+
+    #[test]
+    fn marks_canonical_roundtrip_and_backcompat() {
+        let h = Highlighter::with_marks("for", "#8fd694", &["Bold", "underline", "bold"]).unwrap();
+        assert_eq!(h.marks, vec!["underline", "bold"]);
+        assert_eq!(h.to_tag(), vec!["highlighter", "for", "#8fd694", "underline", "bold"]);
+        assert!(Highlighter::with_marks("x", "#ffffff", &["sparkle"]).is_err());
+        // Fill-only keeps the 3-element tag; a 3-element tag reads as fill.
+        assert_eq!(Highlighter::new("x", "#ffffff").unwrap().to_tag().len(), 3);
+        let read = highlighter_from_tags(&[json!(["highlighter", "x", "#ffffff"])]).unwrap();
+        assert_eq!(read.marks, vec!["fill"]);
+        // Unknown marks on the wire are skipped, not fatal.
+        let read = highlighter_from_tags(&[json!(["highlighter", "x", "#ffffff", "italic", "glow"])]).unwrap();
+        assert_eq!(read.marks, vec!["italic"]);
     }
 
     #[test]

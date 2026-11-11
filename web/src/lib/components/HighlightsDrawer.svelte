@@ -5,7 +5,9 @@
 		pubkeyToHighlightStroke
 	} from '$lib/discussions/colors';
 	import { getAuthorDisplayName, hasAuthorName } from '$lib/discussions/authors.svelte';
-	import type { Highlighter } from '$lib/discussions/highlights';
+	import { marksOf, type Highlighter, type HighlightMark } from '$lib/discussions/highlights';
+	import { markSampleStyle } from '$lib/discussions/colors';
+	import MarkToggles from './MarkToggles.svelte';
 	import {
 		highlightDisplay,
 		ALPHA_MIN,
@@ -98,12 +100,14 @@
 	// Recolour form for the selected entry.
 	let editLabel = $state('');
 	let editColor = $state('#f7d94c');
+	let editMarks = $state<HighlightMark[]>(['fill']);
 	let restyling = $state(false);
 
 	function select(h: DrawerHighlight) {
 		selected = h.id;
 		editLabel = h.highlighter?.label ?? '';
 		editColor = h.highlighter?.color ?? '#f7d94c';
+		editMarks = marksOf(h.highlighter);
 	}
 
 	let flashTimer: ReturnType<typeof setTimeout> | undefined;
@@ -157,7 +161,7 @@
 		const l = editLabel.trim();
 		restyling = true;
 		try {
-			await onrestyle(h.id, l ? { label: l, color: editColor } : null);
+			await onrestyle(h.id, l ? { label: l, color: editColor, marks: editMarks } : null);
 			selected = null;
 		} finally {
 			restyling = false;
@@ -165,7 +169,8 @@
 	}
 	const unchanged = (h: DrawerHighlight) =>
 		editLabel.trim() === (h.highlighter?.label ?? '') &&
-		(!editLabel.trim() || editColor === h.highlighter?.color);
+		(!editLabel.trim() ||
+			(editColor === h.highlighter?.color && editMarks.join() === marksOf(h.highlighter).join()));
 
 	let refreshing = $state(false);
 	async function handleRefresh() {
@@ -333,9 +338,8 @@
 									></span>
 									<span class="hl-body">
 										{#if entry.highlighter}
-											<span
-												class="hl-label"
-												style="background: {entry.highlighter.color}">{entry.highlighter.label}</span
+											<span class="hl-label" style={markSampleStyle(entry.highlighter)}
+												>{entry.highlighter.label}</span
 											>
 										{/if}
 										<span class="hl-preview">{preview(entry.content)}</span>
@@ -370,6 +374,7 @@
 												/>
 												<ColorPicker bind:value={editColor} disabled={restyling} label="recolour" />
 											</div>
+											<MarkToggles bind:value={editMarks} color={editColor} disabled={restyling} />
 											<div class="hl-actions__row">
 												<span class="hl-actions__hint">publishes a new highlight; this one is dropped</span>
 												<button
@@ -509,8 +514,7 @@
 		align-self: flex-start;
 		padding: 0 5px;
 		border-radius: 2px;
-		color: #12141c;
-		font-size: calc(var(--t-xs) - 2px);
+		font-size: calc(var(--t-xs) - 1px);
 	}
 	.hl-actions {
 		display: flex;

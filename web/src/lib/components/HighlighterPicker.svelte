@@ -6,9 +6,10 @@
 	// label and colour; editing either makes a new pair. `plain` = no
 	// highlighter tag. Decisions: docs/zettel/idea-highlighters.org.
 	import * as api from '$lib/api';
-	import type { Highlighter } from '$lib/discussions/highlights';
-	import { labelToColor } from '$lib/discussions/colors';
+	import { marksOf, type Highlighter, type HighlightMark } from '$lib/discussions/highlights';
+	import { labelToColor, markSampleStyle } from '$lib/discussions/colors';
 	import ColorPicker from './ColorPicker.svelte';
+	import MarkToggles from './MarkToggles.svelte';
 
 	let {
 		value = $bindable(null),
@@ -33,6 +34,8 @@
 	let label = $state(value?.label ?? '');
 	// svelte-ignore state_referenced_locally
 	let color = $state(value?.color ?? labelToColor('x'));
+	// svelte-ignore state_referenced_locally
+	let marks = $state<HighlightMark[]>(marksOf(value ?? undefined));
 
 	$effect(() => {
 		api
@@ -51,12 +54,15 @@
 
 	function emit() {
 		const l = label.trim();
-		value = l ? { label: l, color } : null;
+		value = l ? { label: l, color, marks } : null;
 	}
 
-	function pick(p: { label: string; color: string } | null) {
+	function pick(p: { label: string; color: string; marks?: string[] } | null) {
 		label = p?.label ?? '';
-		if (p) color = p.color;
+		if (p) {
+			color = p.color;
+			marks = marksOf(p);
+		}
 		colorTouched = p !== null;
 		emit();
 	}
@@ -66,6 +72,7 @@
 		const hit = known.find((p) => p.label === label.trim());
 		if (hit) {
 			color = hit.color;
+			marks = marksOf(hit);
 			colorTouched = true;
 		} else if (!colorTouched && label.trim()) {
 			color = labelToColor(label);
@@ -96,7 +103,11 @@
 	}
 
 	const tagLine = $derived(
-		label.trim() ? `["highlighter", "${label.trim()}", "${color}"]` : 'plain highlight — no highlighter tag'
+		label.trim()
+			? `["highlighter", "${label.trim()}", "${color}"${
+					marks.length === 1 && marks[0] === 'fill' ? '' : marks.map((m) => `, "${m}"`).join('')
+				}]`
+			: 'plain highlight — no highlighter tag'
 	);
 </script>
 
@@ -171,13 +182,12 @@
 				<button
 					type="button"
 					class="hp-chip"
-					class:on={label.trim() === p.label && color === p.color}
+					class:on={label.trim() === p.label && color === p.color && marksOf(p).join() === marks.join()}
 					title="{p.label} · {p.color} · on {p.count} highlight{p.count === 1 ? '' : 's'}"
 					onclick={() => pick(p)}
 					{disabled}
 				>
-					<span class="hp-dot" style="background: {p.color}"></span>
-					<span>{p.label}</span>
+					<span class="hp-sample" style={markSampleStyle(p)}>{p.label}</span>
 					<span class="hp-n">{p.count}</span>
 				</button>
 			{/each}
@@ -197,6 +207,15 @@
 		/>
 		<ColorPicker value={color} onchange={onColor} {disabled} />
 	</div>
+	<MarkToggles
+		value={marks}
+		{color}
+		{disabled}
+		onchange={(m) => {
+			marks = m;
+			emit();
+		}}
+	/>
 	<div class="hp-tag">{tagLine}</div>
 </div>
 
@@ -317,9 +336,8 @@
 	.hp-chip--plain {
 		color: var(--base5);
 	}
-	.hp-dot {
-		width: 9px;
-		height: 9px;
+	.hp-sample {
+		padding: 0 3px;
 		border-radius: 2px;
 	}
 	.hp-n {
