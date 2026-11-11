@@ -1,82 +1,69 @@
-#+TITLE: Idea: highlighters — labelled, coloured highlight events
+#+TITLE: Idea: highlighters — highlight styles (label + colour)
 #+TYPE: idea
-#+STATUS: design — model settled 2026-11-11 (labels as events, like writing styles); prototype next
+#+STATUS: design — model settled 2026-11-11 (style lives on the highlight; set discovered from existing 9802s); prototype next
 #+DATE: 2026-11-11
 
 * What it means
 
 A highlight today (kind 9802) carries the text, context, an optional
 note and its source — no /function/, and its colour is only the
-yours/theirs theme tint. A *highlighter* is a label paired with a
-colour: =vocabulary=, =for=, =against=, or anything the reader names.
-Highlighting with one marks /what the passage is/, and the reader paints
-it in that highlighter's colour.
+yours/theirs theme tint. A *highlighter* is a highlight style: a label
+paired with a colour — =vocabulary=, =for=, =against=, or anything the
+reader names. Highlighting with one marks /what the passage is/, and the
+reader paints it in that colour.
 
-* Highlighters are events, like writing styles
+* The style lives on the highlight
 
-Same pattern as the annotation requests' writing styles
-(=src/api/styles.rs= on =feat/annotations-table=): a style is a kind-30078
-event (=t: tendrl-style=, =title=, instructions as content), the picker
-lists the style events found in the store, a new one can be written
-inline, and a request names its style by coordinate (=["style", …]=) so
-"everything in this style" is one tag search.
-
-A highlighter is the same shape:
-
-#+begin_src
-kind 30078 (NIP-78 app data, addressable)
-["d", <nanoid>]
-["t", "tendrl-highlighter"]
-["title", "against"]
-["color", "#ff6b6b"]
-content: what this label means — "a passage that argues against the thesis"
-#+end_src
-
-and a highlight names it by coordinate:
+No separate definition event. Each 9802 carries its own label + colour:
 
 #+begin_src
 kind 9802
-["highlighter", "30078:<pk>:<d>"]
+["highlighter", "against", "#ff6b6b"]
 #+end_src
 
-So the label set is picked up from existing events, not a fixed list:
-- the colour travels on the highlighter event (no separate palette);
-- "everything highlighted /against/" = =#highlighter= search;
-- the content tells a reader — or the assistant — what to mark with it;
-- local until broadcast, newest version per coordinate wins.
+The set of highlighters is *discovered from existing events*: the
+distinct label → colour pairs found on 9802s. Consequences:
+- "everything highlighted /against/" is a tag query over 9802s;
+- a highlight is self-describing — any reader can paint it without
+  fetching anything else;
+- when one author used a label with several colours, the newest 9802's
+  colour wins for that author's set.
 
 * The picker
 
-- *Your highlighters* — highlighter events signed by you, from the store.
-- *Use another's* — a separate button: enter an npub, fetch that
-  reader's =t: tendrl-highlighter= events (Confirm-gated like any relay
-  fetch), and highlight with theirs. A highlighter referenced by a 9802
-  already in the store is discovered the same way.
-- *New highlighter* inline: title, meaning, colour.
+Shown when capturing a highlight:
+- *Your highlights* — the label/colour pairs found on your own 9802s,
+  plus *new* inline: a label, then a colour.
+- *Use another's* — a separate button: enter an npub, and the picker
+  offers the pairs found on that reader's 9802s (local first; a relay
+  round for their 9802s is Confirm-gated like any user fetch). Picking
+  one stamps the same label + colour on your highlight.
+- Plain highlights (no highlighter) keep working as today.
 
 * Colour
 
-Chosen when the highlighter is made (or edited — a new version):
 - *Standard*: a dropdown of the standard highlighter colours (yellow,
   green, blue, pink, orange, purple …).
 - *Custom*: a button beside the dropdown pops up an HSV colour picker.
-- Default when none is picked: a stable colour from the title hash.
+- Default for a new label with no pick: a stable colour from the label
+  hash.
 
-* Reader
+* Engine / web split
 
-Highlight resolution (=POST /api/v1/highlights/resolve=) carries the
-highlighter coordinate through; the engine resolves it to title + colour;
-the overlay paints spans in that colour; the highlights drawer filters by
-highlighter (only =against=, only another reader's =vocabulary=).
+- Engine: parse the =highlighter= tag (=discussions.rs= highlight parse);
+  highlight resolution (=POST /api/v1/highlights/resolve=) carries label +
+  colour onto each span; a "highlighters of <pubkey>" listing = distinct
+  pairs over that author's 9802s (newest wins); publish stamps the tag.
+- Web: the picker (yours / use another's / new), the colour dropdown +
+  HSV popover, overlay paints spans in the highlight's colour, the
+  highlights drawer filters by label.
 
 * Open questions
 
-- [ ] Branch base: =api/styles.rs= lives on the unmerged
-      =feat/annotations-table= chain, not master — share the 30078
-      list/create plumbing (branch off that chain, or port the generic
-      part to master first).
 - [ ] One highlighter per highlight, or several =highlighter= tags?
 - [ ] Do some labels carry behaviour (=vocabulary= → a vocabulary ask;
       =for= / =against= → a pro/con view), or are all labels plain?
-- [ ] Interop: also stamp a NIP-32 =l= with the title so other clients
-      see the label?
+- [ ] Interop: also stamp a NIP-32 =l= with the label so other clients
+      see it?
+- [ ] Contrast: a custom colour on a dark theme — adjust lightness at
+      render, or paint as published?

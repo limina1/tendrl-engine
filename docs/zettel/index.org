@@ -169,7 +169,7 @@ path: [[file:conventions.org][conventions]].
 ** Reader loop
 - [[file:idea-rendering-layers.org][Rendering layers]] — bases / grammars / block renderers over source text; Markdown + Org + AsciiDoc decorated-source bases shipped (M1 2026-10-01, M2 2026-11-02), diagrams + publish-time rendering next
 - [[file:idea-composer-formatting.org][Composer formatting]] — format selector shipped; buttons over source next, no WYSIWYG
-- [[file:idea-highlighters.org][Highlighters]] — labelled, coloured highlights; a highlighter is a 30078 event like a writing style, a 9802 names it by coordinate; yours vs. another npub's
+- [[file:idea-highlighters.org][Highlighters]] — highlight styles: label + colour stamped on each 9802, the set discovered from existing highlights; yours vs. another npub's
 - [[file:idea-backlinks.org][Backlinks panel]] — derived reverse index; cheapest high-value join
 - [[file:idea-see-also.org][Semantic "See Also"]] — ambient relatedness + promote-to-ref
 - [[file:idea-reading-states.org][Reading states]] — inbox/later/archive triage
