@@ -533,7 +533,7 @@ fn default_line_numbers() -> bool {
     true
 }
 fn default_vim_mode() -> bool {
-    true
+    false
 }
 fn default_insert_mode() -> String {
     "cursor".to_string()
