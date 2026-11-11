@@ -2535,3 +2535,43 @@ curl -s localhost:3142/api/v1/profile/$PK | jq .found                    # true
 In the browser: DevTools → Network → no =/api/= request should sit in
 "Stalled"; switching the feed's relay timeline keeps the rows up (dimmed) and
 never shows "Loading publications…" unless the list is empty.
+
+* Highlighters — label + colour on 9802s (branch =feat/highlighters=)
+
+Contract: =docs/highlighters-contract.org=. Engine tests:
+=cargo test --lib discussions= (highlighter parse, overlap, supersede,
+pairs, restyle); web: =pnpm -C web test= (=highlight-overlap.test.ts=).
+
+Isolated verify — throwaway key signed through an in-memory NIP-07 bridge
+(never =identity/login=: the keyring's =last_identity_*= entries are
+global). Trim =<data_dir>/relays.json= to theforest BEFORE anything
+publishes — a fresh engine seeds damus/noswhere/citadel into
+general/publish.
+
+#+begin_src sh
+S=/tmp/tendrl-hl; mkdir -p $S
+printf 'initial_relays=["wss://theforest.nostr1.com"]\ntimeout_ms=8000\n[embedding]\nenabled=false\n[database]\ndata_dir="%s/data"\n' $S > $S/config.toml
+./target/debug/tendrl-engine -c $S/config.toml --data-dir $S/data --port 3131 &   # once, then stop it and:
+jq '.general=["wss://theforest.nostr1.com"]|.fetch=.general|.publish=.general|.broadcast=[]|.search=[]|.search_kinds={}' $S/data/relays.json > $S/r && mv $S/r $S/data/relays.json
+./target/debug/tendrl-engine -c $S/config.toml --data-dir $S/data --port 3131 &
+B=http://127.0.0.1:3131/api/v1; J='content-type: application/json'
+nak key generate </dev/null > $S/me.sk; nak key generate </dev/null > $S/other.sk
+python3 -I scripts/nip07-test-signer.py $B $(cat $S/me.sk) &
+OPK=$(nak key public $(cat $S/other.sk) </dev/null); A="30041:$OPK:hl-s1"
+nak event -q --sec $(cat $S/other.sk) -k 30041 -t d=hl-s1 -t m=text/plain -c 'a signed note is both owned and findable' </dev/null > $S/sec.json
+curl -s -X POST $B/ingest -H 'content-type: application/x-ndjson' --data-binary @$S/sec.json
+curl -s -X POST $B/discussions/highlight -H "$J" -d "{\"target\":{\"address\":\"$A\"},\"content\":\"a signed note is both owned and findable\",\"highlighter\":{\"label\":\"against\",\"color\":\"#F49AC2\"},\"relays\":[]}" | jq -r .event.id > $S/h1
+curl -s -X POST $B/discussions/highlight -H "$J" -d "{\"target\":{\"address\":\"$A\"},\"content\":\"both owned and findable\",\"highlighter\":{\"label\":\"for\",\"color\":\"8fd694\"},\"relays\":[]}" >/dev/null
+curl -s $B/highlighters | jq -c .highlighters                      # against #f49ac2, for #8fd694
+curl -s -X POST $B/discussions/highlight/restyle -H "$J" -d "{\"event_id\":\"$(cat $S/h1)\",\"highlighter\":{\"label\":\"against\",\"color\":\"#ff0000\"},\"relays\":[]}" | jq -c '[.event.tags[]|select(.[0]=="highlighter" or .[0]=="supersedes")]'
+curl -s -X POST $B/discussions/list -H "$J" -d "{\"addresses\":[\"$A\"],\"policy\":\"local_only\",\"kinds\":[9802]}" | jq '.events|length'   # 2 — the superseded one is gone
+#+end_src
+
+Expected: a bad colour → 400; restyling someone else's 9802 → 400 "only
+your own highlights…"; =/highlighters?pubkey=<npub>= lists another
+author's pairs. GUI (headless CDP, see Walkthrough verify): overlapping
+marks blend; clicking a mark opens the drawer on it (flash); filter chips
+filter list + paint; Republish recolours; "Highlight with this style"
+pre-fills the next capture. Watch the console for
+=effect_update_depth_exceeded= — a state write inside an =$effect= in the
+drawer froze the whole reader (2026-11-11); focusing is imperative now.

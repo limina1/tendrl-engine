@@ -1,6 +1,6 @@
 #+TITLE: Idea: highlighters — highlight styles (label + colour)
 #+TYPE: idea
-#+STATUS: design — model settled 2026-11-11 (style lives on the highlight; set discovered from existing 9802s); prototype next
+#+STATUS: built on feat/highlighters 2026-11-11 (unmerged) — contract docs/highlighters-contract.org
 #+DATE: 2026-11-11
 
 * What it means

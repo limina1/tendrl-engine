@@ -37,7 +37,6 @@
 		onnavigate,
 		onrefresh = null,
 		mypubkey = null,
-		focus = null,
 		labelFilter = $bindable(null),
 		onrestyle = null,
 		onadopt = null
@@ -55,9 +54,6 @@
 		onrefresh?: (() => Promise<void>) | null;
 		/** The signer's pubkey — own highlights can be recoloured. */
 		mypubkey?: string | null;
-		/** A highlight clicked in the text: the drawer expands its author,
-		 *  selects it and flashes it. `n` changes on every click. */
-		focus?: { id: string; n: number } | null;
 		/** Label filter (`null` = all, `''` = plain only) — the reader paints
 		 *  only the matching highlights too. */
 		labelFilter?: string | null;
@@ -69,7 +65,8 @@
 
 	// The selected entry (actions open under it) + the one flashing.
 	let selected = $state<string | null>(null);
-	let flashing = $state<{ id: string; n: number } | null>(null);
+	let listEl = $state<HTMLElement | undefined>();
+	let flashing = $state<string | null>(null);
 	// Recolour form for the selected entry.
 	let editLabel = $state('');
 	let editColor = $state('#f7d94c');
@@ -81,26 +78,31 @@
 		editColor = h.highlighter?.color ?? '#f7d94c';
 	}
 
-	$effect(() => {
-		const f = focus;
-		if (!f) return;
-		const h = highlights.find((x) => x.id === f.id);
+	let flashTimer: ReturnType<typeof setTimeout> | undefined;
+	/** A highlight clicked in the text: expand its author, select it, flash
+	 *  it, scroll the list to it. Called imperatively by the reader (from its
+	 *  click handler) — as an effect on a prop, the writes looped the
+	 *  reader's flush (effect_update_depth_exceeded). */
+	export function focusHighlight(id: string) {
+		const h = highlights.find((x) => x.id === id);
 		if (!h) return;
 		if (labelFilter !== null && (h.highlighter?.label ?? '') !== labelFilter) labelFilter = null;
-		expanded.add(h.pubkey);
-		expanded = new Set(expanded);
+		if (!expanded.has(h.pubkey)) expanded = new Set([...expanded, h.pubkey]);
 		select(h);
-		flashing = { id: h.id, n: f.n };
+		flashing = h.id;
+		clearTimeout(flashTimer);
+		flashTimer = setTimeout(() => (flashing = null), 1300);
+		// Scroll the drawer's own list only — `scrollIntoView` would also
+		// scroll the reader behind the drawer.
 		requestAnimationFrame(() => {
-			document
-				.querySelector(`.hl-entry-wrap[data-hl-id="${h.id}"]`)
-				?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+			const list = listEl;
+			const row = list?.querySelector<HTMLElement>(`[data-hl-id="${h.id}"]`);
+			if (!list || !row) return;
+			const top = row.offsetTop - list.offsetTop;
+			if (top < list.scrollTop || top + row.offsetHeight > list.scrollTop + list.clientHeight)
+				list.scrollTop = top - 8;
 		});
-		const n = f.n;
-		setTimeout(() => {
-			if (flashing?.n === n) flashing = null;
-		}, 1300);
-	});
+	}
 
 	// Label filter chips: every label present, plus `plain` when some
 	// highlights carry none.
@@ -256,7 +258,7 @@
 			</div>
 		{/if}
 	</div>
-	<ul class="hl-authors">
+	<ul class="hl-authors" bind:this={listEl}>
 		{#each groups as group (group.pubkey)}
 			{@const isOpen = expanded.has(group.pubkey)}
 			<li class="hl-author">
@@ -283,7 +285,7 @@
 							<li
 								class="hl-entry-wrap"
 								class:selected={selected === entry.id}
-								class:flash={flashing?.id === entry.id}
+								class:flash={flashing === entry.id}
 								data-hl-id={entry.id}
 							>
 								<button

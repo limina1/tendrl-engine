@@ -336,9 +336,9 @@
 
 	// Highlighters (docs/highlighters-contract.org): the drawer's label filter
 	// also filters what the reader paints; a mark clicked in the text opens
-	// the drawer on it (`drawerFocus.n` re-triggers the flash).
+	// the drawer on it (`focusHighlight`, imperative).
 	let hlLabelFilter = $state<string | null>(null);
-	let drawerFocus = $state<{ id: string; n: number } | null>(null);
+	let drawerRef = $state<{ focusHighlight: (id: string) => void } | undefined>();
 	function passesLabelFilter(ev: { tags: string[][] }): boolean {
 		return hlLabelFilter === null || (highlighterFromTags(ev.tags)?.label ?? '') === hlLabelFilter;
 	}
@@ -352,7 +352,7 @@
 		const id = ids[ids.length - 1];
 		if (!id) return;
 		drawerOpen = true;
-		drawerFocus = { id, n: (drawerFocus?.n ?? 0) + 1 };
+		drawerRef?.focusHighlight(id);
 	}
 	async function restyleHighlight(id: string, highlighter: Highlighter | null) {
 		try {
@@ -2822,7 +2822,7 @@
 		onclose={() => (drawerOpen = false)}
 		onnavigate={scrollToHighlight}
 		mypubkey={app.identityStatus?.pubkey ?? null}
-		focus={drawerFocus}
+		bind:this={drawerRef}
 		bind:labelFilter={hlLabelFilter}
 		onrestyle={canSignNow ? restyleHighlight : null}
 		onadopt={adoptHighlighter}
