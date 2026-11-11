@@ -1,3 +1,33 @@
+## v0.20.0 — 2026-11-11
+
+- fix(publish): expect rate limits — adaptive per-relay pace, send only what's missing, toast that lasts
+- fix(publish): confirmed operations get their live progress toast; broadcast summary outlives a long broadcast
+- fix(publish): windowed, paced, retrying broadcast with read-back verification and a progress bar
+- feat(highlighters): live preview — the selected passage takes the style as you pick it
+- feat(highlighters): drawer comment + annotate icons
+- feat(highlighters): engine — highlight annotations (30041, insertion-shaped) + attached comments
+- feat(highlighters): marks — fill / underline / bold / italic in the highlighter's ink; pointer tooltip attribution
+- feat(highlighters): delete your highlights from the drawer
+- fix(highlighters): focus a drawer entry imperatively — the effect froze the reader; verify recipe
+- feat(highlighters): drawer — label filter, alpha, click-to-focus flash, recolour, adopt
+- feat(highlighters): capture picker — your highlights / use another's, standard colours + HSV
+- feat(highlighters): web — highlighter types + API, colour painting, overlapping highlights blend
+- feat(highlighters): engine — highlighter tag, overlapping spans, restyle + supersede, per-author listing
+- docs(zettel): highlighters carry no behaviour — annotation requests act, highlights focus
+- docs(zettel): highlighters — decisions: supersede pointer, global alpha, opt-in annotation, no NIP-32
+- docs(zettel): highlighters — reference label, recolour from the highlights drawer
+- docs(zettel): highlighters — label + colour on the 9802, discovered from existing highlights
+- docs(zettel): highlighters are events, picked up like writing styles
+- docs(zettel): idea — highlighters (function + colour pairs)
+- docs: CLAUDE.md entries for section edit / merge requests / Composer v2; commands.org verify recipe
+- feat(merge-requests): owner review — list, diff, merge, decline
+- feat(edit): Edit from the event menu — section in its publication, whole publication, or one article
+- feat(composer): Composer v2 — one rendered editor, Type + Style, outline and tags rail
+- feat(compose): multi-value tags — {name, values} on the wire, emitted verbatim
+- feat(section-edit): atomic kinds — 30023 / 30818 / 30817 republish own, fork under the same d with NIP-54 fork markers + 818
+- feat(section-edit): edit one section in place — republish own, fork into own index, or fork + kind-818
+- feat(merge-requests): port the pure kind-818 core from feat/annotations-table
+
 ## v0.19.0 — 2026-11-09
 
 - docs: CLAUDE.md module entry for transcript.rs (narration transcript review)
