@@ -2555,7 +2555,10 @@ function _createAppState() {
 	// Broadcast an already-signed local snapshot to the publish relays — the
 	// explicit step after Sign. No re-signing; flips the feed pill local→relay.
 	async function handleBroadcastPublication(addr: NAddr) {
-		const t = pushToast('Broadcasting…', 'pending', 60000);
+		// The engine's activity toast carries the live progress; this one
+		// holds the final summary, so it must outlive a long, paced
+		// broadcast (≈10 events/s per relay, then a read-back).
+		const t = pushToast('Broadcasting… (progress in the activity toast)', 'pending', 30 * 60_000);
 		try {
 			const resp = await api.broadcastPublication(addr.pubkey, addr.d_tag);
 			updateToast(
