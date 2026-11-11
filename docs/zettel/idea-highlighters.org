@@ -1,0 +1,76 @@
+#+TITLE: Idea: highlighters — function + colour pairs
+#+TYPE: idea
+#+STATUS: design — colour picker settled 2026-11-11; prototype next
+#+DATE: 2026-11-11
+
+* What it means
+
+A highlight today (kind 9802) carries the text, context, an optional
+note and its source — no /function/, and its colour is only the
+yours/theirs theme tint. A *highlighter* is a named function paired with
+a colour: =vocabulary=, =for=, =against=, or anything the reader names.
+Highlighting with one marks /what the passage is/, and the reader paints
+each function in its own colour.
+
+Highlighters become their own selection, apart from plain highlights:
+
+- *Your highlighters* — the functions you have already used, gathered
+  from your own labelled 9802s (plus your palette, if published).
+- *Use another's* — a separate button: enter an npub, pull in that
+  reader's highlighters (their palette event, else the functions found
+  on their labelled 9802s with auto colours); adopt the set or single
+  highlighters.
+
+* On the event
+
+The function rides on the 9802 as a NIP-32 label, so other clients
+ignore it harmlessly and it is a queryable, post-hoc reader label
+([[file:idea-post-hoc-labeling.org][post-hoc labeling]] gets its most
+natural write path):
+
+#+begin_src
+["L", "tendrl.highlighter"]
+["l", "vocabulary", "tendrl.highlighter"]
+#+end_src
+
+The colour is not on the 9802 — the event says what the passage is, the
+reader decides how it looks. Colours are shared through an optional
+addressable *palette* event (=function → colour, description= entries),
+which is what lets "use another's" carry colours, not just names.
+
+* Colour: auto, standard, or picked
+
+- *Auto* (default): a stable hash of the function name picks from a
+  theme-tuned palette, so =against= is the same colour everywhere with
+  no choice made.
+- *Standard*: a dropdown of the standard highlighter colours (yellow,
+  green, blue, pink, orange, purple …).
+- *Custom*: a button beside the dropdown pops up an HSV colour picker
+  for any other colour.
+
+Whatever is chosen overrides auto for that function, locally; publishing
+the palette shares it.
+
+* Functions with behaviour (open)
+
+Some functions could /do/ something beyond colour:
+- =vocabulary= → offer a vocabulary ask on the term (the requests flow,
+  [[file:../vocabulary-workflow.org][vocabulary workflow]]).
+- =for= / =against= → an argument view: a document's pro and con
+  highlights side by side.
+Free-form functions just colour.
+
+* Reader
+
+Highlight resolution (=POST /api/v1/highlights/resolve=) carries the
+label through; the overlay paints spans by function colour; the
+highlights drawer filters by highlighter (only =against=, only another
+reader's =vocabulary=).
+
+* Open questions
+
+- [ ] One function per highlight, or several (NIP-32 allows several)?
+- [ ] Ship =vocabulary= / =for= / =against= with behaviour, or free-form
+      names + colours first?
+- [ ] Palette event kind / shape (NIP-51-style list vs. a new
+      addressable kind).
