@@ -7,7 +7,8 @@
 	// (which calls `api.resolveHighlights` / `api.resolveNostrdown`).
 	import { getAppState } from '$lib/state.svelte';
 	import EmbedCard from './EmbedCard.svelte';
-	import { pubkeyToHighlightFill, pubkeyToHighlightStroke } from '$lib/discussions/colors';
+	import { highlightFill, highlightStroke } from '$lib/discussions/colors';
+	import { highlightDisplay } from '$lib/discussions/highlight-display.svelte';
 	import type { HighlightSpan } from '$lib/discussions/highlights';
 	import {
 		buildSegments,
@@ -71,13 +72,36 @@
 	// step), so the tracker is passed straight through to EmbedCard below. Inline
 	// ref/wiki/mention links resolve instantly and aren't counted.
 
-	function styleFor(pubkey: string, focused: boolean): string {
-		const fill = pubkeyToHighlightFill(pubkey);
-		const stroke = pubkeyToHighlightStroke(pubkey);
-		if (focused) {
-			return `background: ${fill}; box-shadow: inset 3px 0 0 ${stroke}, 0 0 0 2px var(--state-online);`;
+	// A mark paints every highlight covering its run: the bottom layer as the
+	// background colour, each layer above as a flat gradient image over it
+	// (CSS lists images top-first), all at the one display alpha — so
+	// overlapping highlights blend. The stripe takes the top layer's colour.
+	function styleFor(h: HighlightSegmentInfo): string {
+		const a = highlightDisplay.alpha / 100;
+		const [bottom, ...above] = h.layers;
+		let css = `background-color: ${highlightFill(bottom, a)};`;
+		if (above.length) {
+			css += ` background-image: ${above
+				.slice()
+				.reverse()
+				.map((l) => {
+					const c = highlightFill(l, a);
+					return `linear-gradient(${c}, ${c})`;
+				})
+				.join(', ')};`;
 		}
-		return `background: ${fill}; box-shadow: inset 3px 0 0 ${stroke};`;
+		const stroke = highlightStroke(h.layers[h.layers.length - 1]);
+		return h.focused
+			? `${css} box-shadow: inset 3px 0 0 ${stroke}, 0 0 0 2px var(--state-online);`
+			: `${css} box-shadow: inset 3px 0 0 ${stroke};`;
+	}
+
+	type HighlightSegmentInfo = Extract<ContentSegment, { type: 'highlight' }>['highlight'];
+
+	function markTitle(h: HighlightSegmentInfo): string {
+		return h.layers
+			.map((l) => `${l.highlighter ? `${l.highlighter.label} — ` : ''}highlight ${l.id.slice(0, 8)}… by ${l.pubkey.slice(0, 12)}…`)
+			.join('\n');
 	}
 
 	// A ref that resolved to a sibling section rendered in the same enclosing
@@ -174,7 +198,7 @@
      spans), so a wikilink under a highlight stays a live link. The mark
      carries no data-src-end: selection capture resolves the innermost stamped
      element, which is always one of the parts. -->
-<pre class="section-content" class:muted bind:this={rootEl}>{#each segments as seg, i (i)}{#if seg.type === 'highlight'}<mark class="hl-overlay" data-hl-ids={seg.highlight.id} data-src-start={seg.srcStart} style={styleFor(seg.highlight.pubkey, seg.highlight.focused)} title="NIP-84 highlight {seg.highlight.id.slice(0, 8)}… by {seg.highlight.pubkey.slice(0, 12)}…">{#each seg.parts as part, j (j)}{@render atom(part)}{/each}</mark>{:else}{@render atom(seg)}{/if}{/each}</pre>
+<pre class="section-content" class:muted bind:this={rootEl}>{#each segments as seg, i (i)}{#if seg.type === 'highlight'}<mark class="hl-overlay" data-hl-ids={seg.highlight.layers.map((l) => l.id).join(' ')} data-src-start={seg.srcStart} style={styleFor(seg.highlight)} title={markTitle(seg.highlight)}>{#each seg.parts as part, j (j)}{@render atom(part)}{/each}</mark>{:else}{@render atom(seg)}{/if}{/each}</pre>
 {#if preview}
 	<!-- svelte-ignore a11y_no_static_element_interactions -->
 	<div

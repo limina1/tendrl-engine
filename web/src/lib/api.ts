@@ -32,7 +32,7 @@ import type {
 	Inventory
 } from './types';
 import type { ThreadNode } from './discussions/thread';
-import type { Highlight, HighlightSpan } from './discussions/highlights';
+import type { Highlight, HighlightSpan, Highlighter } from './discussions/highlights';
 import type { ResolvedRef, ParsedToken } from './nostr/nostrdown';
 
 async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> {
@@ -2650,6 +2650,8 @@ export function publishHighlight(req: {
 	context?: string;
 	/** Optional annotation → NIP-84 quote highlight. */
 	comment?: string;
+	/** The highlight's style → `["highlighter", label, #rrggbb]`. */
+	highlighter?: Highlighter;
 	relays?: string[];
 }) {
 	return fetchJson<DiscussionPublishResponse>('/api/v1/discussions/highlight', {
@@ -2754,6 +2756,7 @@ export function previewHighlight(req: {
 	offset?: [number, number];
 	context?: string;
 	comment?: string;
+	highlighter?: Highlighter;
 }): Promise<{
 	event: {
 		kind: number;
@@ -2766,6 +2769,47 @@ export function previewHighlight(req: {
 	return fetchJson('/api/v1/discussions/highlight/preview', {
 		method: 'POST',
 		body: JSON.stringify(req)
+	});
+}
+
+/** One label → colour pair found on an author's highlights (engine
+ *  `discussions::highlighter_pairs`): newest highlight's colour per label. */
+export interface HighlighterPair extends Highlighter {
+	count: number;
+	last_used: number;
+}
+
+export interface HighlightersResponse {
+	pubkey: string;
+	/** That author's highlights considered (superseded ones excluded). */
+	highlights: number;
+	highlighters: HighlighterPair[];
+	/** A relay round ran (fetch_always and approved). */
+	fetched: boolean;
+}
+
+/** The highlighters found on an author's 9802s — the capture picker's chips.
+ *  `pubkey` omitted → yours. `fetch_always` is Confirm-gated. */
+export function listHighlighters(
+	pubkey?: string,
+	policy: 'local_only' | 'fetch_always' = 'local_only'
+): Promise<HighlightersResponse> {
+	const q = new URLSearchParams({ policy });
+	if (pubkey) q.set('pubkey', pubkey);
+	return fetchJson<HighlightersResponse>(`/api/v1/highlighters?${q}`);
+}
+
+/** Recolour one of your highlights: the engine publishes a new 9802 with the
+ *  same text + tags, the new style and `["supersedes", old]`; the old one
+ *  drops out of every list. `highlighter: null` → a plain highlight. */
+export function restyleHighlight(req: {
+	event_id: string;
+	highlighter: Highlighter | null;
+	relays?: string[];
+}) {
+	return fetchJson<DiscussionPublishResponse>('/api/v1/discussions/highlight/restyle', {
+		method: 'POST',
+		body: JSON.stringify({ ...req, highlighter: req.highlighter ?? undefined })
 	});
 }
 

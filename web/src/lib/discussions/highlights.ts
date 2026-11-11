@@ -12,6 +12,28 @@
 // engine's offset spans into renderable runs, plus applying focus (a view
 // concern). The former `computeHighlightSegments` substring-matcher was deleted.
 
+/** A highlight's style — `["highlighter", label, #rrggbb]` on the 9802
+ *  (docs/highlighters-contract.org). */
+export interface Highlighter {
+	label: string;
+	/** Lower-case `#rrggbb`. */
+	color: string;
+}
+
+/** First well-formed `highlighter` tag (mirrors Rust
+ *  `discussions::highlighter_from_tags`; the engine re-validates). */
+export function highlighterFromTags(tags: string[][]): Highlighter | undefined {
+	for (const t of tags) {
+		if (t[0] !== 'highlighter') continue;
+		const label = (t[1] ?? '').trim();
+		const m = /^#?([0-9a-f]{6}|[0-9a-f]{3})$/i.exec((t[2] ?? '').trim());
+		if (!label || !m) continue;
+		const hex = m[1].length === 3 ? [...m[1]].map((c) => c + c).join('') : m[1];
+		return { label, color: `#${hex.toLowerCase()}` };
+	}
+	return undefined;
+}
+
 export interface Highlight {
 	/** kind-9802 event id. */
 	id: string;
@@ -25,6 +47,8 @@ export interface Highlight {
 	offset?: [number, number];
 	/** The event's `context` tag — disambiguates repeated phrases. */
 	context?: string;
+	/** The event's `highlighter` tag — label + colour. */
+	highlighter?: Highlighter;
 }
 
 /** Build a resolver input from a raw kind-9802 event, carrying the
@@ -47,7 +71,14 @@ export function highlightFromEvent(e: {
 			context = t[1];
 		}
 	}
-	return { id: e.id, content: e.content ?? '', pubkey: e.pubkey, offset, context };
+	return {
+		id: e.id,
+		content: e.content ?? '',
+		pubkey: e.pubkey,
+		offset,
+		context,
+		highlighter: highlighterFromTags(e.tags)
+	};
 }
 
 /** A resolved highlight position from the engine. `start`/`end` are UTF-16
@@ -58,6 +89,7 @@ export interface HighlightSpan {
 	end: number;
 	id: string;
 	pubkey: string;
+	highlighter?: Highlighter;
 }
 
 export interface HighlightSegment {

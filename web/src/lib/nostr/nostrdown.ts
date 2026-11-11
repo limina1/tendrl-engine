@@ -9,7 +9,7 @@
 // renderable runs, merging nostrdown refs with highlight spans onto one
 // non-overlapping segmentation.
 
-import type { HighlightSpan } from '$lib/discussions/highlights';
+import type { HighlightSpan, Highlighter } from '$lib/discussions/highlights';
 
 /** A `{{ }}` reference after engine resolution. `start`/`end` are UTF-16
  *  code-unit offsets into the section text spanning the whole token, so the
@@ -75,7 +75,16 @@ export type ContentSegment = SegmentSource &
 		| {
 				type: 'highlight';
 				text: string;
-				highlight: { id: string; pubkey: string; focused: boolean };
+				/** `id`/`pubkey`/`highlighter` = the top layer; `layers` = every
+				 *  highlight covering this run, bottom → top (overlapping highlights
+				 *  split into runs, each carrying all of its covers). */
+				highlight: {
+					id: string;
+					pubkey: string;
+					highlighter?: Highlighter;
+					focused: boolean;
+					layers: HighlightLayer[];
+				};
 				/** The runs *inside* the mark — plain text plus any nostrdown ref /
 				 *  token the highlight spans. A highlight is a decoration over the
 				 *  text, not a replacement of it, so a `[[wikilink]]` under a
@@ -129,6 +138,45 @@ export function coordMatchesAddr(
 	return c.pubkey === addr.pubkey || c.pubkey === '' || addr.pubkey === '';
 }
 
+/** One highlight under a run of text. */
+export interface HighlightLayer {
+	id: string;
+	pubkey: string;
+	highlighter?: Highlighter;
+}
+
+/** Split possibly-overlapping highlight spans into non-overlapping runs, each
+ *  carrying every highlight that covers it (bottom → top: outer, earlier-
+ *  starting spans first). Adjacent runs with the same cover set merge. */
+export function flattenHighlightSpans(
+	spans: HighlightSpan[]
+): { start: number; end: number; layers: HighlightLayer[] }[] {
+	const live = spans
+		.filter((s) => s.end > s.start)
+		.sort((a, b) => a.start - b.start || b.end - a.end || a.id.localeCompare(b.id));
+	if (live.length === 0) return [];
+	const cuts = [...new Set(live.flatMap((s) => [s.start, s.end]))].sort((a, b) => a - b);
+	const out: { start: number; end: number; layers: HighlightLayer[] }[] = [];
+	for (let k = 0; k + 1 < cuts.length; k++) {
+		const [a, b] = [cuts[k], cuts[k + 1]];
+		const covers = live.filter((s) => s.start <= a && s.end >= b);
+		if (covers.length === 0) continue;
+		const layers = covers.map(({ id, pubkey, highlighter }) => ({ id, pubkey, highlighter }));
+		const prev = out[out.length - 1];
+		if (
+			prev &&
+			prev.end === a &&
+			prev.layers.length === layers.length &&
+			prev.layers.every((l, i) => l.id === layers[i].id)
+		) {
+			prev.end = b;
+		} else {
+			out.push({ start: a, end: b, layers });
+		}
+	}
+	return out;
+}
+
 type Overlay = {
 	start: number;
 	end: number;
@@ -136,7 +184,7 @@ type Overlay = {
 	prio: number;
 } & (
 	| { kind: 'atom'; make: () => ContentSegment }
-	| { kind: 'highlight'; span: HighlightSpan }
+	| { kind: 'highlight'; layers: HighlightLayer[] }
 );
 
 /**
@@ -194,9 +242,11 @@ export function buildSegments(
 			})
 		});
 	}
-	for (const s of spans) {
-		if (s.end <= s.start) continue;
-		overlays.push({ kind: 'highlight', start: s.start, end: s.end, prio: 1, span: s });
+	// Overlapping highlights are pre-split into non-overlapping runs, each
+	// carrying all of its covering highlights — the merge below then never
+	// sees two highlights over the same text.
+	for (const run of flattenHighlightSpans(spans)) {
+		overlays.push({ kind: 'highlight', start: run.start, end: run.end, prio: 1, layers: run.layers });
 	}
 	// The no-overlay early-out sits AFTER the spans loop deliberately: it used
 	// to sit before it, which silently dropped highlight spans on any section
@@ -257,15 +307,18 @@ export function buildSegments(
 		}
 		if (pc < end) parts.push(text(pc, end));
 		if (start > cursor) segments.push(text(cursor, start));
-		const s = o.span;
+		const top = o.layers[o.layers.length - 1];
 		segments.push({
 			type: 'highlight',
 			text: content.slice(start, end),
 			parts,
 			highlight: {
-				id: s.id,
-				pubkey: s.pubkey,
-				focused: focusedLower !== null && s.id.toLowerCase() === focusedLower
+				id: top.id,
+				pubkey: top.pubkey,
+				highlighter: top.highlighter,
+				focused:
+					focusedLower !== null && o.layers.some((l) => l.id.toLowerCase() === focusedLower),
+				layers: o.layers
 			},
 			srcStart: start,
 			srcEnd: end
