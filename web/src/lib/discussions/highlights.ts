@@ -39,7 +39,8 @@ export function highlighterFromTags(tags: string[][]): Highlighter | undefined {
 		if (t[0] !== 'highlighter') continue;
 		const label = (t[1] ?? '').trim();
 		const m = /^#?([0-9a-f]{6}|[0-9a-f]{3})$/i.exec((t[2] ?? '').trim());
-		if (!label || !m) continue;
+		// An empty label is an unlabelled style — a look, no class.
+		if (!m) continue;
 		const hex = m[1].length === 3 ? [...m[1]].map((c) => c + c).join('') : m[1];
 		const marks = marksOf({ marks: t.slice(3).map((x) => x.trim().toLowerCase()) });
 		return { label, color: `#${hex.toLowerCase()}`, marks };

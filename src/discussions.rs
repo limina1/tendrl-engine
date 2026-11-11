@@ -234,7 +234,8 @@ pub const SUPERSEDES_TAG: &str = "supersedes";
 pub const HIGHLIGHTER_LABEL_MAX: usize = 64;
 
 impl Highlighter {
-    /// Validate + normalize: label trimmed, non-empty, ≤ 64 chars; colour
+    /// Validate + normalize: label trimmed, ≤ 64 chars, may be empty (an
+    /// unlabelled style); colour
     /// `#rgb` / `#rrggbb` (the `#` optional, any case) → lower-case `#rrggbb`.
     pub fn new(label: &str, color: &str) -> Result<Self, String> {
         Self::with_marks(label, color, &[] as &[&str])
@@ -262,10 +263,9 @@ impl Highlighter {
         if marks.is_empty() {
             marks.push("fill".to_string());
         }
+        // The label is a class with a purpose ("vocabulary"); a style
+        // needs none — empty = just a look (colour + marks), unclassed.
         let label = label.trim();
-        if label.is_empty() {
-            return Err("a highlighter needs a label".into());
-        }
         if label.chars().count() > HIGHLIGHTER_LABEL_MAX {
             return Err(format!("highlighter label is over {HIGHLIGHTER_LABEL_MAX} characters"));
         }
@@ -449,6 +449,10 @@ pub fn highlighter_pairs(events: &[Value]) -> Vec<HighlighterPair> {
             continue;
         };
         let at = e.get("created_at").and_then(Value::as_i64).unwrap_or(0);
+        // Chips are classes: an unlabelled style is a look, not one to name.
+        if h.label.is_empty() {
+            continue;
+        }
         let entry = by_label.entry(h.label.clone()).or_insert(HighlighterPair {
             label: h.label.clone(),
             color: h.color.clone(),
@@ -1678,7 +1682,12 @@ mod tests {
             Highlighter { label: "against".into(), color: "#f49ac2".into(), marks: vec!["fill".into()] }
         );
         assert_eq!(Highlighter::new("x", "abc").unwrap().color, "#aabbcc");
-        assert!(Highlighter::new(" ", "#ffffff").is_err());
+        // No label = an unlabelled style, still a real one.
+        let bare = Highlighter::with_marks(" ", "#ffffff", &["bold"]).unwrap();
+        assert_eq!(bare.label, "");
+        assert_eq!(bare.to_tag(), vec!["highlighter", "", "#ffffff", "bold"]);
+        assert_eq!(highlighter_from_tags(&[json!(bare.to_tag())]), Some(bare.clone()));
+        assert!(highlighter_pairs(&[json!({"id": "a", "kind": 9802, "created_at": 1, "tags": [bare.to_tag()]})]).is_empty());
         assert!(Highlighter::new("x", "#ggg").is_err());
         assert!(Highlighter::new("x", "#12345").is_err());
         assert!(Highlighter::new(&"y".repeat(65), "#ffffff").is_err());

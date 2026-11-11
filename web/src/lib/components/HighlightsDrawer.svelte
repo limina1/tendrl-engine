@@ -141,6 +141,14 @@
 	let editLabel = $state('');
 	let editColor = $state('#f7d94c');
 	let editMarks = $state<HighlightMark[]>(['fill']);
+	// A colour picked by hand (or the entry's own) — part of what makes a
+	// style; the label is an optional class on top.
+	let editColorTouched = $state(false);
+	const editStyle = $derived(
+		editLabel.trim() || editColorTouched || editMarks.join() !== 'fill'
+			? { label: editLabel.trim(), color: editColor, marks: editMarks }
+			: null
+	);
 	let restyling = $state(false);
 
 	function select(h: DrawerHighlight) {
@@ -148,6 +156,12 @@
 		editLabel = h.highlighter?.label ?? '';
 		editColor = h.highlighter?.color ?? '#f7d94c';
 		editMarks = marksOf(h.highlighter);
+		editColorTouched = !!h.highlighter;
+	}
+	function editPlain() {
+		editLabel = '';
+		editMarks = ['fill'];
+		editColorTouched = false;
 	}
 
 	let flashTimer: ReturnType<typeof setTimeout> | undefined;
@@ -182,7 +196,8 @@
 		const m = new Map<string, string>();
 		let plain = false;
 		for (const h of highlights) {
-			if (h.highlighter) {
+			// Filter chips are classes; unlabelled styles sit with `no label`.
+			if (h.highlighter?.label) {
 				if (!m.has(h.highlighter.label)) m.set(h.highlighter.label, h.highlighter.color);
 			} else plain = true;
 		}
@@ -198,19 +213,20 @@
 
 	async function republish(h: DrawerHighlight) {
 		if (!onrestyle || restyling) return;
-		const l = editLabel.trim();
 		restyling = true;
 		try {
-			await onrestyle(h.id, l ? { label: l, color: editColor, marks: editMarks } : null);
+			await onrestyle(h.id, editStyle);
 			selected = null;
 		} finally {
 			restyling = false;
 		}
 	}
-	const unchanged = (h: DrawerHighlight) =>
-		editLabel.trim() === (h.highlighter?.label ?? '') &&
-		(!editLabel.trim() ||
-			(editColor === h.highlighter?.color && editMarks.join() === marksOf(h.highlighter).join()));
+	const unchanged = (h: DrawerHighlight) => {
+		const a = editStyle;
+		const b = h.highlighter;
+		if (!a || !b) return !a && !b;
+		return a.label === b.label && a.color === b.color && a.marks.join() === marksOf(b).join();
+	};
 
 	let refreshing = $state(false);
 	async function handleRefresh() {
@@ -325,7 +341,7 @@
 						class="hl-filter"
 						class:on={labelFilter === ''}
 						aria-pressed={labelFilter === ''}
-						onclick={() => (labelFilter = labelFilter === '' ? null : '')}>plain</button
+						onclick={() => (labelFilter = labelFilter === '' ? null : '')}>no label</button
 					>
 				{/if}
 			</div>
@@ -378,7 +394,7 @@
 										style="background: {entry.highlighter?.color ?? group.stripe};"
 									></span>
 									<span class="hl-body">
-										{#if entry.highlighter}
+										{#if entry.highlighter?.label}
 											<span class="hl-label" style={markSampleStyle(entry.highlighter)}
 												>{entry.highlighter.label}</span
 											>
@@ -480,12 +496,24 @@
 													class="hl-restyle__label"
 													data-entry
 													maxlength="64"
-													placeholder="label (empty = plain)"
+													placeholder="label (optional)"
 													aria-label="Highlighter label"
 													bind:value={editLabel}
 													disabled={restyling}
 												/>
-												<ColorPicker bind:value={editColor} disabled={restyling} label="recolour" />
+												<ColorPicker
+													bind:value={editColor}
+													onchange={() => (editColorTouched = true)}
+													disabled={restyling}
+													label="recolour"
+												/>
+												<button
+													class="hl-act"
+													class:on={!editStyle}
+													disabled={restyling || !editStyle}
+													onclick={editPlain}
+													title="No style — the author's hue">plain</button
+												>
 											</div>
 											<MarkToggles bind:value={editMarks} color={editColor} disabled={restyling} />
 											<div class="hl-actions__row">

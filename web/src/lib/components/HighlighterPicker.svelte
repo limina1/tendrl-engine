@@ -52,9 +52,15 @@
 	const pairs = $derived(tab === 'yours' ? yours : (theirs?.highlighters ?? []));
 	const known = $derived([...yours, ...(theirs?.highlighters ?? [])]);
 
+	// The label is a class with a purpose; a style is just a look. Any of a
+	// label, a hand-picked colour or a non-default mark makes a style —
+	// `plain` (none of them) is the author-hued highlight.
+	const styled = $derived(!!label.trim() || colorTouched || marks.join() !== 'fill');
+
 	function emit() {
 		const l = label.trim();
-		value = l ? { label: l, color, marks } : null;
+		const s = !!l || colorTouched || marks.join() !== 'fill';
+		value = s ? { label: l, color, marks } : null;
 	}
 
 	function pick(p: { label: string; color: string; marks?: string[] } | null) {
@@ -62,7 +68,7 @@
 		if (p) {
 			color = p.color;
 			marks = marksOf(p);
-		}
+		} else marks = ['fill'];
 		colorTouched = p !== null;
 		emit();
 	}
@@ -83,7 +89,6 @@
 	function onColor(hex: string) {
 		color = hex;
 		colorTouched = true;
-		if (!label.trim()) return;
 		emit();
 	}
 
@@ -167,7 +172,7 @@
 			<button
 				type="button"
 				class="hp-chip hp-chip--plain"
-				class:on={!label.trim()}
+				class:on={!styled}
 				onclick={() => pick(null)}
 				{disabled}>plain</button
 			>
@@ -191,7 +196,7 @@
 		<input
 			class="hp-field hp-label"
 			data-entry
-			placeholder="new label, or pick one"
+			placeholder="label (optional) — a class, e.g. vocabulary"
 			aria-label="Highlighter label"
 			maxlength="64"
 			value={label}
