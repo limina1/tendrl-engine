@@ -5488,6 +5488,144 @@ pub async fn discussion_highlight_restyle_preview_handler(
 }
 
 #[derive(Debug, Deserialize)]
+pub struct HighlightsAttachedRequest {
+    /// kind-9802 ids.
+    pub ids: Vec<String>,
+    /// `local_only` (default) / `local_first` / `fetch_always`.
+    #[serde(default)]
+    pub policy: Option<String>,
+}
+
+/// POST /api/v1/highlights/attached — what hangs off each highlight: its
+/// author's annotation (a kind-30041 anchored to it, the "why", for
+/// knowledge-base clients) and the kind-1111 comments on it (social,
+/// threaded engine-side). Keyed by highlight id.
+pub async fn highlights_attached_handler(
+    State(engine): State<AppState>,
+    Json(req): Json<HighlightsAttachedRequest>,
+) -> Result<Json<Value>, EngineError> {
+    let ids: Vec<String> = req
+        .ids
+        .iter()
+        .map(|i| i.to_ascii_lowercase())
+        .filter(|i| is_hex64(i))
+        .collect();
+    if ids.is_empty() {
+        return Ok(Json(json!({ "items": {} })));
+    }
+    let policy: FetchPolicy = match req.policy.as_deref() {
+        Some(p) => p.parse()?,
+        None => FetchPolicy::LocalOnly,
+    };
+    let highlights = engine
+        .get_events_with_options(vec![json!({ "ids": ids })], FetchPolicy::LocalOnly, None, false)
+        .await?
+        .events;
+    // Comments root at the 9802 (`E`); annotations parent on it (`e`).
+    let attached = engine
+        .get_events_with_options(
+            vec![
+                json!({ "kinds": [1111], "#E": ids, "limit": 2000 }),
+                json!({ "kinds": [crate::discussions::ANNOTATION_KIND], "#e": ids, "limit": 2000 }),
+            ],
+            policy,
+            None,
+            false,
+        )
+        .await?;
+    let events = dedup_events_by_id(attached.events);
+    let mut items = serde_json::Map::new();
+    for id in &ids {
+        let author = highlights
+            .iter()
+            .find(|h| h.get("id").and_then(Value::as_str) == Some(id.as_str()))
+            .and_then(|h| h.get("pubkey").and_then(Value::as_str))
+            .unwrap_or("");
+        let annotation = crate::discussions::annotation_for(id, author, &events).cloned();
+        let comments: Vec<Value> = events
+            .iter()
+            .filter(|e| e.get("kind").and_then(Value::as_u64) == Some(1111))
+            .filter(|e| crate::discussions::root_event_id(e).as_deref() == Some(id.as_str()))
+            .cloned()
+            .collect();
+        let count = comments.len();
+        items.insert(
+            id.clone(),
+            json!({
+                "annotation": annotation,
+                "comments": crate::discussions::build_thread(&comments),
+                "comment_count": count,
+            }),
+        );
+    }
+    Ok(Json(json!({ "items": items })))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct HighlightAnnotateRequest {
+    pub highlight_id: String,
+    pub content: String,
+    /// Root scope — the publication coordinate the reader is in; omitted →
+    /// the highlight's own `a` source.
+    #[serde(default)]
+    pub root: Option<String>,
+    #[serde(default)]
+    pub relays: Option<Vec<String>>,
+}
+
+async fn annotate_template_from_request(
+    signing: &crate::signing::SigningController,
+    engine: &AppState,
+    req: &HighlightAnnotateRequest,
+) -> Result<crate::signing::EventTemplate, EngineError> {
+    let hl = crate::query::query_by_id(engine.ndb(), &req.highlight_id)?
+        .ok_or_else(|| EngineError::NotFound(format!("highlight {} is not in the store", req.highlight_id)))?;
+    let me = require_active_pubkey(signing).await?;
+    if hl.get("pubkey").and_then(Value::as_str) != Some(me.as_str()) {
+        return Err(EngineError::BadRequest(
+            "an annotation is the highlighter's own note — comment on someone else's highlight instead".into(),
+        ));
+    }
+    // A new version of my existing annotation keeps its `d`.
+    let mine = engine
+        .get_events_with_options(
+            vec![json!({ "kinds": [crate::discussions::ANNOTATION_KIND], "authors": [me], "#e": [req.highlight_id.to_ascii_lowercase()] })],
+            FetchPolicy::LocalOnly,
+            None,
+            false,
+        )
+        .await?
+        .events;
+    let d = crate::discussions::annotation_for(&req.highlight_id, &me, &mine).and_then(|e| {
+        e.get("tags")?.as_array()?.iter().find_map(|t| {
+            let arr = t.as_array()?;
+            (arr.first()?.as_str()? == "d").then(|| arr.get(1)?.as_str().map(str::to_string))?
+        })
+    });
+    crate::discussions::build_highlight_annotation_template(
+        &hl,
+        req.root.as_deref(),
+        &req.content,
+        d.as_deref(),
+        &discussion_relay_hint(engine),
+        unix_now_i64(),
+    )
+    .map_err(EngineError::BadRequest)
+}
+
+/// POST /api/v1/highlights/annotate — publish (or revise) your annotation
+/// on one of your highlights.
+pub async fn highlight_annotate_handler(
+    State(engine): State<AppState>,
+    Extension(signing): Extension<crate::signing::SigningController>,
+    Json(req): Json<HighlightAnnotateRequest>,
+) -> Result<Json<DiscussionPublishResponse>, EngineError> {
+    let template = annotate_template_from_request(&signing, &engine, &req).await?;
+    let resp = sign_ingest_broadcast(&engine, &signing, template, req.relays.clone()).await?;
+    Ok(Json(resp))
+}
+
+#[derive(Debug, Deserialize)]
 pub struct HighlightersQuery {
     /// Hex or npub. Omitted → the active signer.
     #[serde(default)]

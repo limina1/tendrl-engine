@@ -1122,6 +1122,132 @@ pub fn build_restyle_template(
     })
 }
 
+// ----------------------------------------------------------------------------
+// Highlight annotations — the highlighter's own "why", for knowledge-base
+// clients. An NKBIP-01 *annotation* (nips/NKBIP-01-insertions.org on the
+// annotations chain: a kind-30041 with NIP-22 anchors, no `insert` tag) one
+// grain finer than a section annotation: root scope `A`/`K`/`P` = the
+// publication (so `#A` discovery and the annotations table find it), parent
+// `e`/`k`/`p` = the 9802 itself. Comments on a highlight stay social
+// kind-1111s rooted at the 9802 (`build_comment_template`).
+// ----------------------------------------------------------------------------
+
+pub const ANNOTATION_KIND: u32 = 30041;
+
+/// The annotation template for `highlight` (a 9802) under `root` — the
+/// publication coordinate (`30040:pk:d`) the reader is in, else the
+/// highlight's own `a` source (its section / article). `d_tag` reuses the
+/// author's existing annotation (a new version, not a second note). The
+/// caller checks the signer wrote the highlight.
+pub fn build_highlight_annotation_template(
+    highlight: &Value,
+    root: Option<&str>,
+    content: &str,
+    d_tag: Option<&str>,
+    relay_hint: &str,
+    created_at: i64,
+) -> Result<EventTemplate, String> {
+    if highlight.get("kind").and_then(Value::as_u64) != Some(9802) {
+        return Err("only a kind-9802 highlight can be annotated".into());
+    }
+    let content = content.trim();
+    if content.is_empty() {
+        return Err("an annotation needs some text".into());
+    }
+    let id = highlight.get("id").and_then(Value::as_str).ok_or("the highlight has no id")?;
+    let hl_pubkey = highlight.get("pubkey").and_then(Value::as_str).unwrap_or("");
+    let own_source = highlight.get("tags").and_then(Value::as_array).and_then(|tags| {
+        tags.iter().find_map(|t| {
+            let arr = t.as_array()?;
+            (arr.first()?.as_str()? == "a").then(|| arr.get(1)?.as_str().map(str::to_string))?
+        })
+    });
+    let root = root
+        .map(str::trim)
+        .filter(|r| !r.is_empty())
+        .map(str::to_string)
+        .or(own_source)
+        .ok_or("the highlight is not on an addressable source — no root to anchor the annotation to")?;
+    let mut parts = root.splitn(3, ':');
+    let (Some(root_kind), Some(root_pk), Some(_)) = (parts.next(), parts.next(), parts.next()) else {
+        return Err(format!("root {root:?} is not a kind:pubkey:d coordinate"));
+    };
+    let with_relay = |name: &str, value: &str| -> Vec<String> {
+        if relay_hint.is_empty() {
+            vec![name.to_string(), value.to_string()]
+        } else {
+            vec![name.to_string(), value.to_string(), relay_hint.to_string()]
+        }
+    };
+    let quoted: String = highlight
+        .get("content")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
+    let short: String = quoted.chars().take(60).collect();
+    let title = if quoted.chars().count() > 60 {
+        format!("On “{}…”", short.trim_end())
+    } else {
+        format!("On “{short}”")
+    };
+    let d = d_tag
+        .map(str::trim)
+        .filter(|d| !d.is_empty())
+        .map(str::to_string)
+        .unwrap_or_else(crate::publication::mint_d_tag);
+    let tags = vec![
+        vec!["d".to_string(), d],
+        vec!["title".to_string(), title.clone()],
+        vec![
+            "T".to_string(),
+            crate::publication::compose::ComposeState::generate_d_tag(&title),
+        ],
+        with_relay("A", &root),
+        vec!["K".to_string(), root_kind.to_string()],
+        with_relay("P", root_pk),
+        vec!["e".to_string(), id.to_string(), relay_hint.to_string(), hl_pubkey.to_string()],
+        vec!["k".to_string(), "9802".to_string()],
+        with_relay("p", hl_pubkey),
+        vec!["m".to_string(), "text/markdown".to_string()],
+    ];
+    Ok(EventTemplate {
+        kind: ANNOTATION_KIND,
+        created_at,
+        tags,
+        content: content.to_string(),
+        pubkey: None,
+    })
+}
+
+/// First value of tag `name` (lower-cased — ids).
+fn first_tag_lower(ev: &Value, name: &str) -> Option<String> {
+    ev.get("tags")?.as_array()?.iter().find_map(|t| {
+        let arr = t.as_array()?;
+        (arr.first()?.as_str()? == name).then(|| arr.get(1)?.as_str().map(str::to_ascii_lowercase))?
+    })
+}
+
+/// Root highlight id a comment names in its `E` tag.
+pub fn root_event_id(ev: &Value) -> Option<String> {
+    first_tag_lower(ev, "E")
+}
+
+/// The annotation of `highlight_id` by `author` in `events`: the newest
+/// kind-30041 by that author whose parent `e` (with `k` 9802) is the
+/// highlight.
+pub fn annotation_for<'a>(highlight_id: &str, author: &str, events: &'a [Value]) -> Option<&'a Value> {
+    let want = highlight_id.to_ascii_lowercase();
+    events
+        .iter()
+        .filter(|e| e.get("kind").and_then(Value::as_u64) == Some(ANNOTATION_KIND as u64))
+        .filter(|e| e.get("pubkey").and_then(Value::as_str) == Some(author))
+        .filter(|e| first_tag_lower(e, "k").as_deref() == Some("9802"))
+        .filter(|e| first_tag_lower(e, "e").as_deref() == Some(want.as_str()))
+        .max_by_key(|e| e.get("created_at").and_then(Value::as_i64).unwrap_or(0))
+}
+
 /// Build a kind-5 deletion request (NIP-09) for one event.
 pub fn build_deletion_template(
     event_id: &str,
@@ -1636,6 +1762,36 @@ mod tests {
         let tpl = build_deletion_template_many(&["v3".into(), "v2".into(), "v1".into()], 9802, None, "", 5);
         assert_eq!(tpl.tags.iter().filter(|t| t[0] == "e").count(), 3);
         assert_eq!(tpl.tags.last().unwrap(), &vec!["k".to_string(), "9802".to_string()]);
+    }
+
+    #[test]
+    fn annotation_is_an_insertion_annotation_parented_on_the_highlight() {
+        let pk = "b".repeat(64);
+        let hl = json!({"id": "a".repeat(64), "kind": 9802, "pubkey": pk, "created_at": 1,
+            "content": "both owned and findable", "tags": [["a", "30041:cc:sec"]]});
+        let root = format!("30040:{}:book", "d".repeat(64));
+        let tpl = build_highlight_annotation_template(&hl, Some(&root), " because it answers convenience ", None, "wss://r", 9).unwrap();
+        assert_eq!(tpl.kind, 30041);
+        assert_eq!(tpl.content, "because it answers convenience");
+        let get = |n: &str| tpl.tags.iter().find(|t| t[0] == n).cloned().unwrap();
+        assert_eq!(get("A")[1], root);
+        assert_eq!(get("K")[1], "30040");
+        assert_eq!(get("P")[1], "d".repeat(64));
+        assert_eq!(get("e")[1], "a".repeat(64));
+        assert_eq!(get("k")[1], "9802");
+        assert_eq!(get("p")[1], pk);
+        assert!(!tpl.tags.iter().any(|t| t[0] == "insert" || t[0] == "a"));
+        assert_eq!(get("title")[1], "On “both owned and findable”");
+        // No root given → the highlight's own source.
+        let own = build_highlight_annotation_template(&hl, None, "x", Some("keep-d"), "", 9).unwrap();
+        assert_eq!(own.tags[0], vec!["d", "keep-d"]);
+        assert!(own.tags.iter().any(|t| t[0] == "A" && t[1] == "30041:cc:sec"));
+        assert!(build_highlight_annotation_template(&hl, None, "  ", None, "", 9).is_err());
+
+        let ann = |id: &str, who: &str, at: i64| json!({"id": id, "kind": 30041, "pubkey": who, "created_at": at,
+            "tags": [["e", "a".repeat(64)], ["k", "9802"]], "content": id});
+        let evs = vec![ann("old", &pk, 1), ann("new", &pk, 5), ann("other", &"c".repeat(64), 9)];
+        assert_eq!(annotation_for(&"a".repeat(64), &pk, &evs).unwrap()["id"], "new");
     }
 
     #[test]

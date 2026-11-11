@@ -918,6 +918,8 @@ pub async fn start(opts: ServeOptions) -> anyhow::Result<RunningServer> {
             post(api::discussion_highlight_restyle_preview_handler),
         )
         .route("/api/v1/highlighters", get(api::highlighters_handler))
+        .route("/api/v1/highlights/attached", post(api::highlights_attached_handler))
+        .route("/api/v1/highlights/annotate", post(api::highlight_annotate_handler))
         .route(
             "/api/v1/discussions/delete",
             post(api::discussion_delete_handler),
