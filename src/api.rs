@@ -35,67 +35,172 @@ pub(crate) fn publish_result_status(r: &crate::relay::PublishResult) -> crate::n
     }
 }
 
-/// Publish `event_jsons` to `relays` for `op` — windowed and paced
-/// (`relay::publish_batch_with`), with a per-event progress bar on the
-/// operation — then read every event back from each relay by id: what the
-/// relay stored settles each result, not what it said. Found → accepted
-/// (and its provenance recorded by the ingest); answered `OK true` but not
-/// found → failed; unconfirmed and not found → failed. A relay the
-/// read-back can't reach keeps its publish verdicts.
+/// Publish `event_jsons` to `relays` for `op`, expecting rate limits.
+///
+/// Per relay, concurrently: read back which of the events it already
+/// stores (they count as done and are not re-sent — a re-broadcast spends
+/// the relay's rate budget only on what's missing), send the rest through
+/// the adaptive, windowed sender (`relay::publish_batch_with`), then read
+/// those back. What the relay stores settles each result, not what it
+/// said. Progress (per event, with the relay's current pace) streams to
+/// `op`; a relay the read-back can't reach keeps its publish verdicts.
 pub(crate) async fn publish_and_verify(
     engine: &AppState,
     op: &crate::network::PublishOperation,
     relays: &[String],
     event_jsons: &[String],
 ) -> Vec<crate::relay::PublishResult> {
-    let total = relays.len() * event_jsons.len();
-    let (_, _, mut results) = crate::relay::publish_events_to_relays_with_progress(
-        relays,
-        event_jsons,
-        &engine.relay_auth(),
-        |p| {
-            let host = p.relay_name.trim_start_matches("wss://").trim_start_matches("ws://").trim_end_matches('/');
-            op.progress(format!("Sending · {host} · {}", p.status), p.current_event, Some(p.total_events));
-        },
-    )
-    .await;
+    use crate::relay::{PublishEvent, PublishResult};
 
-    for (i, relay) in relays.iter().enumerate() {
-        let host = relay.trim_start_matches("wss://").trim_start_matches("ws://").trim_end_matches('/');
-        op.progress(format!("Reading back from {host}"), i, Some(relays.len()));
-        let ids: Vec<String> = results
-            .iter()
-            .filter(|r| &r.relay_url == relay && !r.event_id.is_empty())
-            .map(|r| r.event_id.to_ascii_lowercase())
-            .collect();
-        if ids.is_empty() {
-            continue;
-        }
-        match crate::relay::verify_on_relay(engine.ndb(), relay, &ids, &engine.relay_auth()).await {
-            Ok(found) => {
-                for r in results.iter_mut().filter(|r| &r.relay_url == relay) {
-                    if found.contains(&r.event_id.to_ascii_lowercase()) {
-                        r.success = true;
-                        r.unconfirmed = false;
-                        if r.message.as_deref().map_or(true, |m| m.is_empty() || m == crate::relay::UNCONFIRMED_MSG) {
-                            r.message = Some("verified on the relay".into());
-                        }
-                    } else if r.success {
-                        r.success = false;
-                        r.message = Some(if r.unconfirmed {
-                            "never acknowledged and not on the relay afterwards".into()
-                        } else {
-                            "accepted, but not on the relay afterwards (read-back)".into()
-                        });
-                        r.unconfirmed = false;
+    enum Msg {
+        Phase(usize, &'static str),
+        Done(usize, bool),
+        Pace(usize, std::time::Duration, bool),
+    }
+    let auth = engine.relay_auth();
+    let ids: Vec<String> = event_jsons
+        .iter()
+        .map(|j| {
+            serde_json::from_str::<Value>(j)
+                .ok()
+                .and_then(|v| v.get("id").and_then(Value::as_str).map(str::to_ascii_lowercase))
+                .unwrap_or_default()
+        })
+        .collect();
+    let total = relays.len() * event_jsons.len();
+    let host = |r: &str| r.trim_start_matches("wss://").trim_start_matches("ws://").trim_end_matches('/').to_string();
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<Msg>();
+
+    let tasks: Vec<_> = relays.iter().enumerate().map(|(ri, relay)| {
+        let tx = tx.clone();
+        let auth = auth.clone();
+        let ids = &ids;
+        async move {
+            let mut results: Vec<PublishResult> = Vec::with_capacity(event_jsons.len());
+            let _ = tx.send(Msg::Phase(ri, "checking what it already has"));
+            let have: std::collections::HashSet<String> =
+                match crate::relay::verify_on_relay(engine.ndb(), relay, ids, &auth).await {
+                    Ok(h) => h,
+                    Err(e) => {
+                        warn!("pre-check of {relay} failed: {e} — sending everything");
+                        Default::default()
                     }
+                };
+            let mut missing_jsons: Vec<String> = Vec::new();
+            let mut missing_ids: Vec<String> = Vec::new();
+            for (j, id) in event_jsons.iter().zip(ids.iter()) {
+                if !id.is_empty() && have.contains(id) {
+                    results.push(PublishResult {
+                        relay_url: relay.clone(),
+                        success: true,
+                        message: Some("already on the relay".into()),
+                        event_id: id.clone(),
+                        refusal: None,
+                        authenticated: false,
+                        unconfirmed: false,
+                    });
+                    let _ = tx.send(Msg::Done(ri, true));
+                } else {
+                    missing_jsons.push(j.clone());
+                    missing_ids.push(id.clone());
                 }
             }
-            Err(e) => warn!("read-back from {relay} failed: {e} — keeping the publish verdicts"),
+            if missing_jsons.is_empty() {
+                return results;
+            }
+            let _ = tx.send(Msg::Phase(ri, "sending"));
+            let cb = {
+                let tx = tx.clone();
+                move |e: PublishEvent<'_>| match e {
+                    PublishEvent::Result(r) => {
+                        let _ = tx.send(Msg::Done(ri, r.success && !r.unconfirmed));
+                    }
+                    PublishEvent::Pace { gap, rate_limited } => {
+                        let _ = tx.send(Msg::Pace(ri, gap, rate_limited));
+                    }
+                }
+            };
+            let mut sent = crate::relay::publish_batch_with(relay, &missing_jsons, &auth, &cb).await;
+            let _ = tx.send(Msg::Phase(ri, "reading back"));
+            match crate::relay::verify_on_relay(engine.ndb(), relay, &missing_ids, &auth).await {
+                Ok(found) => {
+                    for r in sent.iter_mut() {
+                        if found.contains(&r.event_id.to_ascii_lowercase()) {
+                            r.success = true;
+                            r.unconfirmed = false;
+                            r.refusal = None;
+                            r.message = Some("verified on the relay".into());
+                        } else if r.success {
+                            r.success = false;
+                            r.message = Some(if r.unconfirmed {
+                                "never acknowledged and not on the relay afterwards".into()
+                            } else {
+                                "accepted, but not on the relay afterwards (read-back)".into()
+                            });
+                            r.unconfirmed = false;
+                        }
+                    }
+                }
+                Err(e) => warn!("read-back from {relay} failed: {e} — keeping the publish verdicts"),
+            }
+            results.extend(sent);
+            results
         }
+    }).collect();
+    drop(tx);
+
+    // Drive the relays and the progress feed together.
+    struct RelayState {
+        done: usize,
+        ok: usize,
+        phase: &'static str,
+        gap: Option<std::time::Duration>,
+        limited: bool,
     }
+    let mut st: Vec<RelayState> = relays
+        .iter()
+        .map(|_| RelayState { done: 0, ok: 0, phase: "starting", gap: None, limited: false })
+        .collect();
+    let emit = |st: &Vec<RelayState>, ri: usize| {
+        let done: usize = st.iter().map(|s| s.done).sum();
+        let ok: usize = st.iter().map(|s| s.ok).sum();
+        let s = &st[ri];
+        let pace = match s.gap {
+            Some(g) if s.limited => format!(" · rate-limited, pacing {}", crate::relay::rate_label(g)),
+            Some(g) => format!(" · {}", crate::relay::rate_label(g)),
+            None => String::new(),
+        };
+        let label = if relays.len() == 1 {
+            format!("{} · {} · {ok}/{total} confirmed{pace}", host(&relays[ri]), s.phase)
+        } else {
+            format!("{} relays · {ok}/{total} confirmed · {}: {}{pace}", relays.len(), host(&relays[ri]), s.phase)
+        };
+        op.progress(label, done, Some(total));
+    };
+    let all = futures::future::join_all(tasks);
+    tokio::pin!(all);
+    let per_relay = loop {
+        tokio::select! {
+            res = &mut all => break res,
+            Some(m) = rx.recv() => {
+                let ri = match m {
+                    Msg::Phase(ri, p) => { st[ri].phase = p; ri }
+                    Msg::Done(ri, ok) => { st[ri].done += 1; if ok { st[ri].ok += 1; } ri }
+                    Msg::Pace(ri, g, limited) => { st[ri].gap = Some(g); st[ri].limited = limited; ri }
+                };
+                emit(&st, ri);
+            }
+        }
+    };
+    let results: Vec<PublishResult> = per_relay.into_iter().flatten().collect();
     let confirmed = results.iter().filter(|r| r.success && !r.unconfirmed).count();
-    op.progress(format!("{confirmed}/{total} confirmed on the relays"), confirmed, Some(total));
+    let missing = total - confirmed;
+    let mut label = format!("{confirmed}/{total} confirmed on the relays");
+    if missing > 0 {
+        let first = results.iter().find(|r| !r.success).and_then(|r| r.message.clone()).unwrap_or_default();
+        label.push_str(&format!(" · {missing} missing ({first}) — broadcast again to send only those"));
+    }
+    op.progress(label, total, Some(total));
     results
 }
 

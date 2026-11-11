@@ -606,36 +606,92 @@ pub async fn publish_batch(relay_url: &str, events: &[String], auth: &RelayAuth)
     publish_batch_with(relay_url, events, auth, &|_| {}).await
 }
 
+/// What a running batch reports, for progress.
+#[derive(Debug, Clone, Copy)]
+pub enum PublishEvent<'a> {
+    /// One event finished (accepted, refused, or unconfirmed).
+    Result(&'a PublishResult),
+    /// The pace changed: `gap` between EVENTs; `rate_limited` = slowed by
+    /// a `rate-limited:` refusal (else sped back up after a clean streak).
+    Pace { gap: Duration, rate_limited: bool },
+}
+
+/// The pace learned per relay this session (normalized URL → gap between
+/// EVENTs), so the next batch to a relay that rate-limited starts at the
+/// pace it tolerated instead of rediscovering the limit.
+fn learned_gaps() -> &'static std::sync::Mutex<HashMap<String, Duration>> {
+    static GAPS: std::sync::OnceLock<std::sync::Mutex<HashMap<String, Duration>>> = std::sync::OnceLock::new();
+    GAPS.get_or_init(|| std::sync::Mutex::new(HashMap::new()))
+}
+
+/// The pace a batch to `relay_url` starts at.
+pub fn learned_gap(relay_url: &str) -> Duration {
+    let key = crate::relay_url::normalize_relay_url(relay_url);
+    learned_gaps()
+        .lock()
+        .ok()
+        .and_then(|m| m.get(&key).copied())
+        .unwrap_or(PUBLISH_GAP)
+}
+
+fn remember_gap(relay_url: &str, gap: Duration) {
+    let key = crate::relay_url::normalize_relay_url(relay_url);
+    if let Ok(mut m) = learned_gaps().lock() {
+        m.insert(key, gap);
+    }
+}
+
+/// Events per second at `gap`, for labels.
+pub fn rate_label(gap: Duration) -> String {
+    let per_s = 1.0 / gap.as_secs_f64().max(0.001);
+    if per_s >= 1.0 {
+        format!("{per_s:.0}/s")
+    } else {
+        format!("1 per {:.0}s", gap.as_secs_f64())
+    }
+}
+
 /// Most events awaiting an `OK` at once on one socket. A relay that
 /// rate-limits per pubkey (Buzz: 10 events/s) silently drops a 400-event
 /// burst; a window keeps the relay's queue short and the pace honest.
 const PUBLISH_WINDOW: usize = 10;
-/// Floor between two EVENT frames on one socket — at most 10 per second.
+/// Starting (and fastest) gap between two EVENT frames — 10 per second.
 const PUBLISH_GAP: Duration = Duration::from_millis(100);
+/// Slowest pace a rate-limited relay is backed off to.
+const PUBLISH_MAX_GAP: Duration = Duration::from_secs(10);
+/// Accepted events in a row before the pace speeds back up (×4/3).
+const PUBLISH_SPEEDUP_STREAK: u32 = 20;
+/// A batch gives up only after this long with no event accepted (scaled
+/// up for a slow pace) — not after a fixed total, so a long, rate-limited
+/// broadcast that keeps making progress runs to the end.
+const PUBLISH_STALL: Duration = Duration::from_secs(120);
 /// A socket the relay drops mid-batch is reopened (and re-AUTHed) this
 /// many times; the unanswered events are re-sent on the new socket.
 const PUBLISH_RECONNECTS: usize = 3;
-/// `rate-limited:` refusals of one event are retried this many times,
-/// pausing 1 s, 2 s, 4 s, 8 s.
-const PUBLISH_RATE_RETRIES: u32 = 4;
+/// `rate-limited:` refusals of one event are retried this many times (the
+/// whole batch slows down on each, so retries get progressively gentler).
+const PUBLISH_RATE_RETRIES: u32 = 8;
 /// Message on an event the relay never answered (see `PublishResult::unconfirmed`).
 pub const UNCONFIRMED_MSG: &str = "no OK from the relay — unconfirmed";
 
-/// [`publish_batch`] with a callback per finished event, for progress.
+/// [`publish_batch`] reporting each finished event and every pace change.
 ///
-/// Windowed: at most [`PUBLISH_WINDOW`] events in flight, one EVENT per
-/// [`PUBLISH_GAP`]; the next goes out as each `OK` lands. `rate-limited:`
-/// refusals back off and retry; a dropped socket is reopened and the
-/// unanswered events re-sent ([`PUBLISH_RECONNECTS`]); NIP-42 AUTH is
-/// answered once per socket. A relay that never sends `OK` (some don't)
-/// is detected after its first silent window and the rest are sent
-/// without waiting; events it never answered come back `success` +
-/// [`PublishResult::unconfirmed`], for a read-back to settle.
+/// Expects rate limits. Windowed (≤ [`PUBLISH_WINDOW`] in flight, fewer
+/// at a slow pace) and paced: it starts at the gap this relay tolerated
+/// last time ([`learned_gap`]); every `rate-limited:` refusal doubles the
+/// gap (up to [`PUBLISH_MAX_GAP`]) and requeues the event; a clean streak
+/// speeds back up. It stops only after [`PUBLISH_STALL`] without an
+/// accepted event. A dropped socket is reopened and the unanswered events
+/// re-sent ([`PUBLISH_RECONNECTS`]); NIP-42 AUTH is answered once per
+/// socket. A relay that never sends `OK` is detected after its first
+/// silent window and the rest are sent without waiting; events it never
+/// answered come back `success` + [`PublishResult::unconfirmed`], for a
+/// read-back to settle.
 pub async fn publish_batch_with(
     relay_url: &str,
     events: &[String],
     auth: &RelayAuth,
-    on_result: &(dyn Fn(&PublishResult) + Send + Sync),
+    on_event: &(dyn Fn(PublishEvent<'_>) + Send + Sync),
 ) -> Vec<PublishResult> {
     // Parse up front; a malformed event fails on its own, the rest go.
     let mut results: Vec<Option<PublishResult>> = Vec::with_capacity(events.len());
@@ -650,19 +706,28 @@ pub async fn publish_batch_with(
             }
             Err(e) => {
                 let r = PublishResult::failed(relay_url, String::new(), format!("Invalid event JSON: {e}"), None, false);
-                on_result(&r);
+                on_event(PublishEvent::Result(&r));
                 results.push(Some(r));
             }
         }
     }
 
     let finish = |results: &mut Vec<Option<PublishResult>>, idx: usize, r: PublishResult| {
-        on_result(&r);
+        on_event(PublishEvent::Result(&r));
         results[idx] = Some(r);
     };
 
-    let budget = (Duration::from_secs(30) + Duration::from_millis(400) * queue.len() as u32)
-        .min(Duration::from_secs(20 * 60));
+    // Pace: the gap this relay tolerated last time; adapted as we go.
+    let mut gap = learned_gap(relay_url);
+    let mut streak = 0u32;
+    if gap > PUBLISH_GAP {
+        on_event(PublishEvent::Pace { gap, rate_limited: true });
+    }
+    // Progress clock: the batch stalls only after a long stretch with no
+    // accepted event (longer when the pace itself is slow).
+    let mut last_progress = Instant::now();
+    let stall_after = |gap: Duration| PUBLISH_STALL.max(gap * 12);
+    let hard_cap = Duration::from_secs(3 * 60 * 60);
     let start = Instant::now();
     let mut reconnects = 0usize;
     let mut rate_tries: HashMap<usize, u32> = HashMap::new();
@@ -674,8 +739,12 @@ pub async fn publish_batch_with(
     let mut authed_any = false;
 
     'conn: while !queue.is_empty() {
-        if start.elapsed() >= budget {
-            last_error = Some(format!("gave up after {}s", budget.as_secs()));
+        if last_progress.elapsed() >= stall_after(gap) || start.elapsed() >= hard_cap {
+            last_error = Some(format!(
+                "stalled — nothing accepted for {}s (pace {})",
+                last_progress.elapsed().as_secs(),
+                rate_label(gap)
+            ));
             break;
         }
         let mut conn = match RelayConn::connect(relay_url, auth.clone()).await {
@@ -704,11 +773,16 @@ pub async fn publish_batch_with(
         let mut dropped: Option<String> = None;
 
         loop {
-            let window = if fire_and_forget { usize::MAX } else { PUBLISH_WINDOW };
+            // At a slow pace keep ~1 s of events in flight, never fewer than one.
+            let window = if fire_and_forget {
+                usize::MAX
+            } else {
+                PUBLISH_WINDOW.min(((1000 / gap.as_millis().max(1)) as usize).max(1))
+            };
             // Fill the window, one EVENT per gap.
             while inflight.len() + awaiting_auth.len() < window
                 && Instant::now() >= pause_until
-                && last_send.map_or(true, |t| t.elapsed() >= PUBLISH_GAP)
+                && last_send.map_or(true, |t| t.elapsed() >= gap)
             {
                 let Some(idx) = queue.pop_front() else { break };
                 let (id, v) = &live[&idx];
@@ -729,7 +803,7 @@ pub async fn publish_batch_with(
             if queue.is_empty() && inflight.is_empty() && awaiting_auth.is_empty() {
                 break;
             }
-            if start.elapsed() >= budget {
+            if last_progress.elapsed() >= stall_after(gap) || start.elapsed() >= hard_cap {
                 break;
             }
 
@@ -738,7 +812,7 @@ pub async fn publish_batch_with(
             let wait = if can_send {
                 pause_until
                     .saturating_duration_since(now)
-                    .max(PUBLISH_GAP.saturating_sub(last_send.map_or(PUBLISH_GAP, |t| t.elapsed())))
+                    .max(gap.saturating_sub(last_send.map_or(gap, |t| t.elapsed())))
                     .max(Duration::from_millis(5))
                     .min(PUBLISH_IDLE)
             } else {
@@ -751,6 +825,14 @@ pub async fn publish_batch_with(
                     let Some(idx) = inflight.remove(&id) else { continue };
                     ever_ok = true;
                     if accepted {
+                        last_progress = Instant::now();
+                        streak += 1;
+                        if streak >= PUBLISH_SPEEDUP_STREAK && gap > PUBLISH_GAP {
+                            gap = (gap * 3 / 4).max(PUBLISH_GAP);
+                            streak = 0;
+                            remember_gap(relay_url, gap);
+                            on_event(PublishEvent::Pace { gap, rate_limited: false });
+                        }
                         let r = PublishResult::ok(relay_url, id, (!message.is_empty()).then_some(message), conn.authed);
                         finish(&mut results, idx, r);
                         continue;
@@ -759,10 +841,17 @@ pub async fn publish_batch_with(
                         let tries = rate_tries.entry(idx).or_insert(0);
                         *tries += 1;
                         if *tries <= PUBLISH_RATE_RETRIES {
-                            let pause = Duration::from_secs(1u64 << (*tries - 1));
-                            debug!("{relay_url} rate-limited ({message}) — retrying in {}s", pause.as_secs());
-                            pause_until = pause_until.max(Instant::now() + pause);
-                            queue.push_back(idx);
+                            // Expected, not an error: slow the whole batch
+                            // down, breathe, and put the event back in line.
+                            streak = 0;
+                            if gap < PUBLISH_MAX_GAP {
+                                gap = (gap * 2).min(PUBLISH_MAX_GAP);
+                                remember_gap(relay_url, gap);
+                                on_event(PublishEvent::Pace { gap, rate_limited: true });
+                            }
+                            debug!("{relay_url} rate-limited ({message}) — pace now {}", rate_label(gap));
+                            pause_until = pause_until.max(Instant::now() + gap.max(Duration::from_secs(1)));
+                            queue.push_front(idx);
                             continue;
                         }
                         let r = PublishResult::failed(relay_url, id, message, None, conn.authed);
@@ -899,14 +988,18 @@ pub async fn publish_batch_with(
             continue 'conn;
         }
 
-        // Out of budget with events still unanswered.
+        // Stalled with events still unanswered.
         for (id, idx) in inflight.drain() {
             let r = PublishResult::unconfirmed(relay_url, id, conn.authed);
             finish(&mut results, idx, r);
         }
         conn.close().await;
         if !queue.is_empty() {
-            last_error = Some(format!("gave up after {}s", budget.as_secs()));
+            last_error = Some(format!(
+                "stalled — nothing accepted for {}s (pace {})",
+                last_progress.elapsed().as_secs(),
+                rate_label(gap)
+            ));
             break;
         }
     }
@@ -1034,8 +1127,10 @@ where
             let auth = auth.clone();
             let tx = tx.clone();
             async move {
-                let cb = move |r: &PublishResult| {
-                    let _ = tx.send((ri, r.success && !r.unconfirmed));
+                let cb = move |e: PublishEvent<'_>| {
+                    if let PublishEvent::Result(r) = e {
+                        let _ = tx.send((ri, r.success && !r.unconfirmed));
+                    }
                 };
                 let results = publish_batch_with(&relay_url, &events, &auth, &cb).await;
                 (ri, results)
@@ -1597,8 +1692,10 @@ mod tests {
         .await;
         let events: Vec<String> = (100..125).map(|n| fake_event(n).to_string()).collect();
         let progress = std::sync::atomic::AtomicUsize::new(0);
-        let results = publish_batch_with(&url, &events, &RelayAuth::none(), &|_| {
-            progress.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let results = publish_batch_with(&url, &events, &RelayAuth::none(), &|e| {
+            if let PublishEvent::Result(_) = e {
+                progress.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            }
         })
         .await;
         assert_eq!(results.len(), 25);
@@ -1620,6 +1717,38 @@ mod tests {
         .await;
         let r = publish_event(&url, &fake_event(140).to_string(), &RelayAuth::none()).await;
         assert!(r.success && !r.unconfirmed, "{:?}", r.message);
+    }
+
+    #[tokio::test]
+    async fn publish_batch_slows_down_for_a_rate_limiting_relay_and_remembers() {
+        // Accepts at most one event per 250 ms; anything faster is refused.
+        let url = serve_one(|mut ws| async move {
+            let mut last_ok: Option<Instant> = None;
+            let mut accepted = 0;
+            while accepted < 15 {
+                let f = recv(&mut ws).await;
+                let id = f[1]["id"].clone();
+                if last_ok.map_or(true, |t| t.elapsed() >= Duration::from_millis(250)) {
+                    last_ok = Some(Instant::now());
+                    accepted += 1;
+                    send(&mut ws, json!(["OK", id, true, ""])).await;
+                } else {
+                    send(&mut ws, json!(["OK", id, false, "rate-limited: slow down"])).await;
+                }
+            }
+        })
+        .await;
+        let paces = std::sync::Mutex::new(Vec::new());
+        let events: Vec<String> = (300..315).map(|n| fake_event(n).to_string()).collect();
+        let results = publish_batch_with(&url, &events, &RelayAuth::none(), &|e| {
+            if let PublishEvent::Pace { gap, rate_limited: true } = e {
+                paces.lock().unwrap().push(gap);
+            }
+        })
+        .await;
+        assert!(results.iter().all(|r| r.success && !r.unconfirmed), "{:?}", results.iter().map(|r| &r.message).collect::<Vec<_>>());
+        assert!(!paces.lock().unwrap().is_empty(), "the batch should have slowed down");
+        assert!(learned_gap(&url) > PUBLISH_GAP, "the slower pace is remembered for this relay");
     }
 
     #[tokio::test]

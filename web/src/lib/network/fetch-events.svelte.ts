@@ -58,6 +58,8 @@ let pendingReplace = false;
 const opToasts = new Map<string, number>();
 // Determinate totals + op kind, for the progress bar and the completion line.
 const opTotals = new Map<string, number>();
+// Last progress label per op — a publish's final one says what's missing.
+const opLabels = new Map<string, string>();
 // Intents that went to the confirm modal instead of opening a toast. Once
 // approved, the op's first progress/relay/completion event opens its toast
 // from here — without this a confirmed operation reported nothing.
@@ -154,12 +156,15 @@ function handleEvent(ev: FetchEvent) {
 		case 'progress': {
 			const id = opToasts.get(ev.operation_id);
 			if (id === undefined) break;
+			// Every sign of life keeps the toast up — a paced, rate-limited
+			// broadcast runs far longer than the toast's own lifetime.
+			opLabels.set(ev.operation_id, ev.label);
 			if (ev.total != null && ev.total > 0) {
 				// Determinate: a bar, the label carries its own counts.
 				opTotals.set(ev.operation_id, ev.total);
-				app.updateToast(id, { message: ev.label, progress: { done: ev.done, total: ev.total } });
+				app.updateToast(id, { message: ev.label, progress: { done: ev.done, total: ev.total } }, 180_000);
 			} else {
-				app.updateToast(id, { message: ev.label });
+				app.updateToast(id, { message: ev.label }, 180_000);
 			}
 			break;
 		}
@@ -176,16 +181,17 @@ function handleEvent(ev: FetchEvent) {
 				if (opModes.get(ev.operation_id) === 'publish' && total) {
 					// A verified publish: confirmed (event, relay) pairs of all.
 					const all = n === total;
+					const last = opLabels.get(ev.operation_id);
 					app.updateToast(
 						id,
 						{
 							message: all
 								? `Done — all ${total} confirmed on the relays`
-								: `Done — ${n}/${total} confirmed on the relays · expand for the rest`,
+								: `Done — ${last ?? `${n}/${total} confirmed on the relays`}`,
 							kind: all ? 'success' : 'error',
 							progress: { done: n, total }
 						},
-						all ? 4000 : 12000
+						all ? 5000 : 60_000
 					);
 				} else {
 					app.updateToast(
@@ -197,6 +203,7 @@ function handleEvent(ev: FetchEvent) {
 				opToasts.delete(ev.operation_id);
 				opTotals.delete(ev.operation_id);
 				opModes.delete(ev.operation_id);
+				opLabels.delete(ev.operation_id);
 			}
 			break;
 		}

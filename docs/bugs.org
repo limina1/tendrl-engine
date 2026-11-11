@@ -398,6 +398,17 @@ Fix (=src/relay.rs=, =src/api.rs::publish_and_verify=, web toast):
 Note: buzz also requires AUTH to *read* — a client that doesn't AUTH (or
 isn't a member) sees none of it.
 
+Follow-up (same day): at 10/s buzz still turned away ~half (249/468), the
+2-minute toast vanished mid-broadcast, and a re-broadcast re-sent all 468.
+Now rate limits are *expected*: each =rate-limited:= halves the pace (down
+to 1 per 10 s) and requeues; 20 clean accepts speed it back up; the pace
+a relay tolerated is remembered for the session (=relay::learned_gap=); a
+batch stops only after 2 min with nothing accepted, not after a fixed
+total. =publish_and_verify= reads back what each relay already has first
+and sends only the missing events. The toast stays up while progress
+arrives, shows the pace ("rate-limited, pacing 1/s"), and ends with
+"N/M confirmed · K missing (reason) — broadcast again to send only those".
+
 * OPEN — relay working-set UX: no removal from confirm modals; no NIP-65 seeding (UPSTREAM: tendrl-web)
 :PROPERTIES:
 :found: 2026-08-10 (Android device pass, feat/mobile-shell)
