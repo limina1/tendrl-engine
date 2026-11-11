@@ -1,3 +1,7 @@
+## v0.20.1 — 2026-11-11
+
+- fix(highlighters): a style needs no label — the label is a class, the style is a look
+
 ## v0.20.0 — 2026-11-11
 
 - fix(publish): expect rate limits — adaptive per-relay pace, send only what's missing, toast that lasts
