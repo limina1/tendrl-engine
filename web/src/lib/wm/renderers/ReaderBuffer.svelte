@@ -1,4 +1,5 @@
 <script lang="ts">
+	import RefreshIcon from '$lib/components/RefreshIcon.svelte';
 	import { tick, untrack } from 'svelte';
 	import * as api from '$lib/api';
 	import { getAppState } from '$lib/state.svelte';
@@ -2562,11 +2563,10 @@
 					{#if publication?.addr.kind === 30040}
 						<button
 							class="title-fetch"
-							class:spin={backfillingAll}
 							onclick={backfillAll}
 							disabled={backfillingAll}
 							title="Fetch this publication's index + backfill all missing sections from relays"
-						>⟳ fetch from relays</button>
+						><RefreshIcon spinning={backfillingAll} /> fetch from relays</button>
 					{/if}
 					<button
 						class="discussions-refresh"
@@ -3289,9 +3289,8 @@
 		color: var(--base5);
 	}
 
-	/* Fetch-from-relays (radial arrow). Pairs with .spin for the loading
-	 * state — borrows the existing keyframe so a pending fetch reads
-	 * visually the same as a streaming tree node. */
+	/* Fetch-from-relays. The RefreshIcon inside spins while loading — the
+	 * button itself never rotates. */
 	.title-fetch {
 		background: none;
 		border: 1px solid var(--base3);
@@ -3305,6 +3304,10 @@
 		line-height: 20px;
 		cursor: pointer;
 		text-align: center;
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		gap: 5px;
 	}
 	.title-fetch {
 		margin-left: 6px;
@@ -3394,17 +3397,6 @@
 	}
 	.depth-knob__step:disabled { opacity: 0.4; cursor: not-allowed; }
 	.depth-knob__step:hover:not(:disabled) { border-color: var(--id-yours); }
-
-	/* Spinner for pending tree nodes while the loader is streaming. */
-	.spin {
-		display: inline-block;
-		animation: reader-spin 1s linear infinite;
-	}
-	@keyframes reader-spin {
-		to {
-			transform: rotate(360deg);
-		}
-	}
 
 	.hint {
 		padding: 12px;

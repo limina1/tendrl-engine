@@ -10,6 +10,7 @@
 	// hold ':'). Engine owns the tree walk + ranking (`GET /narration/
 	// event`); this component renders and holds view state only. No Svelte
 	// lifecycle hooks (buffer renderers unmount on every switch).
+	import RefreshIcon from '$lib/components/RefreshIcon.svelte';
 	import { untrack } from 'svelte';
 	import * as api from '$lib/api';
 	import * as nar from '$lib/narration.svelte';
@@ -153,7 +154,7 @@
 					<span class="ab-dim" title={book.about}>narrates {book.about.split(':')[0]}:…:{book.about.split(':').slice(2).join(':')} — not local</span>
 				{/if}
 				<button class="ab-btn" onclick={openMenu} title="Open this recording's event menu (tags, A/E/K binding, blossom hints, raw JSON)">menu</button>
-				<button class="ab-btn ab-refresh" class:spinning={fetching} onclick={() => load('fetch_always')} disabled={fetching} title="Fetch missing chapters and newer versions from relays (the relays this came from first, then your general set)">↻</button>
+				<button class="ab-btn ab-refresh" onclick={() => load('fetch_always')} disabled={fetching} aria-label="Fetch from relays" title="Fetch missing chapters and newer versions from relays (the relays this came from first, then your general set)"><RefreshIcon spinning={fetching} /></button>
 			</div>
 		</header>
 
@@ -305,6 +306,12 @@
 		align-items: center;
 		gap: 6px;
 	}
+	.ab-refresh {
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		align-self: stretch;
+	}
 	.ab-btn {
 		background: none;
 		border: 1px solid var(--border);
@@ -326,14 +333,6 @@
 	.ab-btn--main {
 		border-color: var(--id-yours);
 		color: var(--id-yours);
-	}
-	.ab-refresh.spinning {
-		animation: ab-spin 1s linear infinite;
-	}
-	@keyframes ab-spin {
-		to {
-			transform: rotate(360deg);
-		}
 	}
 	.ab-note {
 		font-size: var(--t-xs);

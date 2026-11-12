@@ -1,4 +1,5 @@
 <script lang="ts">
+	import RefreshIcon from '$lib/components/RefreshIcon.svelte';
 	import { untrack } from 'svelte';
 	import * as api from '$lib/api';
 	import type { Profile } from '$lib/api';
@@ -449,12 +450,12 @@
 			{/if}
 			<button
 				class="doc-refresh"
-				class:spinning={refreshing}
 				onclick={handleRefresh}
 				disabled={refreshing}
 				title="Fetch comments and updates from relays"
+				aria-label="Fetch comments and updates from relays"
 			>
-				↻
+				<RefreshIcon spinning={refreshing} size={14} />
 			</button>
 		</header>
 
@@ -645,6 +646,9 @@
 		padding: 4px 8px;
 		border-radius: var(--radius);
 		cursor: pointer;
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
 	}
 	.doc-refresh:hover:not(:disabled) {
 		color: var(--id-yours);
@@ -653,14 +657,6 @@
 	.doc-refresh:disabled {
 		cursor: default;
 		opacity: 0.5;
-	}
-	.doc-refresh.spinning {
-		animation: doc-spin 0.8s linear infinite;
-	}
-	@keyframes doc-spin {
-		to {
-			transform: rotate(360deg);
-		}
 	}
 
 	.author-chip {
