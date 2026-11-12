@@ -52,7 +52,7 @@
 
 pub mod api;
 pub mod attached;
-pub mod backup;
+pub mod broadcast;
 pub mod blossom;
 pub mod bookshelf;
 pub mod bunker;

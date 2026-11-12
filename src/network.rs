@@ -54,8 +54,8 @@ pub fn current_fetch_reason() -> Option<String> {
 ///   reframed: instead of silently suppressing, the engine asks).
 /// - `Local` — the engine never connects to a relay: fetches read the
 ///   local store only, publishing signs and stores locally (the event stays
-///   "local" until broadcast). The way out is an explicit backup broadcast
-///   (`backup.rs`), which permits exactly the relays the user picked.
+///   "local" until broadcast). The way out is an explicit broadcast
+///   (`broadcast.rs`), which permits exactly the relays the user picked.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum NetworkMode {
@@ -652,7 +652,7 @@ impl NetworkActivity {
 
 impl NetworkActivity {
     /// Open a publish operation the user already approved in a dedicated
-    /// picker (the backup broadcast): never gated, in any mode — the
+    /// picker (the broadcast modal): never gated, in any mode — the
     /// picker *is* the confirmation. The caller holds a
     /// [`crate::relay::RelayPermit`] for `relays` while it publishes.
     pub fn begin_publish_operation_approved(
@@ -2124,7 +2124,7 @@ mod tests {
             }
             other => panic!("expected a kept-local intent, got {other:?}"),
         }
-        // The backup's approved publish goes through in local mode.
+        // The broadcast modal's approved publish goes through in local mode.
         let op = net.begin_publish_operation_approved(
             "backup".into(),
             vec!["wss://a".into()],

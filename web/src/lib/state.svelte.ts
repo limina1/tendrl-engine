@@ -92,10 +92,12 @@ export type NarrateModalState = {
 	only?: string[];
 };
 
-/** Back-up-to-relays modal (BackupModal in +layout): the connected set of
- *  the document at `coord`. */
-export type BackupModalState = {
-	coord: string;
+/** Broadcast picker (BroadcastModal in +layout): the connected set around
+ *  a document (`coord`, newest version) or one exact event (`id`). Opened by
+ *  the event menu's Broadcast, the reader's tools sheet, the feed pill. */
+export type BroadcastModalState = {
+	coord?: string;
+	id?: string;
 	title: string | null;
 };
 
@@ -569,7 +571,7 @@ function _createAppState() {
 	let agentServicesModal: AgentServicesModalState | null = $state(null);
 	// Narration (TTS → Blossom → kind 32176): the narrate modal's open payload.
 	let narrateModal: NarrateModalState | null = $state(null);
-	let backupModal: BackupModalState | null = $state(null);
+	let broadcastModal: BroadcastModalState | null = $state(null);
 	/** A user turn the engine refused for lack of balance — resent from the
 	 *  modal once the service is funded or switched. */
 	let pendingAgentMessage: string | null = $state(null);
@@ -2593,33 +2595,6 @@ function _createAppState() {
 
 	function closePublishedDiff() {
 		publishedDiff = null;
-	}
-
-	// Broadcast an already-signed local snapshot to the publish relays — the
-	// explicit step after Sign. No re-signing; flips the feed pill local→relay.
-	async function handleBroadcastPublication(addr: NAddr) {
-		// The engine's activity toast carries the live progress; this one
-		// holds the final summary, so it must outlive a long, paced
-		// broadcast (≈10 events/s per relay, then a read-back).
-		const t = pushToast('Broadcasting… (progress in the activity toast)', 'pending', 30 * 60_000);
-		try {
-			const resp = await api.broadcastPublication(addr.pubkey, addr.d_tag);
-			updateToast(
-				t,
-				{
-					message: `Broadcast ${resp.event_count} event${resp.event_count === 1 ? '' : 's'} — ${resp.successful}/${resp.total} relay acks`,
-					kind: resp.successful > 0 ? 'success' : 'error'
-				},
-				4500
-			);
-			await loadFeed();
-		} catch (e) {
-			updateToast(
-				t,
-				{ message: `Broadcast failed: ${e instanceof Error ? e.message : String(e)}`, kind: 'error' },
-				6000
-			);
-		}
 	}
 
 	// Does a publication of mine with this title already exist? If so the engine
@@ -5568,8 +5543,8 @@ function _createAppState() {
 		set agentServicesModal(v: AgentServicesModalState | null) { agentServicesModal = v; },
 		get narrateModal() { return narrateModal; },
 		set narrateModal(v: NarrateModalState | null) { narrateModal = v; },
-		get backupModal() { return backupModal; },
-		set backupModal(v: BackupModalState | null) { backupModal = v; },
+		get broadcastModal() { return broadcastModal; },
+		set broadcastModal(v: BroadcastModalState | null) { broadcastModal = v; },
 		get pendingAgentMessage() { return pendingAgentMessage; },
 		set pendingAgentMessage(v: string | null) { pendingAgentMessage = v; },
 		refreshProviders,
@@ -5773,7 +5748,6 @@ function _createAppState() {
 		handleLoadDraft,
 		handleDeleteDraft,
 		refreshComposeDrafts,
-		handleBroadcastPublication,
 		handleComposeDiffPublished,
 		closePublishedDiff,
 		get publishedDiff() { return publishedDiff; },

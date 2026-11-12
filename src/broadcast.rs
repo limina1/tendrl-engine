@@ -1,13 +1,18 @@
-//! Backup broadcast — push everything connected to a document to relays.
+//! Broadcast — re-send already-signed events to relays: one event, or
+//! everything connected to it.
 //!
-//! Local mode (`NetworkMode::Local`) signs and stores but never sends.
-//! When the user *wants* a copy on a relay, the reader's backup modal asks
-//! for the whole connected set — the publication tree (index, nested
-//! indexes, sections) and what hangs off it (highlights, comments,
-//! annotations, narrations, merge requests, deletions, replies to any of
-//! those) — and lets them pick events and destination relays. The pick is
-//! the approval: the broadcast runs in any network mode, under a
-//! [`crate::relay::RelayPermit`] for exactly the chosen relays.
+//! Broadcasting never signs anything. It takes events already in the local
+//! store and sends them, as they are, to relays the user picks. The event
+//! menu's Broadcast, the reader's tools sheet and the feed's "broadcast"
+//! pill all open the same picker over [`collect`]'s connected set: for a
+//! publication the tree (index, nested indexes, sections), for any event
+//! itself — and what hangs off either (highlights, comments, annotations,
+//! narrations, merge requests, deletions, replies to any of those).
+//!
+//! It is also local mode's way out (`NetworkMode::Local` signs and stores
+//! but never sends): the pick is the approval, so the broadcast runs in any
+//! network mode, under a [`crate::relay::RelayPermit`] for exactly the
+//! chosen relays.
 //!
 //! Pure: [`role_of`], [`label_of`], [`deleted_targets`], [`relay_list`],
 //! [`for_relay`]. IO: [`collect`] (local store only — never a relay) and
@@ -32,7 +37,7 @@ const ATTACH_HOPS: usize = 2;
 
 /// One event the modal lists.
 #[derive(Debug, Clone, Serialize, PartialEq)]
-pub struct BackupRow {
+pub struct BroadcastRow {
     pub id: String,
     pub kind: u64,
     pub kind_name: Option<String>,
@@ -40,8 +45,9 @@ pub struct BackupRow {
     /// Best kind-0 name held locally.
     pub author: Option<String>,
     pub created_at: u64,
-    /// index · section · highlight · comment · annotation · narration ·
-    /// merge request · deletion · reaction · reference.
+    /// index · section · article · wiki · note · highlight · comment ·
+    /// annotation · narration · merge request · deletion · reaction ·
+    /// bookshelf · reference.
     pub role: String,
     /// Title or a one-line preview.
     pub label: String,
@@ -63,10 +69,10 @@ pub struct RelayChoice {
 }
 
 #[derive(Debug, Clone, Serialize)]
-pub struct BackupPlan {
+pub struct BroadcastPlan {
     pub root: String,
     pub title: Option<String>,
-    pub rows: Vec<BackupRow>,
+    pub rows: Vec<BroadcastRow>,
     pub relays: Vec<RelayChoice>,
     /// The engine is in local mode (the modal says so).
     pub local_mode: bool,
@@ -113,7 +119,9 @@ pub fn role_of(ev: &Value, tree: &HashSet<String>, highlight_ids: &HashSet<Strin
         }
         9802 => "highlight",
         1111 => "comment",
-        1 => "reply",
+        1 => "note",
+        30023 => "article",
+        30817 | 30818 => "wiki",
         5 => "deletion",
         7 => "reaction",
         818 => "merge request",
@@ -230,13 +238,17 @@ pub fn for_relay(ev: &Value) -> Value {
     Value::Object(out)
 }
 
-/// Order for the modal: the tree first in TOC order, then attachments
-/// oldest first (a thread reads top-down).
-fn sort_rows(rows: &mut [BackupRow], toc: &[String]) {
-    let pos = |r: &BackupRow| {
+/// Order for the modal: the root first, the tree in TOC order, then
+/// attachments oldest first (a thread reads top-down).
+fn sort_rows(rows: &mut [BroadcastRow], root_id: &str, toc: &[String]) {
+    let pos = |r: &BroadcastRow| {
+        if r.id == root_id {
+            return 0;
+        }
         r.coord
             .as_ref()
             .and_then(|c| toc.iter().position(|t| t == c))
+            .map(|p| p + 1)
             .unwrap_or(usize::MAX)
     };
     rows.sort_by(|a, b| pos(a).cmp(&pos(b)).then(a.created_at.cmp(&b.created_at)));
@@ -270,17 +282,30 @@ async fn newest_at(engine: &Engine, coord: &str) -> Result<Option<Value>> {
         .max_by_key(|e| e.get("created_at").and_then(Value::as_u64).unwrap_or(0)))
 }
 
-/// Everything local connected to `root` (a coordinate).
-pub async fn collect(engine: &Engine, root: &str) -> Result<BackupPlan> {
-    let root_ev = newest_at(engine, root)
-        .await?
-        .ok_or_else(|| EngineError::NotFound(format!("{root} is not in the local store")))?;
-    let title = first(&root_ev, "title");
+/// What to broadcast around: the newest version at a coordinate, or one
+/// exact event.
+#[derive(Debug, Clone)]
+pub enum Root {
+    Coord(String),
+    Id(String),
+}
 
-    // 1. The tree, breadth-first, in TOC order.
-    let mut toc: Vec<String> = vec![root.to_string()];
+/// Everything local connected to `root`.
+pub async fn collect(engine: &Engine, root: Root) -> Result<BroadcastPlan> {
+    let root_ev = match &root {
+        Root::Coord(c) => newest_at(engine, c).await?,
+        Root::Id(id) => engine.get_by_id(id, FetchPolicy::LocalOnly).await?,
+    }
+    .ok_or_else(|| EngineError::NotFound("that event is not in the local store".into()))?;
+    let root_id = str_of(&root_ev, "id").to_string();
+    let root_label = coord_of(&root_ev).unwrap_or_else(|| root_id.clone());
+    let title =
+        first(&root_ev, "title").or_else(|| Some(label_of(&root_ev)).filter(|l| !l.is_empty()));
+
+    // 1. The tree, breadth-first, in TOC order (a lone event is a tree of one).
+    let mut toc: Vec<String> = coord_of(&root_ev).into_iter().collect();
+    let mut tree: HashSet<String> = toc.iter().cloned().collect();
     let mut tree_events: Vec<Value> = vec![root_ev];
-    let mut tree: HashSet<String> = HashSet::from([root.to_string()]);
     let mut queue: VecDeque<(Value, usize)> = VecDeque::from([(tree_events[0].clone(), 0)]);
     while let Some((node, depth)) = queue.pop_front() {
         if kind_of(&node) != KIND_PUBLICATION_INDEX || depth >= MAX_DEPTH {
@@ -372,12 +397,12 @@ pub async fn collect(engine: &Engine, root: &str) -> Result<BackupPlan> {
         .zip(crate::stats::display_names(engine.ndb(), &keys))
         .collect();
 
-    let mut rows: Vec<BackupRow> = all
+    let mut rows: Vec<BroadcastRow> = all
         .iter()
         .map(|ev| {
             let kind = kind_of(ev);
             let pk = str_of(ev, "pubkey").to_string();
-            BackupRow {
+            BroadcastRow {
                 id: str_of(ev, "id").to_string(),
                 kind,
                 kind_name: u32::try_from(kind)
@@ -395,10 +420,10 @@ pub async fn collect(engine: &Engine, root: &str) -> Result<BackupPlan> {
             }
         })
         .collect();
-    sort_rows(&mut rows, &toc);
+    sort_rows(&mut rows, &root_id, &toc);
 
-    Ok(BackupPlan {
-        root: root.to_string(),
+    Ok(BroadcastPlan {
+        root: root_label,
         title,
         rows,
         relays: relay_list(&engine.publish_relays(), &engine.broadcast_relays()),
@@ -416,15 +441,31 @@ pub mod handlers {
 
     #[derive(Deserialize)]
     pub struct PlanQuery {
-        pub coord: String,
+        pub coord: Option<String>,
+        pub id: Option<String>,
     }
 
-    /// `GET /api/v1/backup/plan?coord=kind:pubkey:d` — the connected set.
+    /// `GET /api/v1/broadcast/plan?coord=kind:pubkey:d | id=<hex>` — the
+    /// connected set around a document (newest version) or one exact event.
     pub async fn plan(
         State(st): State<ChatAppState>,
         Query(q): Query<PlanQuery>,
-    ) -> std::result::Result<Json<BackupPlan>, EngineError> {
-        Ok(Json(collect(&st.engine, q.coord.trim()).await?))
+    ) -> std::result::Result<Json<BroadcastPlan>, EngineError> {
+        let root = match (
+            q.coord.as_deref().map(str::trim),
+            q.id.as_deref().map(str::trim),
+        ) {
+            (Some(c), _) if !c.is_empty() => Root::Coord(c.to_string()),
+            (_, Some(i)) if i.len() == 64 && i.bytes().all(|b| b.is_ascii_hexdigit()) => {
+                Root::Id(i.to_lowercase())
+            }
+            _ => {
+                return Err(EngineError::BadRequest(
+                    "coord or a 64-hex id required".into(),
+                ))
+            }
+        };
+        Ok(Json(collect(&st.engine, root).await?))
     }
 
     #[derive(Deserialize)]
@@ -433,11 +474,11 @@ pub mod handlers {
         pub relays: Vec<String>,
     }
 
-    /// `POST /api/v1/backup/broadcast {ids, relays}` — send the picked
+    /// `POST /api/v1/broadcast/send {ids, relays}` — send the picked
     /// events to the picked relays. Runs in every network mode: the modal
     /// is the approval, and a permit opens the local-mode gate for exactly
     /// these relays while the broadcast runs.
-    pub async fn broadcast(
+    pub async fn send(
         State(st): State<ChatAppState>,
         Json(body): Json<BroadcastBody>,
     ) -> std::result::Result<Json<Value>, EngineError> {
@@ -469,7 +510,7 @@ pub mod handlers {
         let manifest = crate::network::PublishManifest::from_events(events.iter());
         let op = engine.network().begin_publish_operation_approved(
             format!(
-                "Backup — {} event(s) to {} relay(s)",
+                "Broadcast — {} event(s) to {} relay(s)",
                 events.len(),
                 relays.len()
             ),
@@ -612,6 +653,38 @@ mod tests {
         let out = for_relay(&e);
         assert!(out.get("relays").is_none());
         assert_eq!(out["sig"], "s");
+    }
+
+    fn row(id: &str, coord: Option<&str>, at: u64) -> BroadcastRow {
+        BroadcastRow {
+            id: id.into(),
+            kind: 1,
+            kind_name: None,
+            pubkey: "aa".into(),
+            author: None,
+            created_at: at,
+            role: "note".into(),
+            label: String::new(),
+            coord: coord.map(str::to_string),
+            relays: vec![],
+            deleted: false,
+        }
+    }
+
+    #[test]
+    fn the_root_sorts_first_then_the_toc_then_attachments_oldest_first() {
+        // A coordinate-less root (a note) still leads; attachments follow by age.
+        let mut rows = vec![
+            row("c2", None, 30),
+            row("s2", Some("30041:aa:two"), 5),
+            row("root", None, 50),
+            row("c1", None, 10),
+            row("s1", Some("30041:aa:one"), 9),
+        ];
+        let toc = vec!["30041:aa:one".to_string(), "30041:aa:two".to_string()];
+        sort_rows(&mut rows, "root", &toc);
+        let ids: Vec<&str> = rows.iter().map(|r| r.id.as_str()).collect();
+        assert_eq!(ids, ["root", "s1", "s2", "c1", "c2"]);
     }
 
     #[test]

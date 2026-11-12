@@ -1,18 +1,19 @@
 <script lang="ts">
-	// Back up to relays: every event connected to the open document (the
-	// publication tree + highlights, comments, annotations, narrations, …),
-	// listed by the engine from the local store (`GET /backup/plan`). Tick
-	// events — all / none act on what the filters show — pick relays, send.
-	// The pick is the approval: the engine broadcasts in any network mode,
-	// local included, to exactly these relays. Opened from the reader's
-	// tools sheet via `app.backupModal`.
+	// Broadcast: re-send already-signed events — the one the picker was
+	// opened on and everything connected to it (a publication's tree;
+	// highlights, comments, annotations, narrations, …), listed by the engine
+	// from the local store (`GET /broadcast/plan`). Tick events — all / none
+	// act on what the filters show — pick relays, send. Nothing is signed.
+	// The pick is the approval: the engine sends in any network mode, local
+	// included, to exactly these relays. Opened via `app.broadcastModal` from
+	// the event menu (b), the reader's tools sheet and the feed pill.
 	import * as api from '$lib/api';
 	import { getAppState } from '$lib/state.svelte';
 
 	const app = getAppState();
-	const req = $derived(app.backupModal);
+	const req = $derived(app.broadcastModal);
 
-	let plan = $state<api.BackupPlan | null>(null);
+	let plan = $state<api.BroadcastPlan | null>(null);
 	let loadErr = $state<string | null>(null);
 	let picked = $state<Record<string, boolean>>({});
 	let relayOn = $state<Record<string, boolean>>({});
@@ -21,17 +22,17 @@
 	let authorOff = $state<Record<string, boolean>>({});
 	let provOff = $state<Record<string, boolean>>({});
 	let sending = $state(false);
-	let result = $state<api.BackupResult | null>(null);
+	let result = $state<api.BroadcastSendResult | null>(null);
 	let sendErr = $state<string | null>(null);
 
 	const LOCAL = 'local only';
 
 	$effect(() => {
-		const coord = req?.coord;
-		if (!coord) return;
+		const root = req ? { coord: req.coord, id: req.id } : null;
+		if (!root || (!root.coord && !root.id)) return;
 		let live = true;
 		api
-			.getBackupPlan(coord)
+			.getBroadcastPlan(root)
 			.then((p) => {
 				if (!live) return;
 				plan = p;
@@ -39,7 +40,7 @@
 				for (const r of p.rows) sel[r.id] = !r.deleted;
 				picked = sel;
 				const on: Record<string, boolean> = {};
-				for (const r of p.relays) on[r.url] = r.publish;
+				for (const r of p.relays) on[r.url] = r.publish || r.broadcast;
 				relayOn = on;
 			})
 			.catch((e) => {
@@ -50,7 +51,7 @@
 		};
 	});
 
-	function authorKey(r: api.BackupRow): string {
+	function authorKey(r: api.BroadcastRow): string {
 		return r.pubkey;
 	}
 	function authorName(pk: string): string {
@@ -62,7 +63,7 @@
 	}
 
 	type Facet = { key: string; label: string; n: number };
-	function tally(keys: (r: api.BackupRow) => string[], label: (k: string) => string): Facet[] {
+	function tally(keys: (r: api.BroadcastRow) => string[], label: (k: string) => string): Facet[] {
 		const m = new Map<string, number>();
 		for (const r of plan?.rows ?? []) for (const k of keys(r)) m.set(k, (m.get(k) ?? 0) + 1);
 		return [...m.entries()]
@@ -86,7 +87,7 @@
 		)
 	);
 
-	function visibleRow(r: api.BackupRow): boolean {
+	function visibleRow(r: api.BroadcastRow): boolean {
 		if (kindOff[String(r.kind)]) return false;
 		if (authorOff[authorKey(r)]) return false;
 		const prov = r.relays.length ? r.relays : [LOCAL];
@@ -117,14 +118,14 @@
 		sendErr = null;
 		result = null;
 		try {
-			result = await api.backupBroadcast(sendIds, relays);
+			result = await api.broadcastSelected(sendIds, relays);
 			app.pushToast(
-				`Backed up ${result.landed} of ${result.events} event(s)`,
+				`Broadcast: ${result.landed} of ${result.events} event(s) landed`,
 				result.landed === result.events ? 'success' : 'info',
 				3500
 			);
 			// Provenance changed — re-read so the relay column is current.
-			if (req) plan = await api.getBackupPlan(req.coord);
+			if (req) plan = await api.getBroadcastPlan({ coord: req.coord, id: req.id });
 		} catch (e) {
 			sendErr = e instanceof Error ? e.message : String(e);
 		} finally {
@@ -134,7 +135,7 @@
 
 	function close() {
 		if (sending) return;
-		app.backupModal = null;
+		app.broadcastModal = null;
 	}
 	function onKey(e: KeyboardEvent) {
 		if (e.key === 'Escape') close();
@@ -153,12 +154,12 @@
 			onclick={(e) => e.stopPropagation()}
 			role="dialog"
 			aria-modal="true"
-			aria-label="Back up to relays"
+			aria-label="Broadcast"
 			tabindex="-1"
 		>
 			<header class="bk-head">
-				<span class="bk-title">back up to relays</span>
-				<span class="bk-doc" title={req.coord}>{req.title ?? req.coord}</span>
+				<span class="bk-title">broadcast</span>
+				<span class="bk-doc" title={plan?.root ?? req.coord ?? req.id}>{req.title ?? plan?.title ?? req.coord ?? req.id}</span>
 				<button class="bk-x" onclick={close} aria-label="Close" disabled={sending}>×</button>
 			</header>
 

@@ -402,67 +402,17 @@
 		onclose();
 	}
 
-	// Per-event broadcast. Explicit, user-initiated — pushes the signed
-	// event to the configured broadcast set (nostr.land etc.) without
-	// going through the auto-publish path. Aligns with [[project-
-	// publishing-philosophy]]: deliberate, per-event opt-in.
-	//
-	// SearchResults arrive with truncated `preview` and no `sig`, so we
-	// always re-fetch the full event by id before broadcasting.
-	let broadcasting = $state(false);
-	async function onBroadcastAction() {
-		if (broadcasting) return;
-		broadcasting = true;
-		try {
-			const [fullResp, cfg] = await Promise.all([
-				api.getEvent(n.id),
-				api.getRelayConfig()
-			]);
-			const fullEvent = fullResp.event;
-			if (!fullEvent || typeof fullEvent !== 'object') {
-				throw new Error('Engine returned no event JSON');
-			}
-			const targets = cfg.broadcast?.urls ?? [];
-			if (targets.length === 0) {
-				app.pushToast(
-					'No broadcast relays configured. Toggle some as "broadcast" in the relays buffer first.',
-					'error',
-					5000
-				);
-				return;
-			}
-			// A 30040 is a publication index: broadcast the *whole* structure
-			// — index + every signed 30041 section, recursing through nested
-			// indices — not the bare index event. The engine assembles the tree
-			// and raises a structure-aware intent. Sections/nested aren't
-			// addressable here, so the single-event path can't cover them.
-			if (n.kind === 30040 && dTag) {
-				const resp = await api.broadcastPublication(n.pubkey, dTag, targets);
-				app.pushToast(
-					`Broadcast ${resp.event_count} event${resp.event_count === 1 ? '' : 's'} — ${resp.successful}/${resp.total} relay ack${resp.total === 1 ? '' : 's'}`,
-					resp.successful > 0 ? 'success' : 'error',
-					4000
-				);
-				return;
-			}
-			const resp = await api.broadcastEvent({
-				event: fullEvent,
-				relays: targets
-			});
-			app.pushToast(
-				`Broadcast to ${resp.successful}/${resp.total} relay${resp.total === 1 ? '' : 's'}`,
-				resp.successful > 0 ? 'success' : 'error',
-				4000
-			);
-		} catch (e) {
-			app.pushToast(
-				`Broadcast failed: ${e instanceof Error ? e.message : String(e)}`,
-				'error',
-				5000
-			);
-		} finally {
-			broadcasting = false;
-		}
+	// Broadcast: re-send this already-signed event — and, if wanted, what is
+	// connected to it (a publication's tree, its highlights / comments / …) —
+	// to relays picked in the broadcast modal. Nothing is signed. Explicit,
+	// per-event opt-in ([[project-publishing-philosophy]]); works in local
+	// mode. The modal takes over, so the menu closes (one dialog at a time).
+	function onBroadcastAction() {
+		app.broadcastModal = {
+			...(dTag ? { coord: `${n.kind}:${n.pubkey}:${dTag}` } : { id: n.id }),
+			title: null
+		};
+		onclose();
 	}
 
 	// ===== Discussion actions: comment on / delete this event =====
@@ -1226,11 +1176,10 @@
 				<button
 					class="evm__action"
 					onclick={onBroadcastAction}
-					disabled={broadcasting}
-					title="Push this event to your configured broadcast relays (aggregators like nostr.land). Deliberate per-event push — never auto-fires."
+					title="Broadcast — re-send this signed event, and anything connected to it you tick, to relays you pick. Nothing is re-signed; works in local mode."
 				>
 					<span class="evm__key">b</span>
-					<span class="evm__action-label">{broadcasting ? 'Broadcasting…' : 'Broadcast'}</span>
+					<span class="evm__action-label">Broadcast…</span>
 				</button>
 				<button
 					class="evm__action"

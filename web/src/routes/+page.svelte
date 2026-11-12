@@ -1223,7 +1223,7 @@
 		const active = (app.networkStatus?.active_fetches ?? 0) > 0;
 		if (mode === 'local') {
 			// Local = neutral: nothing reaches a relay, so there is nothing
-			// in flight to show — publishing stores locally until a backup.
+			// in flight to show — publishing stores locally until you broadcast.
 			return { label: 'local', pillClass: 'pill--localmode', dotClass: 'dot--local' };
 		}
 		if (mode === 'confirm') {

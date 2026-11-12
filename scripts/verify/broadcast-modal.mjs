@@ -1,13 +1,13 @@
 #!/usr/bin/env node
-// Backup modal GUI check (feat/local-mode): engine in local mode with the
-// docs/commands.org "Local mode + backup" fixture ingested; chromium on :9333.
+// Broadcast modal GUI check (feat/local-mode): engine in local mode with the
+// docs/commands.org "Local mode + broadcast" fixture ingested; chromium on :9333.
 // Usage: node scripts/verify/backup-modal.mjs [--port 3131] [--out DIR]
 import fs from 'node:fs';
 import path from 'node:path';
 const argv = process.argv.slice(2);
 const opt = (n, d) => { const i = argv.indexOf(`--${n}`); return i >= 0 && i + 1 < argv.length ? argv[i + 1] : d; };
 const PORT = Number(opt('port', process.env.PORT ?? '3131')); const CDP = Number(opt('cdp', '9333'));
-const APP = `http://localhost:${PORT}/`; const SEARCH = opt('search', process.env.SEARCH ?? 'k:30040'); const OUT = opt('out', '/tmp/backup-shots'); fs.mkdirSync(OUT, { recursive: true });
+const APP = `http://localhost:${PORT}/`; const SEARCH = opt('search', process.env.SEARCH ?? 'k:30040'); const OUT = opt('out', '/tmp/broadcast-shots'); fs.mkdirSync(OUT, { recursive: true });
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 let page = null; for (let i = 0; i < 40 && !page; i++) { try { const tabs = await (await fetch(`http://localhost:${CDP}/json`)).json(); page = tabs.find((t) => t.type === 'page'); } catch {} if (!page) await sleep(250); }
 if (!page) { console.error('FAIL cdp'); process.exit(2); }
@@ -36,7 +36,7 @@ await waitFor('.result-title'); await clickJs(`document.querySelector('.result-t
 await clickJs(byText('[role=dialog] button', /Read publication/)); await sleep(3000);
 check('reader-open', await waitFor('.pane__body--reader'));
 await clickJs(`document.querySelector('button[title^="Tools"]')`); await sleep(700);
-await clickJs(byText('button', /back up to relays/)); 
+await clickJs(byText('button', /⇡ broadcast/)); 
 check('modal-open', await waitFor('.bk-modal .bk-list li', 30, 300));
 await sleep(500);
 const rows = await count('.bk-list .bk-row');
@@ -58,6 +58,11 @@ await clickJs(byText('.bk-bar button', /^all$/)); await sleep(200);
 const go = await ev(`document.querySelector('.bk-go').textContent.trim()`);
 check('send-label', /broadcast 6 events → 3 relays/.test(go), go);
 await shot('filtered');
+// The event menu's Broadcast… opens the same picker (menu closes first).
+await clickJs(`document.querySelector('.bk-x')`); await sleep(400);
+await clickJs(`document.querySelector('button[title^="Open this publication"]')`); await sleep(1500);
+await clickJs(byText('[role=dialog] button', /Broadcast…/)); await sleep(300);
+check('menu-opens-picker', (await waitFor('.bk-modal .bk-list li', 30, 300)) && (await count('.evm__action')) === 0, `${await count('.bk-list .bk-row')} rows`);
 ws.close();
 const failed = results.filter((r) => !r.ok).length;
 console.log(`\n${results.length - failed}/${results.length} passed · screenshots in ${OUT}`);

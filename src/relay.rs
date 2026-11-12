@@ -103,7 +103,7 @@ type WsStream =
 // this is the floor under it: every relay socket goes through
 // `connect_bounded`, so a gate here holds even for a path that forgot to ask.
 // The one deliberate way through is a [`RelayPermit`] — the user picked
-// these relays for this operation (the backup broadcast) — and the NIP-46
+// these relays for this operation (the broadcast modal) — and the NIP-46
 // signer transport ([`RelayConn::connect_signer`]), which carries sign
 // requests, never the user's events.
 

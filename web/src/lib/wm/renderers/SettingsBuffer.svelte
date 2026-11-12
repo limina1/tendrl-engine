@@ -1466,7 +1466,7 @@
 		<p class="settings-hint">
 			<strong>auto</strong>: relay fetches run without confirmation.<br />
 			<strong>confirm</strong>: every relay fetch raises a confirm modal — useful when bandwidth, privacy, or rate-limits matter.<br />
-			<strong>local</strong>: never connects to a relay. Publishing signs and stores locally; to back up, open a publication and use <em>Back up to relays</em>.
+			<strong>local</strong>: never connects to a relay. Publishing signs and stores locally; to send something, use <em>Broadcast</em> (event menu <kbd>b</kbd>, or the reader's tools).
 		</p>
 
 		<div class="settings-row">

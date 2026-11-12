@@ -2625,10 +2625,11 @@ your own command line contains kills the shell — select PIDs with a
 =[t]endrl= bracket pattern.
 
 
-* Local mode + backup broadcast (branch =feat/local-mode=)
+* Local mode + broadcast (branch =feat/local-mode=)
 Local mode: no relay socket opens (=relay.rs= gate; the NIP-46 signer is
 exempt); publishing stores locally. The reader's tools sheet → /⇡ back up
-to relays/ lists the connected set and broadcasts a pick under a permit.
+to relays/ → now /⇡ broadcast/ (also event menu =b=, feed pill) lists the
+connected set and re-sends a pick under a permit — nothing is signed.
 
 #+begin_src sh
 # isolated engine, test relay only (theforest refuses unknown keys — a
@@ -2651,14 +2652,15 @@ printf '%s\n' "$s1" "$s2" "$idx" "$h1" "$h2" "$del" "$cm" "$an" > /tmp/lm/fixtur
 curl -s -XPOST localhost:3131/api/v1/ingest -H 'content-type: application/x-ndjson' --data-binary @/tmp/lm/fixture.jsonl
 
 # plan: 8 rows, the h2 highlight deleted:true, nothing on a relay
-curl -s "localhost:3131/api/v1/backup/plan?coord=30040:$PA:book" | jq -c '[.rows[]|{role,deleted,relays}]'
+curl -s "localhost:3131/api/v1/broadcast/plan?coord=30040:$PA:book" | jq -c '[.rows[]|{role,deleted,relays}]'
+curl -s "localhost:3131/api/v1/broadcast/plan?id=<comment id>" | jq '.rows|length'   # any event works
 # local mode holds: no relay fetch recorded, a plain broadcast is "Kept local"
 curl -s localhost:3131/api/v1/network/status | jq '.recent|length'      # 0
-# backup to the test relay
-IDS=$(curl -s "localhost:3131/api/v1/backup/plan?coord=30040:$PA:book" | jq -c '[.rows[]|select(.deleted|not)|.id]')
-curl -s -XPOST localhost:3131/api/v1/backup/broadcast -H 'content-type: application/json' \
+# broadcast to the test relay
+IDS=$(curl -s "localhost:3131/api/v1/broadcast/plan?coord=30040:$PA:book" | jq -c '[.rows[]|select(.deleted|not)|.id]')
+curl -s -XPOST localhost:3131/api/v1/broadcast/send -H 'content-type: application/json' \
   -d "{\"ids\":$IDS,\"relays\":[\"wss://theforest.nostr1.com\"]}" | jq -c .
 
 # GUI (chromium --headless=new --remote-debugging-port=9333 --user-data-dir=/tmp/lm/prof about:blank)
-node scripts/verify/backup-modal.mjs --port 3131     # 10 checks
+node scripts/verify/broadcast-modal.mjs --port 3131  # 11 checks
 #+end_src

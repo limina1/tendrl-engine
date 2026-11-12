@@ -25,7 +25,7 @@
 	import MergeRequestsModal from '$lib/components/MergeRequestsModal.svelte';
 	import AgentServicesModal from '$lib/components/AgentServicesModal.svelte';
 	import NarrateModal from '$lib/components/NarrateModal.svelte';
-	import BackupModal from '$lib/components/BackupModal.svelte';
+	import BroadcastModal from '$lib/components/BroadcastModal.svelte';
 	import NarrationPlayer from '$lib/components/NarrationPlayer.svelte';
 	// fetch-events self-starts the SSE subscription at module scope; we
 	// only need confirmState here to render the modal.
@@ -248,8 +248,8 @@
 {#if app.narrateModal}
 	<NarrateModal />
 {/if}
-{#if app.backupModal}
-	<BackupModal />
+{#if app.broadcastModal}
+	<BroadcastModal />
 {/if}
 
 <!-- The one narration player: renders only while a playlist is loaded,
