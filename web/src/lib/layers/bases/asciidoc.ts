@@ -219,6 +219,19 @@ function spans(text: string): StyleSpan[] {
 	let pendingAttrRaw = ''; // its full text (for `[options="header"]` / `[%header]`)
 	let tableHeaderDone = false;
 	let tableHeaderByAttr = false;
+	// Rows for the table grid: AsciiDoc cells may sit one per line, so a
+	// row is `tableCols` cells — from `[cols=…]`, else the first row line.
+	let tableCols = 0;
+	let tablePipes: number[] = [];
+	const emitRows = (closeAt: number) => {
+		if (tableCols <= 0) return;
+		for (let k = 0; k < tablePipes.length; k += tableCols) {
+			const from = tablePipes[k];
+			let to = k + tableCols < tablePipes.length ? tablePipes[k + tableCols] : closeAt;
+			while (to > from && /\s/.test(text[to - 1])) to--;
+			if (to > from) push(out, from, to, 'tr');
+		}
+	};
 	// Soft line breaks: a newline inside a paragraph (or after a wrapped
 	// list item / admonition) is a space in AsciiDoc, not a line break —
 	// unless the line ends with the ` +` hard break. The newline before a
@@ -246,6 +259,7 @@ function spans(text: string): StyleSpan[] {
 			if (top && top.delim === delim) {
 				push(out, line.start, line.end, 'mark');
 				if (top.kind !== 'container') push(out, top.start, line.end, top.kind);
+				if (top.kind === 'table') emitRows(line.start);
 				stack.pop();
 				pendingAttr = '';
 				continue;
@@ -269,6 +283,12 @@ function spans(text: string): StyleSpan[] {
 				stack.push({ delim, kind, start: line.start });
 				tableHeaderDone = false;
 				tableHeaderByAttr = /header/.test(pendingAttrRaw);
+				tablePipes = [];
+				{
+					const c = /cols="?([^"\]]+)/.exec(pendingAttrRaw)?.[1]?.trim();
+					const mult = c && /^(\d+)\*/.exec(c);
+					tableCols = mult ? Number(mult[1]) : c ? c.split(/[,;]/).length : 0;
+				}
 				pendingAttr = '';
 				pendingAttrRaw = '';
 				continue;
@@ -289,7 +309,14 @@ function spans(text: string): StyleSpan[] {
 				if (blankNext || tableHeaderByAttr) push(out, line.start, line.end, 'th');
 				tableHeaderDone = true;
 			}
-			for (let i = 0; i < t.length; i++) if (t[i] === '|') push(out, line.start + i, line.start + i + 1, 'mark');
+			let rowPipes = 0;
+			for (let i = 0; i < t.length; i++)
+				if (t[i] === '|') {
+					push(out, line.start + i, line.start + i + 1, 'mark');
+					tablePipes.push(line.start + i);
+					rowPipes++;
+				}
+			if (tableCols === 0 && rowPipes > 0) tableCols = rowPipes;
 			scanInline(t, line.start, out);
 			continue;
 		}

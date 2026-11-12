@@ -40,6 +40,9 @@ const CLASS: Record<string, string> = {
 	Strikethrough: 'strike',
 	Table: 'table',
 	TableHeader: 'th',
+	// Rows are structure for the table grid (lib/layers/table-layout.ts);
+	// the header row is `th` alone.
+	TableRow: 'tr',
 	// Sigils — dimmed, never removed.
 	HeaderMark: 'mark',
 	QuoteMark: 'mark',

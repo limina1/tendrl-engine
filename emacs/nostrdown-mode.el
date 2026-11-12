@@ -118,6 +118,18 @@ below the token, using the transcluded content the engine returned."
   "Maximum content lines shown in an inline embed card."
   :type 'integer)
 
+(defcustom nostrdown-embed-fill-column 72
+  "Column the content of an inline embed card is filled to, so a long
+source paragraph never runs past the window.  nil leaves the transcluded
+lines as they are."
+  :type '(choice integer (const nil)))
+
+(defcustom nostrdown-quote-block-threshold 100
+  "A quote excerpt longer than this many characters is rendered as a block
+quote: on its own lines behind a `┃' bar, wrapped under `visual-line-mode',
+with the source title set under it.  nil keeps every quote inline."
+  :type '(choice integer (const nil)))
+
 (defcustom nostrdown-modes '(org-mode markdown-mode gfm-mode adoc-mode)
   "Major modes in which `global-nostrdown-mode' turns the mode on."
   :type '(repeat symbol))
@@ -146,6 +158,10 @@ below the token, using the transcluded content the engine returned."
   "Face for a reference nothing matched.")
 (defface nostrdown-pending-face '((t :inherit shadow :underline t))
   "Face for a valid entity that is not in the local db yet.")
+(defface nostrdown-quote-face '((t :slant italic))
+  "Face added to a block-rendered quote excerpt.")
+(defface nostrdown-quote-bar-face '((t :inherit shadow))
+  "Face of the `┃' bar and attribution line of a block quote.")
 (defface nostrdown-embed-card-face '((t :inherit (font-lock-doc-face fixed-pitch)))
   "Face for the inline transclusion card.")
 
@@ -411,6 +427,19 @@ is shown as that label instead of the raw text."
             (funcall mk (match-end 2) end)))))
     (overlay-put ov 'nostrdown-children children)))
 
+(defun nostrdown--fill-lines (text)
+  "TEXT's lines, filled to `nostrdown-embed-fill-column' when that is set."
+  (split-string
+   (if nostrdown-embed-fill-column
+       (with-temp-buffer
+         (insert text)
+         (let ((fill-column nostrdown-embed-fill-column)
+               (sentence-end-double-space nil))
+           (fill-region (point-min) (point-max)))
+         (buffer-string))
+     text)
+   "\n"))
+
 (defun nostrdown--embed-card (ref)
   "An `after-string' card for an embed / quote / slot REF."
   (let* ((title (or (alist-get 'title ref) (alist-get 'label ref) ""))
@@ -418,7 +447,7 @@ is shown as that label instead of the raw text."
                      (when-let* ((pk (alist-get 'author_pubkey ref)))
                        (concat (substring pk 0 8) "…"))))
          (content (alist-get 'content ref))
-         (lines (and content (split-string (string-trim content) "\n")))
+         (lines (and content (nostrdown--fill-lines (string-trim content))))
          (shown (and lines (seq-take lines nostrdown-embed-max-lines)))
          (body (cond
                 (shown (mapconcat (lambda (l) (concat "  ┃ " l)) shown "\n"))
@@ -470,6 +499,41 @@ Used for `help-echo' and `nostrdown-describe-at-point'."
          (ref (and ov (overlay-get ov 'nostrdown-ref))))
     (and ref (nostrdown--describe ref))))
 
+(defun nostrdown--token-display (ov)
+  "The |display text of the `{{ }}' token under OV, or nil."
+  (save-excursion
+    (goto-char (overlay-start ov))
+    (and (looking-at nostrdown-token-regexp)
+         (= (match-end 0) (overlay-end ov))
+         (match-beginning 4)
+         (string-trim (match-string-no-properties 4)))))
+
+(defun nostrdown--quote-block-p (ov ref)
+  "Non-nil when the quote token under OV is long enough for a block."
+  (and nostrdown-quote-block-threshold
+       (equal (alist-get 'kind ref) "quote")
+       (when-let* ((excerpt (nostrdown--token-display ov)))
+         (> (length excerpt) nostrdown-quote-block-threshold))))
+
+(defun nostrdown--block-quote (ov ref)
+  "Render OV, a quote token, as a block quote; return its trailing string.
+The excerpt is moved onto its own screen lines behind a `┃' bar and every
+wrapped line keeps the bar (`wrap-prefix'), so it wraps inside the window
+under `visual-line-mode'.  In `markup' prettify the source title is set
+under it; in `label' prettify the label already carries it."
+  (let* ((bar (propertize "  ┃ " 'face 'nostrdown-quote-bar-face))
+         (beg (overlay-start ov)) (end (overlay-end ov))
+         (at-bol (save-excursion (goto-char beg) (skip-chars-backward " \t") (bolp)))
+         (at-eol (save-excursion (goto-char end) (skip-chars-forward " \t") (eolp)))
+         (attribution (and (eq nostrdown-prettify 'markup)
+                           (when-let* ((title (alist-get 'title ref)))
+                             (propertize (concat "\n  ┗ " title)
+                                         'face 'nostrdown-quote-bar-face)))))
+    (overlay-put ov 'face (list 'nostrdown-quote-face (nostrdown--state-face ref)))
+    (overlay-put ov 'wrap-prefix bar)
+    (overlay-put ov 'before-string (concat (if at-bol "" "\n") bar))
+    (concat (or attribution "") (if at-eol "" "\n"))))
+
 (defun nostrdown--decorate (ov ref)
   "Paint overlay OV according to resolved REF."
   (overlay-put ov 'nostrdown t)
@@ -488,10 +552,15 @@ Used for `help-echo' and `nostrdown-describe-at-point'."
               (overlay-put ov 'nostrdown-display l)
               (overlay-put ov 'display l)))
     ('markup (nostrdown--hide-markup ov)))
-  (overlay-put ov 'after-string
-               (and nostrdown-inline-embeds
-                    (member (alist-get 'kind ref) '("embed" "quote" "slot"))
-                    (nostrdown--embed-card ref))))
+  (overlay-put ov 'before-string nil)
+  (overlay-put ov 'wrap-prefix nil)
+  (let ((block (and nostrdown-prettify (nostrdown--quote-block-p ov ref)
+                    (nostrdown--block-quote ov ref)))
+        (card (and nostrdown-inline-embeds
+                   (member (alist-get 'kind ref) '("embed" "quote" "slot"))
+                   (nostrdown--embed-card ref))))
+    (overlay-put ov 'after-string
+                 (and (or block card) (concat (or block "") (or card ""))))))
 
 (defun nostrdown--apply-spans (spans)
   "Paint SPANS, a list of (BEG END REF), replacing the previous overlays."

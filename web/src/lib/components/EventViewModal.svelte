@@ -5,6 +5,7 @@
 </script>
 
 <script lang="ts">
+	import RefreshIcon from '$lib/components/RefreshIcon.svelte';
 	import type { NostrEvent, SearchResult, EditorInsertMode } from '$lib/types';
 	import ProfileName from './ProfileName.svelte';
 	import ReplyBox from './ReplyBox.svelte';
@@ -1115,12 +1116,11 @@
 					{/if}
 					<button
 						class="evm__att-refresh"
-						class:spinning={attachedLoading}
 						onclick={refetchAttached}
 						disabled={attachedLoading}
 						title="Fetch attached events from relays — the relays this document came from, then your general set (Confirm mode asks for the second)"
 						aria-label="Fetch attached events"
-					>⟳</button>
+					><RefreshIcon spinning={attachedLoading} /></button>
 				</div>
 				{#if attachedOpen && attached}
 					<div class="evm__att-list">
@@ -2267,18 +2267,14 @@
 		color: var(--fg-muted);
 		cursor: pointer;
 		font-size: var(--t-xs);
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		padding: 0;
 	}
 	.evm__att-refresh:hover:not(:disabled) {
 		color: var(--id-yours);
 		border-color: var(--id-yours);
-	}
-	.evm__att-refresh.spinning {
-		animation: evm-att-spin 1s linear infinite;
-	}
-	@keyframes evm-att-spin {
-		to {
-			transform: rotate(360deg);
-		}
 	}
 	.evm__att-list {
 		display: flex;

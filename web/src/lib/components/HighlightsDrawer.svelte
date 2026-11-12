@@ -36,6 +36,7 @@
 
 	let {
 		highlights,
+		scope = null,
 		open,
 		onclose,
 		onnavigate,
@@ -51,6 +52,8 @@
 		onannotate = null
 	}: {
 		highlights: DrawerHighlight[];
+		/** What the list is narrowed to (e.g. "this page"); `null` = everything. */
+		scope?: string | null;
 		open: boolean;
 		onclose: () => void;
 		/** Called when the user clicks a row. The drawer doesn't perform
@@ -293,7 +296,9 @@
 
 <aside class="hl-drawer" class:open aria-hidden={!open} aria-label="Highlights drawer">
 	<header class="hl-drawer__head">
-		<h3 class="hl-drawer__title">Highlights ({visible.length})</h3>
+		<h3 class="hl-drawer__title">
+			Highlights{#if scope}<span class="hl-drawer__scope"> · {scope}</span>{/if} ({visible.length})
+		</h3>
 		<div class="hl-drawer__head-actions">
 			{#if onrefresh}
 				<button
@@ -555,6 +560,7 @@
 		gap: 6px;
 		padding: 6px 10px;
 		border-bottom: 1px solid var(--panel-border);
+		flex-shrink: 0;
 	}
 	.hl-alpha {
 		display: flex;
@@ -575,6 +581,9 @@
 		display: flex;
 		flex-wrap: wrap;
 		gap: 4px;
+		/* Many highlighters would otherwise push the list out of the cap. */
+		max-height: 4.5rem;
+		overflow-y: auto;
 	}
 	.hl-filter {
 		font: inherit;
@@ -781,7 +790,10 @@
 		right: 16px;
 		bottom: 16px;
 		width: 320px;
-		max-height: 60vh;
+		/* Hard cap: the list scrolls inside, the drawer never grows past
+		   this however many highlights / highlighters there are. */
+		max-height: min(50vh, 480px);
+		overflow: hidden;
 		background: var(--bg-panel, var(--bg-surface));
 		border: 1px solid var(--panel-border);
 		border-radius: var(--r-md);
@@ -804,6 +816,10 @@
 		justify-content: space-between;
 		padding: 8px 10px;
 		border-bottom: 1px solid var(--panel-border);
+	}
+	.hl-drawer__scope {
+		color: var(--base5);
+		font-weight: normal;
 	}
 	.hl-drawer__title {
 		margin: 0;

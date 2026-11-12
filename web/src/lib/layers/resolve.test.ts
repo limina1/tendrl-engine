@@ -9,7 +9,8 @@ const defaults = (): LayerPrefs => ({
 	enabled: [...ALL_BASE_IDS],
 	byMimetype: {},
 	byPublication: {},
-	untagged: null
+	untagged: null,
+	hideMarkers: false
 });
 
 const dec = (

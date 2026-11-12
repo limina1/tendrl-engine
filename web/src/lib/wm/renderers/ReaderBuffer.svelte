@@ -1,4 +1,5 @@
 <script lang="ts">
+	import RefreshIcon from '$lib/components/RefreshIcon.svelte';
 	import { tick, untrack } from 'svelte';
 	import * as api from '$lib/api';
 	import { getAppState } from '$lib/state.svelte';
@@ -12,7 +13,7 @@
 	import PoolStateBadges from '$lib/components/PoolStateBadges.svelte';
 	import { getActiveStore, type NavAction } from '../buffer-store.svelte';
 	import { shell } from '../shell.svelte';
-	import { layers, bindMimetype, bindPublication } from '$lib/layers/store.svelte';
+	import { layers, bindMimetype, bindPublication, setHideMarkers } from '$lib/layers/store.svelte';
 	import { LAYERS, SOURCE_ID, layerById, formatLabel } from '$lib/layers/registry';
 	import { resolveLayer, type LayerPick } from '$lib/layers/resolve';
 	import { mobileNav } from '../mobile-nav.svelte';
@@ -83,6 +84,8 @@
 		publicationThreadsOpen: boolean;
 		treeOpen: boolean;
 		toolsOpen: boolean;
+		/** Which tools-sheet sections are expanded (actions by default). */
+		toolsSecs?: Record<string, boolean>;
 		/** Rendering-layer pick for this buffer: undefined = automatic (declared
 		 *  format + bindings), null = source, else a layer id. Un-promoted, so
 		 *  it lives with the other view state and dies with the buffer. */
@@ -113,6 +116,7 @@
 				publicationThreadsOpen,
 				treeOpen,
 				toolsOpen,
+				toolsSecs: { ...toolsSecs },
 				layerPick,
 				scroll: { ...scrollTops }
 			} satisfies ReaderViewState);
@@ -824,6 +828,10 @@
 	// typography). Both ride along in the saved reading place.
 	let treeOpen = $state(savedView?.treeOpen ?? false);
 	let toolsOpen = $state(savedView?.toolsOpen ?? false);
+	// The tools sheet grew long: each section folds behind its own ▸ head,
+	// only `actions` open by default, and the sheet is height-capped.
+	let toolsSecs = $state<Record<string, boolean>>(savedView?.toolsSecs ?? { actions: true });
+	const toggleToolsSec = (k: string) => (toolsSecs[k] = !toolsSecs[k]);
 	let tocOpen = $state(false);
 	// ContinuousView instance — its exported scrollToSection keeps a TOC
 	// jump in-place instead of flipping the view mode.
@@ -935,6 +943,19 @@
 		}
 		return out.sort((a, b) => b.created_at - a.created_at);
 	});
+
+	// The drawer follows the view: on a page it lists only that page's
+	// highlights (the section the pager shows); continuous lists them all.
+	const pageAddr = $derived.by<string | null>(() => {
+		if (viewMode !== 'paginated') return null;
+		const s = pristineSections[currentSection];
+		return s ? addrKey(s.addr) : null;
+	});
+	const drawerScoped = $derived(
+		pageAddr === null
+			? drawerHighlights
+			: drawerHighlights.filter((h) => h.section_addr === pageAddr)
+	);
 
 	function sectionIndexForAddr(addr: string): number {
 		return pristineSections.findIndex((s) => addrKey(s.addr) === addr);
@@ -2444,10 +2465,16 @@
 		     for mid-read, so it lives behind `T`. -->
 		<div class="tools-sheet" role="region" aria-label="Reader tools">
 			<div class="tools-sheet__sec">
-				<div class="tools-sheet__head">
+				<button
+					class="tools-sheet__head"
+					onclick={() => toggleToolsSec('actions')}
+					aria-expanded={!!toolsSecs.actions}
+				>
+					<span class="chev" aria-hidden="true">{toolsSecs.actions ? '▾' : '▸'}</span>
 					<span class="cap">actions</span>
 					<span class="hint">change or refresh this publication</span>
-				</div>
+				</button>
+				{#if toolsSecs.actions}
 				<div class="tools-sheet__row">
 					<button
 						class="hl-mode-pill"
@@ -2536,11 +2563,10 @@
 					{#if publication?.addr.kind === 30040}
 						<button
 							class="title-fetch"
-							class:spin={backfillingAll}
 							onclick={backfillAll}
 							disabled={backfillingAll}
 							title="Fetch this publication's index + backfill all missing sections from relays"
-						>⟳ fetch from relays</button>
+						><RefreshIcon spinning={backfillingAll} /> fetch from relays</button>
 					{/if}
 					<button
 						class="discussions-refresh"
@@ -2563,14 +2589,21 @@
 						>⇡ back up to relays</button>
 					{/if}
 				</div>
+				{/if}
 			</div>
 			{#if publication}
 				{@const pubAddr = publication.addr}
 				<div class="tools-sheet__sec">
-					<div class="tools-sheet__head">
+					<button
+						class="tools-sheet__head"
+						onclick={() => toggleToolsSec('pool')}
+						aria-expanded={!!toolsSecs.pool}
+					>
+						<span class="chev" aria-hidden="true">{toolsSecs.pool ? '▾' : '▸'}</span>
 						<span class="cap">pool</span>
 						<span class="hint">where this publication sits in your working set — and where it was found</span>
-					</div>
+					</button>
+					{#if toolsSecs.pool}
 					<div class="tools-sheet__row">
 						<PoolStateBadges
 							item={app.findPoolItemByAddr(pubAddr)}
@@ -2585,13 +2618,20 @@
 							orientation="horizontal"
 						/>
 					</div>
+					{/if}
 				</div>
 			{/if}
 			<div class="tools-sheet__sec">
-				<div class="tools-sheet__head">
+				<button
+					class="tools-sheet__head"
+					onclick={() => toggleToolsSec('markup')}
+					aria-expanded={!!toolsSecs.markup}
+				>
+					<span class="chev" aria-hidden="true">{toolsSecs.markup ? '▾' : '▸'}</span>
 					<span class="cap">markup</span>
 					<span class="hint">{layerHint}</span>
-				</div>
+				</button>
+				{#if toolsSecs.markup}
 				<div class="tools-sheet__row">
 					<button
 						class:active={layerDecision.layerId === null}
@@ -2617,6 +2657,23 @@
 						<span class="layer-none">all layers off — Settings → Layers</span>
 					{/if}
 				</div>
+				<div class="tools-sheet__row">
+					<!-- The composer's Rendered / Show markers, for reading:
+					     per-device, applies to every reader. -->
+					<span class="layer-none">syntax</span>
+					<button
+						class:active={layers.hideMarkers}
+						disabled={layerDecision.layerId === null}
+						onclick={() => setHideMarkers(true)}
+						title="Rendered — hide the markup characters (**, ##, [[ ]], …)"
+					>rendered</button>
+					<button
+						class:active={!layers.hideMarkers}
+						disabled={layerDecision.layerId === null}
+						onclick={() => setHideMarkers(false)}
+						title="Show markers — keep the markup characters, dimmed"
+					>show markers</button>
+				</div>
 				{#if layerPick !== undefined && !layerForce}
 					<div class="tools-sheet__row">
 						{#if layerProbe?.effective_format && layers.byMimetype[layerProbe.effective_format] !== (layerPick ?? SOURCE_ID)}
@@ -2635,13 +2692,21 @@
 						{/if}
 					</div>
 				{/if}
+				{/if}
 			</div>
 			<div class="tools-sheet__sec">
-				<div class="tools-sheet__head">
+				<button
+					class="tools-sheet__head"
+					onclick={() => toggleToolsSec('reading')}
+					aria-expanded={!!toolsSecs.reading}
+				>
+					<span class="chev" aria-hidden="true">{toolsSecs.reading ? '▾' : '▸'}</span>
 					<span class="cap">reading</span>
 					<span class="hint">faces &amp; measure — persists per device</span>
-				</div>
+				</button>
+				{#if toolsSecs.reading}
 				<ReadingControls compact />
+				{/if}
 			</div>
 		</div>
 	{/if}
@@ -2795,6 +2860,7 @@
 		{/if}
 		<div
 			class="content"
+			class:content--paged={viewMode !== 'continuous'}
 			bind:this={contentWrap}
 			onscroll={() => (scrollTops.content = contentWrap?.scrollTop ?? 0)}
 		>
@@ -2894,7 +2960,8 @@
 		/>
 	{/if}
 	<HighlightsDrawer
-		highlights={drawerHighlights}
+		highlights={drawerScoped}
+		scope={pageAddr === null ? null : 'this page'}
 		open={drawerOpen}
 		onclose={() => (drawerOpen = false)}
 		onnavigate={scrollToHighlight}
@@ -3211,6 +3278,13 @@
 		white-space: pre-wrap;
 	}
 	.content { flex: 1; overflow: auto; min-height: 0; }
+	/* Paged: the page scrolls inside PaginatedView, so its Prev/Next bar
+	   stays pinned instead of scrolling away with the text. */
+	.content.content--paged {
+		display: flex;
+		flex-direction: column;
+		overflow: hidden;
+	}
 	.empty {
 		flex: 1;
 		display: flex;
@@ -3227,9 +3301,8 @@
 		color: var(--base5);
 	}
 
-	/* Fetch-from-relays (radial arrow). Pairs with .spin for the loading
-	 * state — borrows the existing keyframe so a pending fetch reads
-	 * visually the same as a streaming tree node. */
+	/* Fetch-from-relays. The RefreshIcon inside spins while loading — the
+	 * button itself never rotates. */
 	.title-fetch {
 		background: none;
 		border: 1px solid var(--base3);
@@ -3243,6 +3316,10 @@
 		line-height: 20px;
 		cursor: pointer;
 		text-align: center;
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		gap: 5px;
 	}
 	.title-fetch {
 		margin-left: 6px;
@@ -3333,17 +3410,6 @@
 	.depth-knob__step:disabled { opacity: 0.4; cursor: not-allowed; }
 	.depth-knob__step:hover:not(:disabled) { border-color: var(--id-yours); }
 
-	/* Spinner for pending tree nodes while the loader is streaming. */
-	.spin {
-		display: inline-block;
-		animation: reader-spin 1s linear infinite;
-	}
-	@keyframes reader-spin {
-		to {
-			transform: rotate(360deg);
-		}
-	}
-
 	.hint {
 		padding: 12px;
 		font-size: var(--t-xs);
@@ -3422,8 +3488,11 @@
 		flex-direction: column;
 		border-bottom: 1px solid var(--panel-border);
 		background: var(--panel-bg);
-		max-height: 60vh;
+		/* Capped: the sheet scrolls inside itself so the page below keeps
+		   its room (and the pager its place). */
+		max-height: min(45vh, 420px);
 		overflow: auto;
+		overscroll-behavior: contain;
 		flex-shrink: 0;
 	}
 	.tools-sheet__sec {
@@ -3439,6 +3508,21 @@
 		align-items: baseline;
 		gap: 8px;
 		flex-wrap: wrap;
+		width: 100%;
+		padding: 2px 0;
+		background: transparent;
+		border: 0;
+		color: inherit;
+		text-align: left;
+		cursor: pointer;
+	}
+	.tools-sheet__head:hover .cap,
+	.tools-sheet__head:hover .chev { color: var(--fg); }
+	.tools-sheet__head .chev {
+		font-family: var(--font-mono);
+		font-size: var(--t-2xs);
+		min-width: 1ch;
+		color: var(--base5);
 	}
 	.tools-sheet__head .cap {
 		font-family: var(--font-mono);

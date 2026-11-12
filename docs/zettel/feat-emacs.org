@@ -1,0 +1,40 @@
+#+TITLE: Emacs client — tendrl.el + nostrdown-mode
+#+TYPE: feature
+#+STATUS: implemented
+#+DATE: 2026-11-12
+
+The engine-owns-data split lets Emacs be a frontend without re-deriving
+anything: =emacs/= holds two files that call the engine over HTTP (with a
+=nak= fallback when none answers). Usage and install: =emacs/README.org=.
+
+* What exists
+
+- =tendrl.el= — the engine client. =tendrl-local-fetch= (nostrdb only),
+  =tendrl-relay-fetch= (relays via the engine; =C-u= = =nak= direct),
+  =tendrl-fetch= (local first) open an event's *content* read-only in the
+  major mode its =m= / =format= tag names, else its kind's default. The
+  raw event stays apart (=j= / =tendrl-event-json=); =R= re-fetches, =m=
+  re-renders as another markup. Content buffers wrap long paragraphs
+  (=visual-line-mode=, truncation off) whatever the mode's default
+  (2026-11-12).
+- =nostrdown-mode.el= — a minor mode layering ={{ }}= over Org / Markdown /
+  AsciiDoc via =POST /api/v1/nostrdown/resolve=: font-locked tokens,
+  resolved / unresolved / pending overlays, follow, completion,
+  prettify (=markup= / =label=), directory files as default =ref=
+  siblings (a kasten resolves before it is published).
+- Inline transclusion: =embed= / =quote= / =slot= cards under the token.
+  Since 2026-11-12 the card's content is filled to
+  =nostrdown-embed-fill-column= (72), and a quote excerpt longer than
+  =nostrdown-quote-block-threshold= (100 chars) renders as a block quote
+  — own lines behind a =┃= bar, italic, the source title under it.
+- Tests: live =emacs/*-test.el= against a named daemon, not batch.
+
+* Gaps
+- Doom wiring lives in the user's config (=local-packages/nostrdown=,
+  =SPC t n=), not here.
+
+* Related
+- [[file:index.org][Index]]
+- [[file:feat-nostrdown.org][Nostrdown]] — the grammar and resolution it renders
+- [[file:decision-nostrdown-parsing.org][Nostrdown parsing lives in Rust]]
+- [[file:decision-mimetype-tag.org][Content format is the m tag]] — how a buffer picks its major mode

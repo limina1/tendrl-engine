@@ -440,6 +440,20 @@ docs/amber-nip55-signing-plan.md "Open questions")
   connection in every fresh install's sets; worst on device).
 - PublishConfirmModal "Add relay" now persists to the publish set.
 
+* FIXED — refresh/fetch buttons rotate their whole box; glyph off-centre (web)
+:PROPERTIES:
+:found: 2026-11-12 (user, during feat/local-mode review)
+:END:
+Four "fetch from relays" buttons spun the *button* (=class:spinning= /
+=class:spin= put a rotate animation on it), so the bordered box turned
+while loading, and the ⟳ / ↻ text glyph sat off-centre (font metrics).
+Sites: event menu attached-row refresh (=EventViewModal=), reader tools
+"fetch from relays" (=ReaderBuffer=), =DocBuffer= refresh, =AudiobookBuffer=
+refresh. Fix: =RefreshIcon.svelte= — an SVG arrow that spins about its own
+centre (=transform-box: fill-box=); buttons are inline-flex centred and
+never animate. Verified via CDP: button transform stays =none=, icon
+centre offset 0 in the menu button through a full turn.
+
 * OPEN — mobile feed: no pull-down-to-refresh gesture (UPSTREAM-ish: web polish)
 :PROPERTIES:
 :found: 2026-08-10 (Android device pass)
