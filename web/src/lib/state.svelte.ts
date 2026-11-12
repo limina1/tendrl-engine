@@ -92,6 +92,13 @@ export type NarrateModalState = {
 	only?: string[];
 };
 
+/** Back-up-to-relays modal (BackupModal in +layout): the connected set of
+ *  the document at `coord`. */
+export type BackupModalState = {
+	coord: string;
+	title: string | null;
+};
+
 export type AgentServicesModalState = {
 	view: 'signup' | 'manage' | 'fund';
 	focus?: api.ProviderKind;
@@ -115,6 +122,11 @@ export type ComposeEdit = {
 	baseId?: string;
 	title: string;
 };
+
+/** Every mode the engine reports (auto · confirm · local). */
+function isNetworkMode(v: unknown): v is NetworkMode {
+	return v === 'auto' || v === 'confirm' || v === 'local';
+}
 
 /** Replaceable kind-0 events can pile up multiple historical versions in
  *  the DB / relay results. A search should surface only the *current*
@@ -557,6 +569,7 @@ function _createAppState() {
 	let agentServicesModal: AgentServicesModalState | null = $state(null);
 	// Narration (TTS → Blossom → kind 32176): the narrate modal's open payload.
 	let narrateModal: NarrateModalState | null = $state(null);
+	let backupModal: BackupModalState | null = $state(null);
 	/** A user turn the engine refused for lack of balance — resent from the
 	 *  modal once the service is funded or switched. */
 	let pendingAgentMessage: string | null = $state(null);
@@ -676,11 +689,11 @@ function _createAppState() {
 	// users get their actual last-known mode from localStorage. If the live
 	// state ever turns out to differ, the init/poll/toggle paths overwrite
 	// this within milliseconds.
-	let savedNetworkMode: 'auto' | 'confirm' = $state(
-		((): 'auto' | 'confirm' => {
+	let savedNetworkMode: NetworkMode = $state(
+		((): NetworkMode => {
 			if (typeof localStorage === 'undefined') return 'confirm';
 			const v = localStorage.getItem('tendrl.savedNetworkMode');
-			return v === 'auto' ? 'auto' : 'confirm';
+			return isNetworkMode(v) ? v : 'confirm';
 		})()
 	);
 
@@ -688,7 +701,7 @@ function _createAppState() {
 	// engine session comes up empty (engine restarts forget it).
 	const WATCH_NPUB_KEY = 'tendrl.watchNpub';
 
-	function persistNetworkMode(mode: 'auto' | 'confirm') {
+	function persistNetworkMode(mode: NetworkMode) {
 		if (typeof localStorage !== 'undefined') {
 			try {
 				localStorage.setItem('tendrl.savedNetworkMode', mode);
@@ -4200,10 +4213,8 @@ function _createAppState() {
 			networkStatus = await api.getNetworkStatus();
 			// User-driven toggle — update the cache immediately so
 			// the next page-load instant-paints the new mode.
-			if (mode === 'auto' || mode === 'confirm') {
-				savedNetworkMode = mode;
-				persistNetworkMode(mode);
-			}
+			savedNetworkMode = mode;
+			persistNetworkMode(mode);
 		} catch (e) {
 			console.error('Failed to set network mode:', e);
 		}
@@ -4217,7 +4228,7 @@ function _createAppState() {
 	 *  `runWalkthrough` carries the modal's toggle: on → kick off the contextual
 	 *  walkthrough; off → record "never show tips" so nothing fires until the
 	 *  user re-arms it from the W button or Settings. */
-	async function chooseNetworkMode(mode: 'auto' | 'confirm', runWalkthrough = true) {
+	async function chooseNetworkMode(mode: NetworkMode, runWalkthrough = true) {
 		await handleSetNetworkMode(mode);
 		if (runWalkthrough) {
 			startWalkthrough();
@@ -4785,7 +4796,7 @@ function _createAppState() {
 			// reload reflects what the engine actually said, not just
 			// what config.toml hints.
 			const m = networkStatusResult.value.mode;
-			if (m === 'auto' || m === 'confirm') {
+			if (isNetworkMode(m)) {
 				savedNetworkMode = m;
 				persistNetworkMode(m);
 			}
@@ -4811,7 +4822,7 @@ function _createAppState() {
 			syncMode = s.compose.sync_mode as SyncMode;
 			buttonLabels = s.compose.button_labels as ButtonLabels;
 			savedIdentitySource = s.identity?.source ?? null;
-			if (s.network?.mode === 'auto' || s.network?.mode === 'confirm') {
+			if (s.network && isNetworkMode(s.network.mode)) {
 				savedNetworkMode = s.network.mode;
 				persistNetworkMode(s.network.mode);
 			}
@@ -4990,7 +5001,7 @@ function _createAppState() {
 				// Keep the localStorage cache in sync with the live
 				// engine so the next reload's instant-paint matches
 				// reality (e.g. user toggled mode in a different tab).
-				if (ns.mode === 'auto' || ns.mode === 'confirm') {
+				if (isNetworkMode(ns.mode)) {
 					if (savedNetworkMode !== ns.mode) {
 						savedNetworkMode = ns.mode;
 						persistNetworkMode(ns.mode);
@@ -5557,6 +5568,8 @@ function _createAppState() {
 		set agentServicesModal(v: AgentServicesModalState | null) { agentServicesModal = v; },
 		get narrateModal() { return narrateModal; },
 		set narrateModal(v: NarrateModalState | null) { narrateModal = v; },
+		get backupModal() { return backupModal; },
+		set backupModal(v: BackupModalState | null) { backupModal = v; },
 		get pendingAgentMessage() { return pendingAgentMessage; },
 		set pendingAgentMessage(v: string | null) { pendingAgentMessage = v; },
 		refreshProviders,
@@ -5610,7 +5623,7 @@ function _createAppState() {
 			try {
 				const s = await api.getSettings();
 				savedIdentitySource = s.identity?.source ?? null;
-				if (s.network?.mode === 'auto' || s.network?.mode === 'confirm') {
+				if (s.network && isNetworkMode(s.network.mode)) {
 					savedNetworkMode = s.network.mode;
 				}
 			} catch {}

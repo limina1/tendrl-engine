@@ -85,6 +85,7 @@
 	import { LAYERS, SOURCE_ID, CANONICAL_MIMETYPES, FORMAT_LABEL, basesFor, layerById } from '$lib/layers/registry';
 	import { shell, type ShellPref, type MenuEdge } from '../shell.svelte';
 	import type { Buffer } from '../types';
+	import type { NetworkMode } from '$lib/types';
 	import { commands, SCOPE_META, SCOPE_ORDER, BASE_KEYS } from '../commands';
 	import { listLeaderBindings } from '../leader';
 	import {
@@ -462,7 +463,7 @@
 	}
 
 	const networkMode = $derived(app.networkStatus?.mode ?? 'confirm');
-	async function setNetworkMode(mode: 'auto' | 'confirm') {
+	async function setNetworkMode(mode: NetworkMode) {
 		if (networkMode === mode) return;
 		await app.handleSetNetworkMode(mode);
 	}
@@ -1448,14 +1449,14 @@
 		<div class="settings-row">
 			<span class="settings-label">Default mode</span>
 			<div class="radio-group">
-				{#each ['auto', 'confirm'] as opt (opt)}
+				{#each ['auto', 'confirm', 'local'] as opt (opt)}
 					<label class="radio">
 						<input
 							type="radio"
 							name="network-mode"
 							value={opt}
 							checked={networkMode === opt}
-							onchange={() => setNetworkMode(opt as 'auto' | 'confirm')}
+							onchange={() => setNetworkMode(opt as NetworkMode)}
 						/>
 						<span>{opt}</span>
 					</label>
@@ -1464,7 +1465,8 @@
 		</div>
 		<p class="settings-hint">
 			<strong>auto</strong>: relay fetches run without confirmation.<br />
-			<strong>confirm</strong>: every relay fetch raises a confirm modal — useful when bandwidth, privacy, or rate-limits matter.
+			<strong>confirm</strong>: every relay fetch raises a confirm modal — useful when bandwidth, privacy, or rate-limits matter.<br />
+			<strong>local</strong>: never connects to a relay. Publishing signs and stores locally; to back up, open a publication and use <em>Back up to relays</em>.
 		</p>
 
 		<div class="settings-row">

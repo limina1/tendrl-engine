@@ -2550,6 +2550,18 @@
 							? 'Pull new comments and highlights from relays'
 							: 'Confirm mode — pulling comments and highlights raises the fetch modal'}
 					>{discussionLoading ? '…' : 'refresh threads'}</button>
+					{#if publication}
+						<button
+							class="title-fetch"
+							onclick={() =>
+								publication &&
+								(app.backupModal = {
+									coord: `${publication.addr.kind}:${publication.addr.pubkey}:${publication.addr.d_tag}`,
+									title: publication.title ?? null
+								})}
+							title="Back up to relays — pick which of this publication's events (sections, highlights, comments, narrations…) to broadcast, and where. Works in local mode."
+						>⇡ back up to relays</button>
+					{/if}
 				</div>
 			</div>
 			{#if publication}

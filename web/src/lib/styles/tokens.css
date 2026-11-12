@@ -1489,6 +1489,7 @@ body { font-size: var(--t-base); }
 .dot--online { background: var(--state-online); box-shadow: 0 0 6px color-mix(in srgb, var(--state-online) 50%, transparent); }
 .dot--offline { background: var(--state-offline); }
 .dot--diverged { background: var(--id-diverged); box-shadow: 0 0 6px color-mix(in srgb, var(--id-diverged) 50%, transparent); }
+.dot--local { background: var(--id-draft); }
 .dot--fetching { background: var(--state-fetching); animation: pulse 1.2s infinite ease-in-out; }
 @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.4; } }
 

@@ -2624,3 +2624,41 @@ syntax (={id}= silently falls through to the SPA); =pkill -f= on a pattern
 your own command line contains kills the shell — select PIDs with a
 =[t]endrl= bracket pattern.
 
+
+* Local mode + backup broadcast (branch =feat/local-mode=)
+Local mode: no relay socket opens (=relay.rs= gate; the NIP-46 signer is
+exempt); publishing stores locally. The reader's tools sheet → /⇡ back up
+to relays/ lists the connected set and broadcasts a pick under a permit.
+
+#+begin_src sh
+# isolated engine, test relay only (theforest refuses unknown keys — a
+# rejection with an empty message there still proves the socket opened)
+./target/debug/tendrl-engine -c /tmp/lm/config.toml --data-dir /tmp/lm/data --port 3131 &
+curl -s -XPOST localhost:3131/api/v1/network/mode -H 'content-type: application/json' -d '{"mode":"local"}'
+
+# fixture: throwaway keys A (publication) + B (highlights, comment, annotation, deletion)
+A=$(nak key generate); B=$(nak key generate); PA=$(nak key public $A)
+ev(){ nak event "$@" < /dev/null; }      # stdin closed or nak blocks
+s1=$(ev --sec $A -k 30041 -d s1 -t title=One -t m=text/markdown -c "Hello world, this is the first section.")
+s2=$(ev --sec $A -k 30041 -d s2 -t title=Two -t m=text/markdown -c "Second section text.")
+idx=$(ev --sec $A -k 30040 -d book -t title="Test Book" -t a="30041:$PA:s1" -t a="30041:$PA:s2")
+h1=$(ev --sec $B -k 9802 -t a="30041:$PA:s1" -c "first section"); H1=$(echo "$h1" | jq -r .id)
+h2=$(ev --sec $B -k 9802 -t a="30041:$PA:s2" -c "Second");        H2=$(echo "$h2" | jq -r .id)
+del=$(ev --sec $B -k 5 -e $H2)
+cm=$(ev --sec $B -k 1111 -t A="30040:$PA:book" -t K=30040 -t a="30040:$PA:book" -t k=30040 -c "Nice book")
+an=$(ev --sec $B -k 30041 -d note1 -t e=$H1 -t m=text/markdown -c "why I highlighted this")
+printf '%s\n' "$s1" "$s2" "$idx" "$h1" "$h2" "$del" "$cm" "$an" > /tmp/lm/fixture.jsonl
+curl -s -XPOST localhost:3131/api/v1/ingest -H 'content-type: application/x-ndjson' --data-binary @/tmp/lm/fixture.jsonl
+
+# plan: 8 rows, the h2 highlight deleted:true, nothing on a relay
+curl -s "localhost:3131/api/v1/backup/plan?coord=30040:$PA:book" | jq -c '[.rows[]|{role,deleted,relays}]'
+# local mode holds: no relay fetch recorded, a plain broadcast is "Kept local"
+curl -s localhost:3131/api/v1/network/status | jq '.recent|length'      # 0
+# backup to the test relay
+IDS=$(curl -s "localhost:3131/api/v1/backup/plan?coord=30040:$PA:book" | jq -c '[.rows[]|select(.deleted|not)|.id]')
+curl -s -XPOST localhost:3131/api/v1/backup/broadcast -H 'content-type: application/json' \
+  -d "{\"ids\":$IDS,\"relays\":[\"wss://theforest.nostr1.com\"]}" | jq -c .
+
+# GUI (chromium --headless=new --remote-debugging-port=9333 --user-data-dir=/tmp/lm/prof about:blank)
+node scripts/verify/backup-modal.mjs --port 3131     # 10 checks
+#+end_src

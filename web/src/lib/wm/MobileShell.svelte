@@ -19,7 +19,7 @@
 	// Status pills are computed in +page (single source shared with the
 	// desktop modeline) and prop-threaded here; the drawer just renders
 	// them. Tap routing likewise stays in +page (onIdentityTap knows the
-	// pill kind; onToggleNetwork flips auto/confirm).
+	// pill kind; onToggleNetwork cycles auto/confirm/local).
 	type StatusPill = { label: string; pillClass: string; dotClass?: string };
 
 	let {
@@ -281,7 +281,7 @@
 					<button
 						class="mshell__status-row"
 						onclick={onToggleNetwork}
-						title="Toggle network mode (auto / confirm)"
+						title="Cycle network mode (auto → confirm → local)"
 					>
 						{#if networkPill.dotClass}<span class="dot {networkPill.dotClass}"></span>{/if}
 						<span class="mshell__status-label">network</span>

@@ -3446,6 +3446,55 @@ export function getAttached(opts: {
 	return fetchJson(`/api/v1/attached?${q.toString()}`);
 }
 
+// ---- Backup broadcast (src/backup.rs) ----
+
+/** One event connected to a document, as the backup modal lists it. */
+export interface BackupRow {
+	id: string;
+	kind: number;
+	kind_name: string | null;
+	pubkey: string;
+	author: string | null;
+	created_at: number;
+	/** index · section · highlight · comment · annotation · narration ·
+	 *  merge request · deletion · reaction · reply · bookshelf · reference */
+	role: string;
+	label: string;
+	coord: string | null;
+	/** Relays it was seen on / sent to; empty = local only. */
+	relays: string[];
+	/** Retracted by a same-author kind 5 — listed, not preselected. */
+	deleted: boolean;
+}
+
+export interface BackupPlan {
+	root: string;
+	title: string | null;
+	rows: BackupRow[];
+	relays: { url: string; publish: boolean; broadcast: boolean }[];
+	local_mode: boolean;
+	truncated: boolean;
+}
+
+export interface BackupResult {
+	events: number;
+	landed: number;
+	relays: { relay: string; accepted: number; rejected: number; message: string | null }[];
+}
+
+/** Everything local connected to a document (never touches a relay). */
+export function getBackupPlan(coord: string): Promise<BackupPlan> {
+	return fetchJson(`/api/v1/backup/plan?coord=${encodeURIComponent(coord)}`);
+}
+
+/** Send the picked events to the picked relays — works in local mode. */
+export function backupBroadcast(ids: string[], relays: string[]): Promise<BackupResult> {
+	return fetchJson('/api/v1/backup/broadcast', {
+		method: 'POST',
+		body: JSON.stringify({ ids, relays })
+	});
+}
+
 export function mirrorNarration(req: { url: string; server?: string }): Promise<{
 	results: { server: string; ok: boolean; descriptor?: unknown; error?: string }[];
 }> {
