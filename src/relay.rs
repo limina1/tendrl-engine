@@ -94,10 +94,94 @@ pub const DEFAULT_SEARCH: &[&str] = &[];
 type WsStream =
     tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
 
+// ---------------------------------------------------------------------------
+// Local mode gate
+// ---------------------------------------------------------------------------
+//
+// `NetworkMode::Local` promises that the engine never opens a relay socket.
+// The network layer already refuses fetch/publish operations in that mode;
+// this is the floor under it: every relay socket goes through
+// `connect_bounded`, so a gate here holds even for a path that forgot to ask.
+// The one deliberate way through is a [`RelayPermit`] — the user picked
+// these relays for this operation (the broadcast modal) — and the NIP-46
+// signer transport ([`RelayConn::connect_signer`]), which carries sign
+// requests, never the user's events.
+
+static LOCAL_ONLY: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+static PERMITS: std::sync::Mutex<Vec<(String, usize)>> = std::sync::Mutex::new(Vec::new());
+
+/// The message a refused relay connection carries.
+pub const LOCAL_MODE_REFUSAL: &str = "local mode — relays are off";
+
+/// Turn the local-mode gate on or off (follows `NetworkMode::Local`).
+pub fn set_local_only(on: bool) {
+    LOCAL_ONLY.store(on, std::sync::atomic::Ordering::Relaxed);
+}
+
+pub fn local_only() -> bool {
+    LOCAL_ONLY.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+fn permit_key(url: &str) -> String {
+    let n = crate::relay_url::normalize_relay_url(url);
+    if n.is_empty() {
+        url.to_string()
+    } else {
+        n
+    }
+}
+
+/// True when a connection to `url` may open now.
+pub fn relay_allowed(url: &str) -> bool {
+    if !local_only() {
+        return true;
+    }
+    let key = permit_key(url);
+    PERMITS.lock().unwrap().iter().any(|(u, n)| *n > 0 && *u == key)
+}
+
+/// Lets the listed relays through the local-mode gate while it lives.
+/// Counted, so overlapping permits for one relay compose.
+#[must_use = "the permit lasts only while it is held"]
+pub struct RelayPermit {
+    urls: Vec<String>,
+}
+
+pub fn permit(urls: &[String]) -> RelayPermit {
+    let urls: Vec<String> = urls.iter().map(|u| permit_key(u)).collect();
+    let mut p = PERMITS.lock().unwrap();
+    for u in &urls {
+        match p.iter_mut().find(|(k, _)| k == u) {
+            Some((_, n)) => *n += 1,
+            None => p.push((u.clone(), 1)),
+        }
+    }
+    RelayPermit { urls }
+}
+
+impl Drop for RelayPermit {
+    fn drop(&mut self) {
+        let mut p = PERMITS.lock().unwrap();
+        for u in &self.urls {
+            if let Some((_, n)) = p.iter_mut().find(|(k, _)| k == u) {
+                *n = n.saturating_sub(1);
+            }
+        }
+        p.retain(|(_, n)| *n > 0);
+    }
+}
+
 /// `connect_async` bounded by [`CONNECT_TIMEOUT`]; error is a plain
 /// string so both the fetch path (`EngineError`) and the publish path
-/// (`String`) can wrap it.
+/// (`String`) can wrap it. Refused in local mode unless permitted.
 async fn connect_bounded(relay_url: &str) -> std::result::Result<WsStream, String> {
+    if !relay_allowed(relay_url) {
+        return Err(LOCAL_MODE_REFUSAL.to_string());
+    }
+    connect_bounded_ungated(relay_url).await
+}
+
+async fn connect_bounded_ungated(relay_url: &str) -> std::result::Result<WsStream, String> {
     match timeout(CONNECT_TIMEOUT, connect_async(relay_url)).await {
         Ok(Ok((ws, _))) => Ok(ws),
         Ok(Err(e)) => Err(format!("Failed to connect: {}", e)),
@@ -188,13 +272,25 @@ pub(crate) struct RelayConn {
 impl RelayConn {
     pub(crate) async fn connect(url: &str, auth: RelayAuth) -> std::result::Result<Self, String> {
         let ws = connect_bounded(url).await?;
+        Ok(Self::wrap(ws, url, auth))
+    }
+
+    /// A NIP-46 signer's transport. Exempt from the local-mode gate: it
+    /// carries sign requests to the user's own bunker, never their events
+    /// to an audience.
+    pub(crate) async fn connect_signer(url: &str, auth: RelayAuth) -> std::result::Result<Self, String> {
+        let ws = connect_bounded_ungated(url).await?;
+        Ok(Self::wrap(ws, url, auth))
+    }
+
+    fn wrap(ws: WsStream, url: &str, auth: RelayAuth) -> Self {
         let normalized = crate::relay_url::normalize_relay_url(url);
         let tag_url = if normalized.is_empty() {
             url.to_string()
         } else {
             normalized
         };
-        Ok(Self {
+        Self {
             ws,
             url: url.to_string(),
             tag_url,
@@ -203,7 +299,7 @@ impl RelayConn {
             authed: false,
             auth_attempted: false,
             pending: VecDeque::new(),
-        })
+        }
     }
 
     fn permits(&self) -> bool {
@@ -1205,6 +1301,29 @@ mod tests {
 
     /// A relay that accepts the TCP connection but never answers the
     /// WebSocket upgrade — the hermetic stand-in for a blackholed
+    #[test]
+    fn relay_permits_are_counted_and_released() {
+        // Bookkeeping only — the gate itself stays off so the socket tests
+        // beside this one are unaffected.
+        let url = "wss://permit-test.example".to_string();
+        let count = || {
+            PERMITS
+                .lock()
+                .unwrap()
+                .iter()
+                .find(|(u, _)| *u == permit_key(&url))
+                .map(|(_, n)| *n)
+                .unwrap_or(0)
+        };
+        let a = permit(std::slice::from_ref(&url));
+        let b = permit(&["wss://PERMIT-TEST.example/".to_string()]);
+        assert_eq!(count(), 2, "normalized URLs share a slot");
+        drop(a);
+        assert_eq!(count(), 1);
+        drop(b);
+        assert_eq!(count(), 0);
+    }
+
     /// connect (the on-device failure mode this timeout exists for).
     /// Without CONNECT_TIMEOUT, connect_async waits on it forever.
     #[tokio::test]

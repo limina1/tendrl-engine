@@ -1104,8 +1104,10 @@
 		mb.selectedIndex = 0;
 	}
 
+	// auto → confirm → local → auto: each step trusts relays a little less.
 	function toggleNetworkMode() {
-		const next = app.networkStatus?.mode === 'auto' ? 'confirm' : 'auto';
+		const cur = app.networkStatus?.mode ?? app.savedNetworkMode;
+		const next = cur === 'auto' ? 'confirm' : cur === 'confirm' ? 'local' : 'auto';
 		app.handleSetNetworkMode(next);
 	}
 
@@ -1219,6 +1221,11 @@
 		// frame — no "loading" placeholder, no flash.
 		const mode = app.networkStatus?.mode ?? app.savedNetworkMode;
 		const active = (app.networkStatus?.active_fetches ?? 0) > 0;
+		if (mode === 'local') {
+			// Local = neutral: nothing reaches a relay, so there is nothing
+			// in flight to show — publishing stores locally until you broadcast.
+			return { label: 'local', pillClass: 'pill--localmode', dotClass: 'dot--local' };
+		}
 		if (mode === 'confirm') {
 			// Confirm = orange (id-diverged): the engine is gating
 			// fetches behind the user's explicit approval. The "warm"
@@ -1782,7 +1789,7 @@
 						e.preventDefault();
 						openRelays();
 					}}
-					title="Click to toggle auto/confirm fetching · right-click for relay configuration"
+					title="Click to cycle auto → confirm → local · right-click for relay configuration"
 				>
 					<span class="dot {networkPill.dotClass}"></span>
 					{networkPill.label}

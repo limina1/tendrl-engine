@@ -100,6 +100,18 @@ Engine-level `NetworkMode` toggle and a ring buffer of recent relay fetch activi
 - **`Auto`** — fetch from relays automatically (the former "Online").
 - **`Confirm`** — every user-initiated relay fetch emits an *intent* the UI must
   approve before the engine proceeds (the former "Offline").
+- **`Local`** — never connects to a relay: fetch operations don't open,
+  publish operations target no relay (signed + stored, the event stays
+  "local"), and `relay.rs` refuses every socket unless a `RelayPermit`
+  covers it (the NIP-46 signer transport is exempt). The way out is
+  **broadcast** (`src/broadcast.rs`) — re-sending already-signed events,
+  never signing: `GET /api/v1/broadcast/plan?coord=|id=` = the connected
+  set around a document or event, from the local store (tree + highlights,
+  comments, annotations, narrations, deletions…); `POST /broadcast/send
+  {ids, relays}` = send the pick under a permit, in any mode. Web: one
+  `BroadcastModal` (all/none + kind / author / provenance filters) opened
+  from the event menu (`b`), the reader's tools sheet and the feed's
+  "broadcast" pill; the modeline pill cycles auto → confirm → local.
 
 **Session relay overrides** (`SessionRelays`, in memory — the session is the
 engine process, i.e. one app launch on Android): a confirm decision is folded

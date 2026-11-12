@@ -649,7 +649,7 @@ export interface HealthResponse {
 	branch?: string;
 }
 
-export type NetworkMode = 'auto' | 'confirm';
+export type NetworkMode = 'auto' | 'confirm' | 'local';
 
 /** Pattern of a user-initiated fetch operation (mirrors the engine). */
 export type FetchPattern = 'event' | 'publication' | 'thread' | 'search' | 'profile' | 'custom';

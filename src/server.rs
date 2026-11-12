@@ -496,6 +496,11 @@ pub async fn start(opts: ServeOptions) -> anyhow::Result<RunningServer> {
         // Events attached to a document (comments, highlights, narrations,
         // the containing index) — the event menu's attached row.
         .route("/api/v1/attached", get(crate::attached::handlers::get))
+        // Broadcast: the connected set around a document / event, and
+        // re-sending a picked subset of those (already-signed) events to
+        // picked relays — in any mode, local included (the pick is the approval).
+        .route("/api/v1/broadcast/plan", get(crate::broadcast::handlers::plan))
+        .route("/api/v1/broadcast/send", post(crate::broadcast::handlers::send))
         // Reading / listening history: local "where was I" per publication.
         .route(
             "/api/v1/history",

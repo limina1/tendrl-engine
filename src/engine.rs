@@ -679,7 +679,7 @@ impl Engine {
         // the user never asked for — it resolves local-only silently.
         // User-initiated calls fall through to the intent below, where
         // Confirm mode still gets its approval modal.
-        if !mode_confirm && !self.is_auto() {
+        if self.network.is_local() || (!mode_confirm && !self.is_auto()) {
             return Vec::new();
         }
 
@@ -1040,6 +1040,11 @@ impl Engine {
     /// True when the engine auto-fetches from relays (Auto mode).
     pub fn is_auto(&self) -> bool {
         self.network.is_auto()
+    }
+
+    /// Local mode: the engine contacts no relay (see `NetworkMode::Local`).
+    pub fn is_local(&self) -> bool {
+        self.network.is_local()
     }
 
     /// Set the network mode from an explicit user action. Marks the mode as
@@ -1609,7 +1614,7 @@ impl Engine {
         trigger: FetchTrigger,
         mode_confirm: bool,
     ) -> Result<Vec<Value>> {
-        if !mode_confirm && !self.is_auto() {
+        if self.network.is_local() || (!mode_confirm && !self.is_auto()) {
             return Ok(vec![]);
         }
         // A relay the user turned off this session is not contacted by
@@ -1762,7 +1767,7 @@ impl Engine {
         trigger: FetchTrigger,
         mode_confirm: bool,
     ) -> Result<Vec<Value>> {
-        if !mode_confirm && !self.is_auto() {
+        if self.network.is_local() || (!mode_confirm && !self.is_auto()) {
             return Ok(vec![]);
         }
         // Concurrent fanout, bounded: the serial version stacked each relay's
@@ -3053,7 +3058,7 @@ impl Engine {
             return 0;
         }
 
-        if !mode_confirm && !self.is_auto() {
+        if self.network.is_local() || (!mode_confirm && !self.is_auto()) {
             info!(
                 "Profile backfill: {} author(s) missing a kind-0, but the engine is offline — skipped",
                 missing.len()

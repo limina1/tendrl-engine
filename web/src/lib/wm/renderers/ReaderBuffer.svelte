@@ -2587,6 +2587,18 @@
 							? 'Pull new comments and highlights from relays'
 							: 'Confirm mode — pulling comments and highlights raises the fetch modal'}
 					>{discussionLoading ? '…' : 'refresh threads'}</button>
+					{#if publication}
+						<button
+							class="title-fetch"
+							onclick={() =>
+								publication &&
+								(app.broadcastModal = {
+									coord: `${publication.addr.kind}:${publication.addr.pubkey}:${publication.addr.d_tag}`,
+									title: publication.title ?? null
+								})}
+							title="Broadcast — re-send this publication's signed events (index, sections, highlights, comments, narrations…) to relays you pick. Nothing is re-signed. Works in local mode."
+						>⇡ broadcast</button>
+					{/if}
 				</div>
 				{/if}
 			</div>

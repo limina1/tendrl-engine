@@ -375,9 +375,12 @@
 					class="pill pill--broadcast"
 					onclick={(e) => {
 						e.stopPropagation();
-						app.handleBroadcastPublication(pub_item.addr);
+						app.broadcastModal = {
+							coord: `${pub_item.addr.kind}:${pub_item.addr.pubkey}:${pub_item.addr.d_tag}`,
+							title: pub_item.title ?? null
+						};
 					}}
-					title="Broadcast this signed local snapshot to your publish relays"
+					title="Broadcast this signed local snapshot — pick events and relays"
 				>broadcast</button>
 			{/if}
 			<!-- Provenance (local / relay / remote) lives inside the

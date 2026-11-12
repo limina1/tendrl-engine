@@ -70,6 +70,7 @@
   /* State */
   --state-online:    #b4be82;
   --state-offline:   #6b7089;
+  --state-local:    #8b96a1;  /* gunmetal — local mode, never reaches a relay */
   --state-fetching:  #e9b189;
   --state-error:     #e27878;
 
@@ -208,6 +209,7 @@
   /* State */
   --state-online:   #457c03;  /* green */
   --state-offline:  #4c566a;  /* muted slate */
+  --state-local:    #4f5b66;  /* gunmetal — local mode, never reaches a relay */
   --state-fetching: #be9117;  /* yellow */
   --state-error:    #cc3850;  /* red */
 
@@ -284,6 +286,7 @@
 
   --state-online:   #859900;
   --state-offline:  #586e75;
+  --state-local:    #8b96a1;  /* gunmetal — local mode, never reaches a relay */
   --state-fetching: #b58900;
   --state-error:    #dc322f;
 
@@ -355,6 +358,7 @@
 
   --state-online:   #859900;
   --state-offline:  #93a1a1;
+  --state-local:    #4f5b66;  /* gunmetal — local mode, never reaches a relay */
   --state-fetching: #b58900;
   --state-error:    #dc322f;
 
@@ -426,6 +430,7 @@
 
   --state-online:   #b8bb26;
   --state-offline:  #928374;
+  --state-local:    #8b96a1;  /* gunmetal — local mode, never reaches a relay */
   --state-fetching: #fabd2f;
   --state-error:    #fb4934;
 
@@ -497,6 +502,7 @@
 
   --state-online:   #79740e;
   --state-offline:  #928374;
+  --state-local:    #4f5b66;  /* gunmetal — local mode, never reaches a relay */
   --state-fetching: #b57614;
   --state-error:    #9d0006;
 
@@ -568,6 +574,7 @@
 
   --state-online:   #9ece6a;
   --state-offline:  #565f89;
+  --state-local:    #8b96a1;  /* gunmetal — local mode, never reaches a relay */
   --state-fetching: #e0af68;
   --state-error:    #f7768e;
 
@@ -639,6 +646,7 @@
 
   --state-online:   #587539;
   --state-offline:  #848cb5;
+  --state-local:    #4f5b66;  /* gunmetal — local mode, never reaches a relay */
   --state-fetching: #8c6c3e;
   --state-error:    #f52a65;
 
@@ -710,6 +718,7 @@
 
   --state-online:   #a6e3a1;
   --state-offline:  #6c7086;
+  --state-local:    #8b96a1;  /* gunmetal — local mode, never reaches a relay */
   --state-fetching: #f9e2af;
   --state-error:    #f38ba8;
 
@@ -781,6 +790,7 @@
 
   --state-online:   #40a02b;
   --state-offline:  #8c8fa1;
+  --state-local:    #4f5b66;  /* gunmetal — local mode, never reaches a relay */
   --state-fetching: #df8e1d;
   --state-error:    #d20f39;
 
@@ -852,6 +862,7 @@
 
   --state-online:   #a3be8c;
   --state-offline:  #6c7a96;
+  --state-local:    #8b96a1;  /* gunmetal — local mode, never reaches a relay */
   --state-fetching: #ebcb8b;
   --state-error:    #bf616a;
 
@@ -923,6 +934,7 @@
 
   --state-online:   #6f8c52;
   --state-offline:  #7b88a1;
+  --state-local:    #4f5b66;  /* gunmetal — local mode, never reaches a relay */
   --state-fetching: #a3801f;
   --state-error:    #b0434d;
 
@@ -994,6 +1006,7 @@
 
   --state-online:   #50fa7b;
   --state-offline:  #6272a4;
+  --state-local:    #8b96a1;  /* gunmetal — local mode, never reaches a relay */
   --state-fetching: #f1fa8c;
   --state-error:    #ff5555;
 
@@ -1065,6 +1078,7 @@
 
   --state-online:   #14710a;
   --state-offline:  #7a7a90;
+  --state-local:    #4f5b66;  /* gunmetal — local mode, never reaches a relay */
   --state-fetching: #846e15;
   --state-error:    #cb3a2a;
 
@@ -1136,6 +1150,7 @@
 
   --state-online:   #5c6e2a;
   --state-offline:  #8a755a;
+  --state-local:    #4f5b66;  /* gunmetal — local mode, never reaches a relay */
   --state-fetching: #9a7d1a;
   --state-error:    #a13d2d;
 
@@ -1207,6 +1222,7 @@
 
   --state-online:   #a3b06a;
   --state-offline:  #8a7a64;
+  --state-local:    #8b96a1;  /* gunmetal — local mode, never reaches a relay */
   --state-fetching: #d9b56a;
   --state-error:    #d97559;
 
@@ -1489,6 +1505,8 @@ body { font-size: var(--t-base); }
 .dot--online { background: var(--state-online); box-shadow: 0 0 6px color-mix(in srgb, var(--state-online) 50%, transparent); }
 .dot--offline { background: var(--state-offline); }
 .dot--diverged { background: var(--id-diverged); box-shadow: 0 0 6px color-mix(in srgb, var(--id-diverged) 50%, transparent); }
+.dot--local { background: var(--state-local); }
+.pill--localmode { background: color-mix(in srgb, var(--state-local) 18%, transparent); color: var(--state-local); }
 .dot--fetching { background: var(--state-fetching); animation: pulse 1.2s infinite ease-in-out; }
 @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.4; } }
 

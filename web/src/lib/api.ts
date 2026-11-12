@@ -3446,6 +3446,60 @@ export function getAttached(opts: {
 	return fetchJson(`/api/v1/attached?${q.toString()}`);
 }
 
+// ---- Broadcast picker (src/broadcast.rs) ----
+
+/** One event connected to a document, as the broadcast modal lists it. */
+export interface BroadcastRow {
+	id: string;
+	kind: number;
+	kind_name: string | null;
+	pubkey: string;
+	author: string | null;
+	created_at: number;
+	/** index · section · highlight · comment · annotation · narration ·
+	 *  merge request · deletion · reaction · reply · bookshelf · reference */
+	role: string;
+	label: string;
+	coord: string | null;
+	/** Relays it was seen on / sent to; empty = local only. */
+	relays: string[];
+	/** Retracted by a same-author kind 5 — listed, not preselected. */
+	deleted: boolean;
+}
+
+export interface BroadcastPlan {
+	root: string;
+	title: string | null;
+	rows: BroadcastRow[];
+	relays: { url: string; publish: boolean; broadcast: boolean }[];
+	local_mode: boolean;
+	truncated: boolean;
+}
+
+export interface BroadcastSendResult {
+	events: number;
+	landed: number;
+	relays: { relay: string; accepted: number; rejected: number; message: string | null }[];
+}
+
+/** Everything local connected to a document (`coord`, newest version) or
+ *  to one exact event (`id`). Reads the local store only. */
+export function getBroadcastPlan(root: { coord?: string; id?: string }): Promise<BroadcastPlan> {
+	const q = new URLSearchParams();
+	if (root.coord) q.set('coord', root.coord);
+	else if (root.id) q.set('id', root.id);
+	return fetchJson(`/api/v1/broadcast/plan?${q.toString()}`);
+}
+
+/** Re-send the picked (already-signed) events to the picked relays —
+ *  works in every network mode, local included. */
+export function broadcastSelected(ids: string[], relays: string[]): Promise<BroadcastSendResult> {
+	return fetchJson('/api/v1/broadcast/send', {
+		method: 'POST',
+		body: JSON.stringify({ ids, relays })
+	});
+}
+
 export function mirrorNarration(req: { url: string; server?: string }): Promise<{
 	results: { server: string; ok: boolean; descriptor?: unknown; error?: string }[];
 }> {
