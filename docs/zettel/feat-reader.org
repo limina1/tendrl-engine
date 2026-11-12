@@ -117,6 +117,17 @@ never happen in the browser.
   opened on its own routes to the reader when its publication is local,
   else to the audio view. See [[file:feat-attached-events.org][Attached events]].
 
+- Reader chrome (2026-11-12): in paged view the Prev/Next bar stays
+  pinned — the page scrolls inside =PaginatedView=, not the whole
+  column. The tools sheet (=T=) folds per section (actions · pool ·
+  markup · reading, ▸ heads, only actions open by default, remembered
+  per buffer) and is capped at =min(45vh, 420px)=. Markup gains a
+  *syntax* row (rendered | show markers), and a base draws tables as an
+  aligned, sideways-scrolling grid
+  ([[file:decision-table-grid.org][decision]]). The highlights drawer
+  follows the view: on a page it lists that page's highlights only
+  (=· this page=).
+
 * Gaps / open edges
 - Nested-publication packed cards, drill-in with breadcrumbs, and parent
   navigation are Phase 3 roadmap (=docs/wm-shell.md=).
@@ -140,6 +151,8 @@ never happen in the browser.
 * Related
 - [[file:index.org][Index]]
 - [[file:feat-nostrdown.org][Nostrdown]]
+- [[file:idea-rendering-layers.org][Rendering layers]]
+- [[file:decision-table-grid.org][Tables render as a grid of source runs]]
 - [[file:idea-backlinks.org][Backlinks]]
 - [[file:idea-event-badges.org][Event badges]]
 - [[file:decision-buffer-state-homes.org][Where buffer state lives]]

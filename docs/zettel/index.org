@@ -35,6 +35,7 @@ exists (with code paths), gaps.
 - [[file:feat-nostrdown.org][Nostrdown]] — the ={{ }}= / =[[ ]]= reference layer (partial; epoch in flight)
 - [[file:feat-publishing.org][Publishing]] — signing-is-the-snapshot, broadcast, local tracking
 - [[file:feat-identity.org][Identity & signing]] — NIP-49, keyring, NIP-07
+- [[file:feat-emacs.org][Emacs client]] — tendrl.el content buffers + nostrdown-mode overlays, embed cards, block quotes
 
 ** Reading
 - [[file:feat-feed.org][Feed]] — per-relay timelines + bookshelf mode, provenance
@@ -66,6 +67,7 @@ exists (with code paths), gaps.
 - [[file:decision-wikilinks-30818-only.org][Global wikilinks resolve to 30818 only]]
 - [[file:decision-mimetype-tag.org][Content format is the m tag — tag or user, never heuristics]] — stamped on every 30041, never on an index; 2026-10-01
 - [[file:decision-layers-default-on.org][Markup layers on by default; kind-defined formats; untagged fallback]] — Markdown/AsciiDoc/Org decorate out of the box, 30023/30818 by spec, untagged = the user's answer; 2026-11-02
+- [[file:decision-table-grid.org][Tables render as a grid of source runs]] — aligned, scrollable, every cell still offset-stamped so highlight capture holds; 2026-11-12
 - [[file:decision-webview-stays-the-player.org][On Android the WebView stays the audio player]] — foreground service + MediaSession around the SPA's <audio>, no native player; 2026-11-09
 - [[file:decision-provenance-first-fetch.org][Attached events fetch provenance first, without an intent]] — the relays a document came from already know; round two (general set) stays gated; 2026-11-09
 - [[file:decision-context-set-engine-owned.org][The context set is engine-owned]] — flags web, set engine; supersedes the web-pool call in half

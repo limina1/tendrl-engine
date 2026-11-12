@@ -139,6 +139,7 @@ branch is ready to fast-forward into =tendrl-web=.
 [[file:q-heading-anchors.org][q-heading-anchors]].
 
 * Related
+- [[file:feat-emacs.org][Emacs client]] — nostrdown-mode
 
 - [[file:index.org][Index]]
 - [[file:feat-compose.org][Feature: compose]]
