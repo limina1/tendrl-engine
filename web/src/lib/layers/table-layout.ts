@@ -94,10 +94,29 @@ export function tableLayout(text: string, spans: StyleSpan[]): TableBlock[] {
 
 // --- segments → flow + grids -------------------------------------------------
 
-/** What RichContent draws: runs of flowing text, and grids whose cells hold
- *  the runs inside each cell's range. */
+/** A code fence drawn as its own block: lines kept whole (no wrap), the
+ *  block scrolls sideways — box-drawing diagrams and wide code survive a
+ *  narrow measure. Range includes the newline after the closing line. */
+export type FenceBlock = { start: number; end: number };
+
+/** Fence blocks from a base's `fence` spans (adjacent ones merged). */
+export function fenceLayout(text: string, spans: StyleSpan[]): FenceBlock[] {
+	const out: FenceBlock[] = [];
+	for (const s of [...spans].sort((a, b) => a.start - b.start)) {
+		if (s.cls !== 'fence' || s.end <= s.start) continue;
+		const last = out[out.length - 1];
+		if (last && s.start <= last.end + 1) last.end = Math.max(last.end, s.end);
+		else out.push({ start: s.start, end: s.end });
+	}
+	for (const f of out) if (text[f.end] === '\n') f.end += 1;
+	return out;
+}
+
+/** What RichContent draws: runs of flowing text, grids whose cells hold
+ *  the runs inside each cell's range, and fence blocks. */
 export type RenderBlock =
 	| { kind: 'flow'; segs: ContentSegment[] }
+	| { kind: 'fence'; segs: ContentSegment[] }
 	| { kind: 'table'; table: TableBlock; cells: ContentSegment[][][] };
 
 /** Split text / highlight runs at `at` (atoms are never split). */
@@ -125,9 +144,19 @@ function splitAt(seg: ContentSegment, at: number): ContentSegment[] {
 	return [seg];
 }
 
-export function layoutSegments(segments: ContentSegment[], tables: TableBlock[]): RenderBlock[] {
-	if (tables.length === 0) return [{ kind: 'flow', segs: segments }];
+export function layoutSegments(
+	segments: ContentSegment[],
+	tablesIn: TableBlock[],
+	fences: FenceBlock[] = []
+): RenderBlock[] {
+	if (tablesIn.length === 0 && fences.length === 0) return [{ kind: 'flow', segs: segments }];
+	// A table inside a fence is code, not a table.
+	const tables = tablesIn.filter((t) => !fences.some((f) => t.start >= f.start && t.start < f.end));
 	const cuts = new Set<number>();
+	for (const f of fences) {
+		cuts.add(f.start);
+		cuts.add(f.end);
+	}
 	for (const t of tables) {
 		cuts.add(t.start);
 		cuts.add(t.end);
@@ -147,8 +176,22 @@ export function layoutSegments(segments: ContentSegment[], tables: TableBlock[])
 	const out: RenderBlock[] = [];
 	let flow: ContentSegment[] = [];
 	let ti = 0;
+	let fi = 0;
 	let open: Extract<RenderBlock, { kind: 'table' }> | null = null;
+	let openFence: { block: Extract<RenderBlock, { kind: 'fence' }>; f: FenceBlock } | null = null;
 	for (const seg of pieces) {
+		while (fi < fences.length && seg.srcStart >= fences[fi].end) fi++;
+		const f = fences[fi];
+		if (f && seg.srcStart >= f.start) {
+			if (!openFence || openFence.f !== f) {
+				if (flow.length) out.push({ kind: 'flow', segs: flow });
+				flow = [];
+				openFence = { block: { kind: 'fence', segs: [] }, f };
+				out.push(openFence.block);
+			}
+			openFence.block.segs.push(seg);
+			continue;
+		}
 		while (ti < tables.length && seg.srcStart >= tables[ti].end) ti++;
 		const t = tables[ti];
 		if (!t || seg.srcStart < t.start) {

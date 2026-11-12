@@ -26,7 +26,7 @@
 	import type { StyleSpan } from '$lib/layers/registry';
 	import { applyStyles, styleClass } from '$lib/layers/style-segments';
 	import { hiddenMarkerSpans } from '$lib/layers/hide-markers';
-	import { layoutSegments, tableLayout } from '$lib/layers/table-layout';
+	import { fenceLayout, layoutSegments, tableLayout } from '$lib/layers/table-layout';
 	import { layers } from '$lib/layers/store.svelte';
 
 	const app = getAppState();
@@ -95,7 +95,9 @@
 	// Tables a base recognised render as a real grid (lib/layers/table-layout):
 	// cells hold the source runs of their range, separators are not drawn.
 	const blocks = $derived(
-		layoutSegments(segmentsFlat, styles.length ? tableLayout(content, styles) : [])
+		styles.length
+			? layoutSegments(segmentsFlat, tableLayout(content, styles), fenceLayout(content, styles))
+			: layoutSegments(segmentsFlat, [])
 	);
 
 	// Progress is reported by the embed/quote/slot cards themselves (each knows
@@ -264,7 +266,7 @@
 <!-- A table is a scrollable grid inside the pre: each cell renders the
      source runs of its range (stamped), the pipes and rule row are not
      drawn. Header rows (th) go in thead. -->
-<pre class="section-content" class:muted bind:this={rootEl}>{#each blocks as b, bi (bi)}{#if b.kind === 'flow'}{#each b.segs as seg, i (i)}{@render run(seg)}{/each}{:else}<span class="ly-tablewrap"><table class="ly-grid"><tbody>{#each b.table.rows as row, ri (ri)}<tr class:ly-grid__head={row.header}>{#each { length: b.table.cols } as _, ci (ci)}{#if row.header}<th><span class="ly-cell">{#each b.cells[ri][ci] ?? [] as seg, k (k)}{@render run(seg)}{/each}</span></th>{:else}<td><span class="ly-cell">{#each b.cells[ri][ci] ?? [] as seg, k (k)}{@render run(seg)}{/each}</span></td>{/if}{/each}</tr>{/each}</tbody></table></span>{/if}{/each}</pre>
+<pre class="section-content" class:muted bind:this={rootEl}>{#each blocks as b, bi (bi)}{#if b.kind === 'flow'}{#each b.segs as seg, i (i)}{@render run(seg)}{/each}{:else if b.kind === 'fence'}<span class="ly-fencewrap">{#each b.segs as seg, i (i)}{@render run(seg)}{/each}</span>{:else}<span class="ly-tablewrap"><table class="ly-grid"><tbody>{#each b.table.rows as row, ri (ri)}<tr class:ly-grid__head={row.header}>{#each { length: b.table.cols } as _, ci (ci)}{#if row.header}<th><span class="ly-cell">{#each b.cells[ri][ci] ?? [] as seg, k (k)}{@render run(seg)}{/each}</span></th>{:else}<td><span class="ly-cell">{#each b.cells[ri][ci] ?? [] as seg, k (k)}{@render run(seg)}{/each}</span></td>{/if}{/each}</tr>{/each}</tbody></table></span>{/if}{/each}</pre>
 {#if tip}<div class="hl-tip" use:portal style="left: {tip.x}px; top: {tip.y}px" role="tooltip">{#each tip.lines as line, i (i)}<div>{line}</div>{/each}</div>{/if}
 {#if preview}
 	<!-- svelte-ignore a11y_no_static_element_interactions -->
@@ -351,6 +353,27 @@
 	/* Hidden markers (lib/layers/hide-markers): the sigil text stays in the
 	   DOM — offsets intact — it just isn't drawn. */
 	.section-content :global(.ly-hide) { display: none; }
+	/* Code fence block: lines stay whole (diagrams, wide code) and the
+	   block scrolls sideways inside the measure. The tint moves from the
+	   runs to the block. */
+	.ly-fencewrap {
+		display: block;
+		max-width: 100%;
+		overflow-x: auto;
+		white-space: pre;
+		overflow-wrap: normal;
+		text-wrap: nowrap;
+		text-align: start;
+		hyphens: manual;
+		margin: 0.2em 0;
+		padding: 0.4em 0.6em;
+		border-radius: 4px;
+		background: color-mix(in srgb, var(--fg) 7%, transparent);
+		font-family: var(--font-mono);
+		/* Tight enough that box-drawing verticals (║ │) join up. */
+		line-height: 1.2;
+	}
+	.ly-fencewrap :global(.ly-fence) { background: none; }
 	/* Table grid: scrolls sideways inside the measure instead of wrapping
 	   columns into each other; a cell wraps only past ~28em. */
 	.ly-tablewrap {

@@ -93,3 +93,21 @@ describe('layoutSegments', () => {
 		expect(tb.cells[0][1][0].type).toBe('highlight');
 	});
 });
+
+describe('fence blocks', () => {
+	it('a fence is one block; a pipe table inside it stays code', async () => {
+		const { fenceLayout, layoutSegments } = await import('./table-layout');
+		const t = 'a\n\n```text\n| x | y |\n|---|---|\n║ box ║\n```\nb';
+		const spans = md.spans(t);
+		const fences = fenceLayout(t, spans);
+		expect(fences.map((f) => t.slice(f.start, f.end))).toEqual(['```text\n| x | y |\n|---|---|\n║ box ║\n```\n']);
+		const blocks = layoutSegments(
+			[{ type: 'text', text: t, srcStart: 0, srcEnd: t.length }],
+			tableLayout(t, spans),
+			fences
+		);
+		expect(blocks.map((b) => b.kind)).toEqual(['flow', 'fence', 'flow']);
+		const fence = blocks[1] as Extract<(typeof blocks)[number], { kind: 'fence' }>;
+		expect(fence.segs.map((s) => ('text' in s ? s.text : '')).join('')).toBe(t.slice(fences[0].start, fences[0].end));
+	});
+});
