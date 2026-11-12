@@ -1224,7 +1224,7 @@
 		if (mode === 'local') {
 			// Local = neutral: nothing reaches a relay, so there is nothing
 			// in flight to show — publishing stores locally until a backup.
-			return { label: 'local', pillClass: 'pill--draft', dotClass: 'dot--local' };
+			return { label: 'local', pillClass: 'pill--localmode', dotClass: 'dot--local' };
 		}
 		if (mode === 'confirm') {
 			// Confirm = orange (id-diverged): the engine is gating

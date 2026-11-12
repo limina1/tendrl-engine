@@ -340,7 +340,7 @@
 	}
 	.bk-note {
 		padding: 6px 8px;
-		border-left: 2px solid var(--id-draft, var(--yellow));
+		border-left: 2px solid var(--state-local);
 		background: var(--bg-surface);
 		color: var(--base7);
 	}
@@ -450,7 +450,7 @@
 		white-space: nowrap;
 	}
 	.bk-prov--local {
-		color: var(--id-draft, var(--yellow));
+		color: var(--state-local);
 	}
 	.bk-del {
 		color: var(--red);
