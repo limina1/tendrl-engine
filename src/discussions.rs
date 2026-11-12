@@ -222,8 +222,9 @@ pub struct Highlighter {
 }
 
 /// The marks a highlighter can draw, in canonical order: a tinted
-/// background, an underline, bold or italic letters — all in its colour.
-pub const HIGHLIGHT_MARKS: [&str; 4] = ["fill", "underline", "bold", "italic"];
+/// background, coloured letters, an underline, bold or italic letters —
+/// all in its colour.
+pub const HIGHLIGHT_MARKS: [&str; 5] = ["fill", "color", "underline", "bold", "italic"];
 
 /// Tag name carrying a highlight's style.
 pub const HIGHLIGHTER_TAG: &str = "highlighter";
@@ -251,7 +252,7 @@ impl Highlighter {
                 continue;
             }
             let Some(known) = HIGHLIGHT_MARKS.iter().find(|k| k.eq_ignore_ascii_case(m)) else {
-                return Err(format!("unknown highlight mark {m:?} (fill, underline, bold, italic)"));
+                return Err(format!("unknown highlight mark {m:?} (fill, color, underline, bold, italic)"));
             };
             want.push(known);
         }
@@ -1699,6 +1700,9 @@ mod tests {
         let h = Highlighter::with_marks("for", "#8fd694", &["Bold", "underline", "bold"]).unwrap();
         assert_eq!(h.marks, vec!["underline", "bold"]);
         assert_eq!(h.to_tag(), vec!["highlighter", "for", "#8fd694", "underline", "bold"]);
+        // `color` = ink on the letters; canonical order puts it after fill.
+        let c = Highlighter::with_marks("", "#8fd694", &["italic", "color", "fill"]).unwrap();
+        assert_eq!(c.marks, vec!["fill", "color", "italic"]);
         assert!(Highlighter::with_marks("x", "#ffffff", &["sparkle"]).is_err());
         // Fill-only keeps the 3-element tag; a 3-element tag reads as fill.
         assert_eq!(Highlighter::new("x", "#ffffff").unwrap().to_tag().len(), 3);

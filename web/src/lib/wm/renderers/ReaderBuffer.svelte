@@ -13,6 +13,7 @@
 	import PoolStateBadges from '$lib/components/PoolStateBadges.svelte';
 	import { getActiveStore, type NavAction } from '../buffer-store.svelte';
 	import { shell } from '../shell.svelte';
+	import { DEFAULT_TREE_DEPTH, rememberDepth, rememberedDepth } from '$lib/reader-depth';
 	import { layers, bindMimetype, bindPublication, setHideMarkers } from '$lib/layers/store.svelte';
 	import { LAYERS, SOURCE_ID, layerById, formatLabel } from '$lib/layers/registry';
 	import { resolveLayer, type LayerPick } from '$lib/layers/resolve';
@@ -158,7 +159,16 @@
 	// `max_depth` counts the deepest fully-loaded level). Minimum 1: level 0
 	// (the focused index itself) is always loaded.
 	const MAX_DEPTH = 6;
-	let treeDepth = $state(savedView?.treeDepth ?? 2);
+	// The buffer's own view state first, else the depth last chosen for this
+	// publication on this device (reader-depth.ts), else the default.
+	// svelte-ignore state_referenced_locally
+	const depthCoord = (() => {
+		const a = parseBufferId(buffer.id);
+		return a && a.kind === 30040 ? `30040:${a.pubkey}:${a.dTag}` : null;
+	})();
+	let treeDepth = $state(
+		savedView?.treeDepth ?? (depthCoord ? rememberedDepth(depthCoord) : undefined) ?? DEFAULT_TREE_DEPTH
+	);
 	// Depth the current focus's tree has actually been streamed to. Lowering
 	// `treeDepth` at or below this is a no-op — the deeper tree stays loaded
 	// and ready, so no re-stream and no counter reset.
@@ -1636,6 +1646,7 @@
 		const clamped = Math.max(1, Math.min(MAX_DEPTH, d));
 		if (clamped === treeDepth) return;
 		treeDepth = clamped;
+		if (depthCoord) rememberDepth(depthCoord, clamped);
 		if (!parsedAddr || parsedAddr.kind !== 30040) return;
 		// Lowering the depth, or any target within what's already loaded, is
 		// a no-op: the deeper tree stays in place, ready if depth is raised

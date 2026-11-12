@@ -14,9 +14,9 @@
 
 /** A highlight's style — `["highlighter", label, #rrggbb]` on the 9802
  *  (docs/highlighters-contract.org). */
-export type HighlightMark = 'fill' | 'underline' | 'bold' | 'italic';
+export type HighlightMark = 'fill' | 'color' | 'underline' | 'bold' | 'italic';
 /** Canonical order (mirrors Rust `HIGHLIGHT_MARKS`). */
-export const HIGHLIGHT_MARKS: HighlightMark[] = ['fill', 'underline', 'bold', 'italic'];
+export const HIGHLIGHT_MARKS: HighlightMark[] = ['fill', 'color', 'underline', 'bold', 'italic'];
 
 export interface Highlighter {
 	label: string;

@@ -106,8 +106,9 @@
 	// A mark paints every highlight covering its run, each in its own ink
 	// (highlighter colour, else the author hue), at the one display alpha:
 	// fills stack as flat gradient layers, underlines as 2px lines (offset
-	// so stacked underlines stay distinct), bold/italic change the letters
-	// and tint them when no fill sits under them. CSS lists layers top-first.
+	// so stacked underlines stay distinct), `color` inks the letters (the
+	// topmost such layer wins), bold/italic change the letters and tint them
+	// when no fill sits under them. CSS lists layers top-first.
 	function styleFor(h: HighlightSegmentInfo): string {
 		const a = highlightDisplay.alpha / 100;
 		const topFirst = [...h.layers].reverse();
@@ -130,7 +131,8 @@
 			const shape = marks.includes('bold') || marks.includes('italic');
 			if (marks.includes('bold')) bold = true;
 			if (marks.includes('italic')) italic = true;
-			if (shape && ink === null && !marks.includes('fill')) ink = color;
+			if (ink === null && (marks.includes('color') || (shape && !marks.includes('fill'))))
+				ink = color;
 		}
 		const layers = [...unders, ...fills];
 		let css = layers.length ? `background: ${layers.join(', ')};` : 'background: none;';

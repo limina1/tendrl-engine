@@ -97,7 +97,8 @@ export function highlightStroke(layer: { pubkey: string; highlighter?: { color: 
 }
 
 /** Inline CSS showing a highlighter's marks on a short sample (chips,
- *  drawer labels): fill tint, underline, bold, italic — all in its ink. */
+ *  drawer labels): fill tint, coloured letters, underline, bold, italic —
+ *  all in its ink. */
 export function markSampleStyle(h: { color: string; marks?: string[] }): string {
 	const m = h.marks?.length ? h.marks : ['fill'];
 	let css = '';
@@ -106,6 +107,6 @@ export function markSampleStyle(h: { color: string; marks?: string[] }): string 
 		css += ` text-decoration: underline 2px ${h.color}; text-underline-offset: 2px;`;
 	if (m.includes('bold')) css += ' font-weight: 700;';
 	if (m.includes('italic')) css += ' font-style: italic;';
-	if (!m.includes('fill')) css += ` color: ${h.color};`;
+	if (m.includes('color') || !m.includes('fill')) css += ` color: ${h.color};`;
 	return css;
 }
