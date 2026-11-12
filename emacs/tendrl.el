@@ -423,6 +423,10 @@ SOURCE and IDENT are kept as `tendrl-event-source' / `tendrl-event-ident'."
       (goto-char (point-min)))
     ;; A major mode kills the buffer-locals, so everything is set after it.
     (funcall mode)
+    ;; Long paragraphs (and long quote excerpts) wrap inside the window
+    ;; whatever the mode's own default.
+    (setq truncate-lines nil)
+    (visual-line-mode 1)
     (setq tendrl-event event
           tendrl-event-source source
           tendrl-event-ident ident
@@ -478,6 +482,8 @@ this applies the markup layer by hand; nostrdown overlays are re-resolved."
             header-line-format (format " profile · %s… · %s    j: json  q: quit"
                                        (substring (or (alist-get 'pubkey profile) "????????") 0 8)
                                        (or source "local")))
+      (setq truncate-lines nil)
+      (visual-line-mode 1)
       (view-mode 1)
       (tendrl-event-view-mode 1))
     (pop-to-buffer buf)
