@@ -83,6 +83,8 @@
 		publicationThreadsOpen: boolean;
 		treeOpen: boolean;
 		toolsOpen: boolean;
+		/** Which tools-sheet sections are expanded (actions by default). */
+		toolsSecs?: Record<string, boolean>;
 		/** Rendering-layer pick for this buffer: undefined = automatic (declared
 		 *  format + bindings), null = source, else a layer id. Un-promoted, so
 		 *  it lives with the other view state and dies with the buffer. */
@@ -113,6 +115,7 @@
 				publicationThreadsOpen,
 				treeOpen,
 				toolsOpen,
+				toolsSecs: { ...toolsSecs },
 				layerPick,
 				scroll: { ...scrollTops }
 			} satisfies ReaderViewState);
@@ -824,6 +827,10 @@
 	// typography). Both ride along in the saved reading place.
 	let treeOpen = $state(savedView?.treeOpen ?? false);
 	let toolsOpen = $state(savedView?.toolsOpen ?? false);
+	// The tools sheet grew long: each section folds behind its own ▸ head,
+	// only `actions` open by default, and the sheet is height-capped.
+	let toolsSecs = $state<Record<string, boolean>>(savedView?.toolsSecs ?? { actions: true });
+	const toggleToolsSec = (k: string) => (toolsSecs[k] = !toolsSecs[k]);
 	let tocOpen = $state(false);
 	// ContinuousView instance — its exported scrollToSection keeps a TOC
 	// jump in-place instead of flipping the view mode.
@@ -935,6 +942,19 @@
 		}
 		return out.sort((a, b) => b.created_at - a.created_at);
 	});
+
+	// The drawer follows the view: on a page it lists only that page's
+	// highlights (the section the pager shows); continuous lists them all.
+	const pageAddr = $derived.by<string | null>(() => {
+		if (viewMode !== 'paginated') return null;
+		const s = pristineSections[currentSection];
+		return s ? addrKey(s.addr) : null;
+	});
+	const drawerScoped = $derived(
+		pageAddr === null
+			? drawerHighlights
+			: drawerHighlights.filter((h) => h.section_addr === pageAddr)
+	);
 
 	function sectionIndexForAddr(addr: string): number {
 		return pristineSections.findIndex((s) => addrKey(s.addr) === addr);
@@ -2444,10 +2464,16 @@
 		     for mid-read, so it lives behind `T`. -->
 		<div class="tools-sheet" role="region" aria-label="Reader tools">
 			<div class="tools-sheet__sec">
-				<div class="tools-sheet__head">
+				<button
+					class="tools-sheet__head"
+					onclick={() => toggleToolsSec('actions')}
+					aria-expanded={!!toolsSecs.actions}
+				>
+					<span class="chev" aria-hidden="true">{toolsSecs.actions ? '▾' : '▸'}</span>
 					<span class="cap">actions</span>
 					<span class="hint">change or refresh this publication</span>
-				</div>
+				</button>
+				{#if toolsSecs.actions}
 				<div class="tools-sheet__row">
 					<button
 						class="hl-mode-pill"
@@ -2551,14 +2577,21 @@
 							: 'Confirm mode — pulling comments and highlights raises the fetch modal'}
 					>{discussionLoading ? '…' : 'refresh threads'}</button>
 				</div>
+				{/if}
 			</div>
 			{#if publication}
 				{@const pubAddr = publication.addr}
 				<div class="tools-sheet__sec">
-					<div class="tools-sheet__head">
+					<button
+						class="tools-sheet__head"
+						onclick={() => toggleToolsSec('pool')}
+						aria-expanded={!!toolsSecs.pool}
+					>
+						<span class="chev" aria-hidden="true">{toolsSecs.pool ? '▾' : '▸'}</span>
 						<span class="cap">pool</span>
 						<span class="hint">where this publication sits in your working set — and where it was found</span>
-					</div>
+					</button>
+					{#if toolsSecs.pool}
 					<div class="tools-sheet__row">
 						<PoolStateBadges
 							item={app.findPoolItemByAddr(pubAddr)}
@@ -2573,13 +2606,20 @@
 							orientation="horizontal"
 						/>
 					</div>
+					{/if}
 				</div>
 			{/if}
 			<div class="tools-sheet__sec">
-				<div class="tools-sheet__head">
+				<button
+					class="tools-sheet__head"
+					onclick={() => toggleToolsSec('markup')}
+					aria-expanded={!!toolsSecs.markup}
+				>
+					<span class="chev" aria-hidden="true">{toolsSecs.markup ? '▾' : '▸'}</span>
 					<span class="cap">markup</span>
 					<span class="hint">{layerHint}</span>
-				</div>
+				</button>
+				{#if toolsSecs.markup}
 				<div class="tools-sheet__row">
 					<button
 						class:active={layerDecision.layerId === null}
@@ -2623,13 +2663,21 @@
 						{/if}
 					</div>
 				{/if}
+				{/if}
 			</div>
 			<div class="tools-sheet__sec">
-				<div class="tools-sheet__head">
+				<button
+					class="tools-sheet__head"
+					onclick={() => toggleToolsSec('reading')}
+					aria-expanded={!!toolsSecs.reading}
+				>
+					<span class="chev" aria-hidden="true">{toolsSecs.reading ? '▾' : '▸'}</span>
 					<span class="cap">reading</span>
 					<span class="hint">faces &amp; measure — persists per device</span>
-				</div>
+				</button>
+				{#if toolsSecs.reading}
 				<ReadingControls compact />
+				{/if}
 			</div>
 		</div>
 	{/if}
@@ -2783,6 +2831,7 @@
 		{/if}
 		<div
 			class="content"
+			class:content--paged={viewMode !== 'continuous'}
 			bind:this={contentWrap}
 			onscroll={() => (scrollTops.content = contentWrap?.scrollTop ?? 0)}
 		>
@@ -2882,7 +2931,8 @@
 		/>
 	{/if}
 	<HighlightsDrawer
-		highlights={drawerHighlights}
+		highlights={drawerScoped}
+		scope={pageAddr === null ? null : 'this page'}
 		open={drawerOpen}
 		onclose={() => (drawerOpen = false)}
 		onnavigate={scrollToHighlight}
@@ -3199,6 +3249,13 @@
 		white-space: pre-wrap;
 	}
 	.content { flex: 1; overflow: auto; min-height: 0; }
+	/* Paged: the page scrolls inside PaginatedView, so its Prev/Next bar
+	   stays pinned instead of scrolling away with the text. */
+	.content.content--paged {
+		display: flex;
+		flex-direction: column;
+		overflow: hidden;
+	}
 	.empty {
 		flex: 1;
 		display: flex;
@@ -3410,8 +3467,11 @@
 		flex-direction: column;
 		border-bottom: 1px solid var(--panel-border);
 		background: var(--panel-bg);
-		max-height: 60vh;
+		/* Capped: the sheet scrolls inside itself so the page below keeps
+		   its room (and the pager its place). */
+		max-height: min(45vh, 420px);
 		overflow: auto;
+		overscroll-behavior: contain;
 		flex-shrink: 0;
 	}
 	.tools-sheet__sec {
@@ -3427,6 +3487,21 @@
 		align-items: baseline;
 		gap: 8px;
 		flex-wrap: wrap;
+		width: 100%;
+		padding: 2px 0;
+		background: transparent;
+		border: 0;
+		color: inherit;
+		text-align: left;
+		cursor: pointer;
+	}
+	.tools-sheet__head:hover .cap,
+	.tools-sheet__head:hover .chev { color: var(--fg); }
+	.tools-sheet__head .chev {
+		font-family: var(--font-mono);
+		font-size: var(--t-2xs);
+		min-width: 1ch;
+		color: var(--base5);
 	}
 	.tools-sheet__head .cap {
 		font-family: var(--font-mono);
