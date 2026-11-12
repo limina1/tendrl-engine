@@ -1,3 +1,19 @@
+## v0.21.0 — 2026-11-12
+
+- feat(reader): code fences as their own block — lines kept whole, scroll sideways
+- feat(broadcast): one picker for any event — re-send signed events, never sign
+- fix(reader): remember the tree depth per publication
+- feat(highlighters): `color` mark — ink the letters, no background
+- fix(web): refresh buttons spin their icon, not their box
+- style(network): local mode in gunmetal — its own --state-local token
+- docs(zettel): table grid decision, Emacs client note, reader chrome + syntax view
+- feat(emacs): filled embed cards, block quotes, wrapped content buffers
+- feat(reader): table grid + rendered/show-markers syntax toggle
+- feat(web): local network mode + back-up-to-relays modal
+- feat(network): local mode — no relay sockets; backup plan + broadcast
+- fix(reader): pinned pager, foldable capped tools sheet, page-scoped highlights drawer
+- fix(config): vim mode off by default
+
 ## v0.20.1 — 2026-11-11
 
 - fix(highlighters): a style needs no label — the label is a class, the style is a look
