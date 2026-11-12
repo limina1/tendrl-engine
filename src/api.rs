@@ -5090,7 +5090,7 @@ pub struct DiscussionHighlightRequest {
 pub struct HighlighterInput {
     pub label: String,
     pub color: String,
-    /// `fill` / `underline` / `bold` / `italic`, combinable; none = fill.
+    /// `fill` / `color` / `underline` / `bold` / `italic`, combinable; none = fill.
     #[serde(default)]
     pub marks: Vec<String>,
 }

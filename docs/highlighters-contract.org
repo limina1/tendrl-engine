@@ -81,11 +81,13 @@ Idea + decisions: [[file:zettel/idea-highlighters.org][idea-highlighters]].
 
 * Marks (2026-11-11)
 
-=["highlighter", label, color, …marks]= — =fill= / =underline= / =bold= /
-=italic=, combinable, canonical order; no marks = fill (3-element tags stay
-valid); unknown marks 400 on write, skipped on read. All drawn in the
-highlighter's ink; bold/italic change the letters (tinted when no fill
-under them). Attribution: a tiny tooltip at the pointer naming who
+=["highlighter", label, color, …marks]= — =fill= / =color= / =underline= /
+=bold= / =italic=, combinable, canonical order; no marks = fill (3-element
+tags stay valid); unknown marks 400 on write, skipped on read. All drawn in
+the highlighter's ink; =color= (2026-11-12) inks the letters themselves — a
+reading mark with no background; bold/italic change the letters (tinted
+when no fill under them). A reader older than =color= skips it, so a
+color-only highlight falls back to fill there. Attribution: a tiny tooltip at the pointer naming who
 published each layer; a click flashes it in the drawer.
 
 * Comments and annotations on a highlight (2026-11-11)

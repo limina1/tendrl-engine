@@ -1,5 +1,5 @@
 <script lang="ts">
-	// The marks a highlighter draws — fill / underline / bold / italic,
+	// The marks a highlighter draws — fill / color / underline / bold / italic,
 	// combinable, at least one. Each toggle previews itself in the ink.
 	import { HIGHLIGHT_MARKS, type HighlightMark } from '$lib/discussions/highlights';
 	import { markSampleStyle } from '$lib/discussions/colors';
