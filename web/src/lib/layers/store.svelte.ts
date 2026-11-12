@@ -33,10 +33,19 @@ export type LayerPrefs = {
 	byPublication: Record<string, string>;
 	/** Markup to assume for a section that declares none; null = source. */
 	untagged: CanonicalMimetype | null;
+	/** Hide markup sigils (`**`, `## `, `[[ ]]`, …) as the composer's
+	 *  Rendered view does; false = show them dimmed. */
+	hideMarkers: boolean;
 };
 
 export function layerDefaults(): LayerPrefs {
-	return { enabled: [...ALL_BASE_IDS], byMimetype: {}, byPublication: {}, untagged: null };
+	return {
+		enabled: [...ALL_BASE_IDS],
+		byMimetype: {},
+		byPublication: {},
+		untagged: null,
+		hideMarkers: false
+	};
 }
 export const LAYER_DEFAULTS: LayerPrefs = layerDefaults();
 
@@ -62,7 +71,8 @@ function normalize(p: Partial<LayerPrefs> | null | undefined): LayerPrefs {
 		if (PUB_COORD.test(k) && b) byPublication[k] = b;
 	}
 	const untagged = isCanonicalMimetype(p.untagged) ? p.untagged : null;
-	return { enabled: [...new Set(enabled)], byMimetype, byPublication, untagged };
+	const hideMarkers = p.hideMarkers === true;
+	return { enabled: [...new Set(enabled)], byMimetype, byPublication, untagged, hideMarkers };
 }
 
 function stored(): LayerPrefs {
@@ -127,6 +137,13 @@ export function setUntaggedFormat(mimetype: string | null) {
 	const next = isCanonicalMimetype(mimetype) ? mimetype : null;
 	if (layers.untagged === next) return;
 	layers.untagged = next;
+	persist();
+}
+
+/** Show or hide markup sigils in the reader. */
+export function setHideMarkers(on: boolean) {
+	if (layers.hideMarkers === on) return;
+	layers.hideMarkers = on;
 	persist();
 }
 

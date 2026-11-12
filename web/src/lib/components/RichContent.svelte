@@ -25,6 +25,9 @@
 	import type { ResolutionTracker } from '$lib/nostr/resolution-progress.svelte';
 	import type { StyleSpan } from '$lib/layers/registry';
 	import { applyStyles, styleClass } from '$lib/layers/style-segments';
+	import { hiddenMarkerSpans } from '$lib/layers/hide-markers';
+	import { layoutSegments, tableLayout } from '$lib/layers/table-layout';
+	import { layers } from '$lib/layers/store.svelte';
 
 	const app = getAppState();
 
@@ -83,8 +86,16 @@
 			}
 		];
 	});
-	const segments = $derived(
-		applyStyles(buildSegments(content, liveSpans, refs, tokens, focusedHighlightId), styles)
+	const segmentsFlat = $derived(
+		applyStyles(
+			buildSegments(content, liveSpans, refs, tokens, focusedHighlightId),
+			layers.hideMarkers && styles.length ? [...styles, ...hiddenMarkerSpans(content, styles)] : styles
+		)
+	);
+	// Tables a base recognised render as a real grid (lib/layers/table-layout):
+	// cells hold the source runs of their range, separators are not drawn.
+	const blocks = $derived(
+		layoutSegments(segmentsFlat, styles.length ? tableLayout(content, styles) : [])
 	);
 
 	// Progress is reported by the embed/quote/slot cards themselves (each knows
@@ -247,7 +258,11 @@
      spans), so a wikilink under a highlight stays a live link. The mark
      carries no data-src-end: selection capture resolves the innermost stamped
      element, which is always one of the parts. -->
-<pre class="section-content" class:muted bind:this={rootEl}>{#each segments as seg, i (i)}{#if seg.type === 'highlight'}<mark class="hl-overlay" data-hl-ids={seg.highlight.layers.map((l) => l.id).join(' ')} data-src-start={seg.srcStart} style={styleFor(seg.highlight)} onmousemove={(e) => showTip(e, seg.highlight)} onmouseleave={() => (tip = null)}>{#each seg.parts as part, j (j)}{@render atom(part)}{/each}</mark>{:else}{@render atom(seg)}{/if}{/each}</pre>
+{#snippet run(seg: ContentSegment)}{#if seg.type === 'highlight'}<mark class="hl-overlay" data-hl-ids={seg.highlight.layers.map((l) => l.id).join(' ')} data-src-start={seg.srcStart} style={styleFor(seg.highlight)} onmousemove={(e) => showTip(e, seg.highlight)} onmouseleave={() => (tip = null)}>{#each seg.parts as part, j (j)}{@render atom(part)}{/each}</mark>{:else}{@render atom(seg)}{/if}{/snippet}
+<!-- A table is a scrollable grid inside the pre: each cell renders the
+     source runs of its range (stamped), the pipes and rule row are not
+     drawn. Header rows (th) go in thead. -->
+<pre class="section-content" class:muted bind:this={rootEl}>{#each blocks as b, bi (bi)}{#if b.kind === 'flow'}{#each b.segs as seg, i (i)}{@render run(seg)}{/each}{:else}<span class="ly-tablewrap"><table class="ly-grid"><tbody>{#each b.table.rows as row, ri (ri)}<tr class:ly-grid__head={row.header}>{#each { length: b.table.cols } as _, ci (ci)}{#if row.header}<th><span class="ly-cell">{#each b.cells[ri][ci] ?? [] as seg, k (k)}{@render run(seg)}{/each}</span></th>{:else}<td><span class="ly-cell">{#each b.cells[ri][ci] ?? [] as seg, k (k)}{@render run(seg)}{/each}</span></td>{/if}{/each}</tr>{/each}</tbody></table></span>{/if}{/each}</pre>
 {#if tip}<div class="hl-tip" use:portal style="left: {tip.x}px; top: {tip.y}px" role="tooltip">{#each tip.lines as line, i (i)}<div>{line}</div>{/each}</div>{/if}
 {#if preview}
 	<!-- svelte-ignore a11y_no_static_element_interactions -->
@@ -331,6 +346,48 @@
 	.section-content :global(.ly-tag) { color: var(--fg-muted); font-family: var(--font-mono); font-size: 0.8em; font-weight: 400; }
 	.section-content :global(.ly-admon) { color: var(--accent); font-weight: 700; font-family: var(--font-mono); font-size: 0.85em; }
 	.section-content :global(.ly-mark) { opacity: 0.45; font-weight: 400; font-style: normal; }
+	/* Hidden markers (lib/layers/hide-markers): the sigil text stays in the
+	   DOM — offsets intact — it just isn't drawn. */
+	.section-content :global(.ly-hide) { display: none; }
+	/* Table grid: scrolls sideways inside the measure instead of wrapping
+	   columns into each other; a cell wraps only past ~28em. */
+	.ly-tablewrap {
+		display: block;
+		max-width: 100%;
+		overflow-x: auto;
+		margin: 0.4em 0;
+		white-space: normal;
+		text-align: start;
+	}
+	.ly-grid {
+		border-collapse: collapse;
+		width: max-content;
+		max-width: none;
+		font-size: 0.95em;
+		line-height: 1.4;
+	}
+	.ly-grid th,
+	.ly-grid td {
+		border: 1px solid var(--panel-border, var(--border));
+		padding: 0.25em 0.7em;
+		vertical-align: top;
+		text-align: start;
+	}
+	.ly-grid th { font-weight: 650; background: var(--panel-bg-soft, transparent); }
+	.ly-grid .ly-cell {
+		display: block;
+		max-width: 28em;
+		white-space: pre-wrap;
+		overflow-wrap: break-word;
+	}
+	.section-content :global(.ly-mark.ly-listnum) { opacity: 1; }
+	.section-content :global(.ly-mark.ly-bullet) { opacity: 1; color: transparent; position: relative; }
+	.section-content :global(.ly-bullet::before) {
+		content: '•';
+		position: absolute;
+		left: 0;
+		color: var(--fg-muted);
+	}
 	/* A soft line break: the newline character stays in the DOM (offsets,
 	   capture, selection all intact) but is rendered as collapsible
 	   whitespace, so a hard-wrapped paragraph flows the way AsciiDoc /

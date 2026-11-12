@@ -12,7 +12,7 @@
 	import PoolStateBadges from '$lib/components/PoolStateBadges.svelte';
 	import { getActiveStore, type NavAction } from '../buffer-store.svelte';
 	import { shell } from '../shell.svelte';
-	import { layers, bindMimetype, bindPublication } from '$lib/layers/store.svelte';
+	import { layers, bindMimetype, bindPublication, setHideMarkers } from '$lib/layers/store.svelte';
 	import { LAYERS, SOURCE_ID, layerById, formatLabel } from '$lib/layers/registry';
 	import { resolveLayer, type LayerPick } from '$lib/layers/resolve';
 	import { mobileNav } from '../mobile-nav.svelte';
@@ -2644,6 +2644,23 @@
 					{#if layers.enabled.length === 0}
 						<span class="layer-none">all layers off — Settings → Layers</span>
 					{/if}
+				</div>
+				<div class="tools-sheet__row">
+					<!-- The composer's Rendered / Show markers, for reading:
+					     per-device, applies to every reader. -->
+					<span class="layer-none">syntax</span>
+					<button
+						class:active={layers.hideMarkers}
+						disabled={layerDecision.layerId === null}
+						onclick={() => setHideMarkers(true)}
+						title="Rendered — hide the markup characters (**, ##, [[ ]], …)"
+					>rendered</button>
+					<button
+						class:active={!layers.hideMarkers}
+						disabled={layerDecision.layerId === null}
+						onclick={() => setHideMarkers(false)}
+						title="Show markers — keep the markup characters, dimmed"
+					>show markers</button>
 				</div>
 				{#if layerPick !== undefined && !layerForce}
 					<div class="tools-sheet__row">
