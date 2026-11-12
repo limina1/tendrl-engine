@@ -491,7 +491,7 @@ async fn relay_loop(
     use crate::relay::{Frame, RelayAuth, RelayConn};
     let mut backoff = Duration::from_secs(1);
     loop {
-        let mut conn = match RelayConn::connect(&url, RelayAuth::none()).await {
+        let mut conn = match RelayConn::connect_signer(&url, RelayAuth::none()).await {
             Ok(c) => c,
             Err(e) => {
                 tracing::warn!("bunker: {url}: connect failed: {e}; retry in {backoff:?}");

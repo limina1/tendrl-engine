@@ -240,6 +240,13 @@ fn to_http(url: &str) -> String {
 async fn fetch_doc(client: &reqwest::Client, url: &str) -> Nip11Status {
     let http_url = to_http(url);
     let now = unix_now();
+    // Local mode: no request reaches a relay host, NIP-11 included.
+    if !crate::relay::relay_allowed(url) {
+        return Nip11Status::Failed {
+            error: crate::relay::LOCAL_MODE_REFUSAL.into(),
+            fetched_at: now,
+        };
+    }
     let resp = match client
         .get(&http_url)
         .header("Accept", "application/nostr+json")

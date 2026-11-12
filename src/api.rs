@@ -1725,7 +1725,8 @@ pub async fn bookshelf_save_handler(
 
     let mut broadcast_results = None;
     let mut accepted = false;
-    if req.broadcast {
+    // Local mode keeps it local: stored, marked local until a backup broadcast.
+    if req.broadcast && !engine.is_local() {
         let relays = req.relays.clone().unwrap_or_else(|| engine.publish_relays());
         let results =
             crate::relay::publish_to_relays(&relays, &event_json, &engine.relay_auth()).await;

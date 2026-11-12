@@ -7,7 +7,7 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::{HashMap, VecDeque};
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicU8, Ordering};
 use std::sync::Mutex;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tokio::sync::{broadcast, oneshot};
@@ -52,11 +52,16 @@ pub fn current_fetch_reason() -> Option<String> {
 /// - `Confirm` — every user-initiated relay fetch emits an intent the
 ///   UI must approve before the engine proceeds (the former "offline",
 ///   reframed: instead of silently suppressing, the engine asks).
+/// - `Local` — the engine never connects to a relay: fetches read the
+///   local store only, publishing signs and stores locally (the event stays
+///   "local" until broadcast). The way out is an explicit backup broadcast
+///   (`backup.rs`), which permits exactly the relays the user picked.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum NetworkMode {
     Auto,
     Confirm,
+    Local,
 }
 
 impl std::str::FromStr for NetworkMode {
@@ -67,7 +72,8 @@ impl std::str::FromStr for NetworkMode {
             // clients written before the rename keep working.
             "auto" | "online" => Ok(NetworkMode::Auto),
             "confirm" | "offline" => Ok(NetworkMode::Confirm),
-            _ => Err(format!("Unknown network mode: {s}. Valid: auto, confirm")),
+            "local" => Ok(NetworkMode::Local),
+            _ => Err(format!("Unknown network mode: {s}. Valid: auto, confirm, local")),
         }
     }
 }
@@ -77,6 +83,7 @@ impl std::fmt::Display for NetworkMode {
         match self {
             NetworkMode::Auto => write!(f, "auto"),
             NetworkMode::Confirm => write!(f, "confirm"),
+            NetworkMode::Local => write!(f, "local"),
         }
     }
 }
@@ -164,7 +171,7 @@ pub struct NetworkStatus {
 // ---------------------------------------------------------------------------
 
 pub struct NetworkActivity {
-    mode: AtomicBool, // true = auto
+    mode: AtomicU8, // see `mode_code`
     /// Whether the user has made an explicit first-run mode choice. Seeded
     /// from `[network] mode_chosen` in config.toml; flipped true (and
     /// persisted) the first time the mode is set through the UI.
@@ -190,7 +197,7 @@ impl NetworkActivity {
     pub fn new(initial_mode: NetworkMode) -> Self {
         let (events, _) = broadcast::channel(FETCH_EVENT_CAP);
         Self {
-            mode: AtomicBool::new(matches!(initial_mode, NetworkMode::Auto)),
+            mode: AtomicU8::new(mode_code(initial_mode)),
             mode_chosen: AtomicBool::new(false),
             log: Mutex::new(VecDeque::with_capacity(MAX_LOG_ENTRIES)),
             active_fetches: AtomicU64::new(0),
@@ -245,20 +252,26 @@ impl NetworkActivity {
     }
 
     pub fn is_auto(&self) -> bool {
-        self.mode.load(Ordering::Relaxed)
+        self.mode() == NetworkMode::Auto
+    }
+
+    /// Local mode: no relay is contacted (see [`NetworkMode::Local`]).
+    pub fn is_local(&self) -> bool {
+        self.mode() == NetworkMode::Local
     }
 
     pub fn mode(&self) -> NetworkMode {
-        if self.is_auto() {
-            NetworkMode::Auto
-        } else {
-            NetworkMode::Confirm
+        match self.mode.load(Ordering::Relaxed) {
+            1 => NetworkMode::Auto,
+            2 => NetworkMode::Local,
+            _ => NetworkMode::Confirm,
         }
     }
 
     pub fn set_mode(&self, mode: NetworkMode) {
-        self.mode
-            .store(matches!(mode, NetworkMode::Auto), Ordering::Relaxed);
+        self.mode.store(mode_code(mode), Ordering::Relaxed);
+        // The socket-level floor follows the mode.
+        crate::relay::set_local_only(mode == NetworkMode::Local);
     }
 
     /// Whether the user has made an explicit first-run mode choice.
@@ -444,6 +457,12 @@ impl NetworkActivity {
         relays: Vec<String>,
         summary: Option<RequestSummary>,
     ) -> std::result::Result<FetchOperation, FetchCancelled> {
+        // Local mode: no fetch operation opens — callers fall back to what
+        // is local, exactly as when a Confirm intent is declined, but with
+        // no intent shown (there is nothing to decide).
+        if self.is_local() {
+            return Err(FetchCancelled);
+        }
         let operation_id = next_operation_id();
         let needs_confirmation = !self.is_auto();
         // Session overrides ride on top of whatever set the caller
@@ -530,6 +549,14 @@ impl NetworkActivity {
         summary: Option<RequestSummary>,
     ) -> FetchOperation {
         let operation_id = next_operation_id();
+        if self.is_local() {
+            // No round in local mode: an op over no relays, nothing emitted.
+            return FetchOperation {
+                activity: std::sync::Arc::clone(self),
+                operation_id,
+                relays: Vec::new(),
+            };
+        }
         // A relay switched off for this session stays off here too; the
         // session's added relays do not join — the round is provenance only.
         let off = self.session_relays().off;
@@ -564,6 +591,25 @@ impl NetworkActivity {
         manifest: Option<PublishManifest>,
     ) -> std::result::Result<PublishOperation, FetchCancelled> {
         let operation_id = next_operation_id();
+        if self.is_local() {
+            // Local mode publishes locally: the caller already stored the
+            // signed event; the broadcast goes to no relay. The intent still
+            // shows, so the user sees the event was kept local.
+            self.emit(FetchEvent::PublishIntent {
+                operation_id: operation_id.clone(),
+                label: format!("Kept local (local mode) — {label}"),
+                relays: Vec::new(),
+                event_ids,
+                needs_confirmation: false,
+                summary,
+                manifest,
+            });
+            return Ok(PublishOperation {
+                activity: std::sync::Arc::clone(self),
+                operation_id,
+                relays: Vec::new(),
+            });
+        }
         let needs_confirmation = !self.is_auto();
         self.emit(FetchEvent::PublishIntent {
             operation_id: operation_id.clone(),
@@ -601,6 +647,45 @@ impl NetworkActivity {
             operation_id,
             relays: chosen,
         })
+    }
+}
+
+impl NetworkActivity {
+    /// Open a publish operation the user already approved in a dedicated
+    /// picker (the backup broadcast): never gated, in any mode — the
+    /// picker *is* the confirmation. The caller holds a
+    /// [`crate::relay::RelayPermit`] for `relays` while it publishes.
+    pub fn begin_publish_operation_approved(
+        self: &std::sync::Arc<Self>,
+        label: String,
+        relays: Vec<String>,
+        event_ids: Vec<String>,
+        summary: Option<RequestSummary>,
+        manifest: Option<PublishManifest>,
+    ) -> PublishOperation {
+        let operation_id = next_operation_id();
+        self.emit(FetchEvent::PublishIntent {
+            operation_id: operation_id.clone(),
+            label,
+            relays: relays.clone(),
+            event_ids,
+            needs_confirmation: false,
+            summary,
+            manifest,
+        });
+        PublishOperation {
+            activity: std::sync::Arc::clone(self),
+            operation_id,
+            relays,
+        }
+    }
+}
+
+fn mode_code(mode: NetworkMode) -> u8 {
+    match mode {
+        NetworkMode::Confirm => 0,
+        NetworkMode::Auto => 1,
+        NetworkMode::Local => 2,
     }
 }
 
@@ -2004,6 +2089,57 @@ mod tests {
         assert!(net.session_excludes("wss://b"));
         assert!(net.reset_session_relays());
         assert!(!net.session_excludes("wss://b"));
+    }
+
+    #[tokio::test]
+    async fn local_mode_opens_no_fetch_and_publishes_to_no_relay() {
+        // `new` leaves the process-wide socket gate alone (only `set_mode`
+        // flips it), so this can't disturb the relay tests running beside it.
+        let net = std::sync::Arc::new(NetworkActivity::new(NetworkMode::Local));
+        assert!(net.is_local() && !net.is_auto());
+        assert_eq!(net.mode(), NetworkMode::Local);
+        let mut rx = net.subscribe_fetch_events();
+        let r = net
+            .begin_operation(FetchPattern::Event, "x".into(), vec![], vec!["wss://a".into()])
+            .await;
+        assert!(r.is_err(), "no fetch operation in local mode");
+        assert!(rx.try_recv().is_err(), "and no intent to decide on");
+        let ungated = net.begin_operation_ungated(
+            FetchPattern::Event,
+            "x".into(),
+            vec![],
+            vec!["wss://a".into()],
+            None,
+        );
+        assert!(ungated.relays().is_empty());
+        let op = net
+            .begin_publish_operation("pub".into(), vec!["wss://a".into()], vec!["id".into()], None, None)
+            .await
+            .expect("publishing locally is not a cancel");
+        assert!(op.relays().is_empty());
+        match rx.try_recv() {
+            Ok(FetchEvent::PublishIntent { label, relays, needs_confirmation, .. }) => {
+                assert!(label.starts_with("Kept local"));
+                assert!(relays.is_empty() && !needs_confirmation);
+            }
+            other => panic!("expected a kept-local intent, got {other:?}"),
+        }
+        // The backup's approved publish goes through in local mode.
+        let op = net.begin_publish_operation_approved(
+            "backup".into(),
+            vec!["wss://a".into()],
+            vec!["id".into()],
+            None,
+            None,
+        );
+        assert_eq!(op.relays(), ["wss://a".to_string()]);
+    }
+
+    #[test]
+    fn local_mode_parses_and_prints() {
+        assert_eq!("local".parse::<NetworkMode>().unwrap(), NetworkMode::Local);
+        assert_eq!(NetworkMode::Local.to_string(), "local");
+        assert_eq!(serde_json::to_value(NetworkMode::Local).unwrap(), "local");
     }
 
     #[tokio::test]
