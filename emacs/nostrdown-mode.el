@@ -103,9 +103,10 @@ engine's Confirm mode; use `nostrdown-resolve-online' for a relay pass."
 (defcustom nostrdown-prettify 'markup
   "How a resolved token is displayed.
 nil shows the raw token; `markup' hides the `{{prefix:' and `}}' chrome
-(and the target when a |display is given), like `org-link-descriptive';
-`label' replaces the whole token with the engine's resolved label.
-Point entering a token always reveals the raw text."
+like `org-link-descriptive' -- a |display is shown as written, otherwise
+the resolved label (a mention's profile name, an entity's title) stands
+in for the raw target; `label' replaces the whole token with the engine's
+resolved label.  Point entering a token always reveals the raw text."
   :type '(choice (const nil) (const markup) (const label)))
 
 (defcustom nostrdown-inline-embeds nil
@@ -116,6 +117,18 @@ below the token, using the transcluded content the engine returned."
 (defcustom nostrdown-embed-max-lines 10
   "Maximum content lines shown in an inline embed card."
   :type 'integer)
+
+(defcustom nostrdown-embed-fill-column 72
+  "Column the content of an inline embed card is filled to, so a long
+source paragraph never runs past the window.  nil leaves the transcluded
+lines as they are."
+  :type '(choice integer (const nil)))
+
+(defcustom nostrdown-quote-block-threshold 100
+  "A quote excerpt longer than this many characters is rendered as a block
+quote: on its own lines behind a `┃' bar, wrapped under `visual-line-mode',
+with the source title set under it.  nil keeps every quote inline."
+  :type '(choice integer (const nil)))
 
 (defcustom nostrdown-modes '(org-mode markdown-mode gfm-mode adoc-mode)
   "Major modes in which `global-nostrdown-mode' turns the mode on."
@@ -145,6 +158,10 @@ below the token, using the transcluded content the engine returned."
   "Face for a reference nothing matched.")
 (defface nostrdown-pending-face '((t :inherit shadow :underline t))
   "Face for a valid entity that is not in the local db yet.")
+(defface nostrdown-quote-face '((t :slant italic))
+  "Face added to a block-rendered quote excerpt.")
+(defface nostrdown-quote-bar-face '((t :inherit shadow))
+  "Face of the `┃' bar and attribution line of a block quote.")
 (defface nostrdown-embed-card-face '((t :inherit (font-lock-doc-face fixed-pitch)))
   "Face for the inline transclusion card.")
 
@@ -367,26 +384,61 @@ An Org `#+TITLE:', a Markdown / AsciiDoc heading, or front-matter `title:'."
        (_ label))
      'face (nostrdown--state-face ref))))
 
+(defun nostrdown--markup-label (ref raw)
+  "What `markup' prettify shows over REF's RAW target, or nil to keep RAW.
+The engine's label replaces a bech32 entity or slug the reader should not
+have to read: a mention shows `@name' from the kind-0 profile, an entity
+ref its title.  RAW stays when the label is the target as written."
+  (let ((label (alist-get 'label ref)))
+    (when (and label (not (equal label (string-trim raw)))
+               (not (alist-get 'label-explicit ref)))
+      (propertize (if (equal (alist-get 'kind ref) "mention")
+                      (concat "@" (string-remove-prefix "@" label))
+                    label)
+                  'face (nostrdown--state-face ref)))))
+
 (defun nostrdown--hide-markup (ov)
-  "Add invisible child overlays over the `{{prefix:' … `}}' chrome of OV."
-  (let ((beg (overlay-start ov)) (end (overlay-end ov)) (children nil))
+  "Add child overlays hiding the `{{prefix:' … `}}' chrome of OV.
+Without a |display, a target the engine labelled (a mention, an entity)
+is shown as that label instead of the raw text."
+  (let ((beg (overlay-start ov)) (end (overlay-end ov)) (children nil)
+        (ref (overlay-get ov 'nostrdown-ref)))
     (save-excursion
       (goto-char beg)
       (when (and (looking-at nostrdown-token-regexp) (= (match-end 0) end))
-        (let ((mk (lambda (a b)
+        (let ((mk (lambda (a b &optional display)
                     (let ((c (make-overlay a b nil t nil)))
                       (overlay-put c 'nostrdown-child t)
-                      (overlay-put c 'invisible 'nostrdown)
+                      (if display
+                          (progn (overlay-put c 'nostrdown-display display)
+                                 (overlay-put c 'display display))
+                        (overlay-put c 'invisible 'nostrdown))
                       (overlay-put c 'evaporate t)
                       (push c children)))))
           (if (match-beginning 4)
               ;; {{ref:target|display}} -> show only the display text.
               (progn (funcall mk beg (match-beginning 4))
                      (funcall mk (match-end 4) end))
-            ;; {{ref:target}} -> show only the target.
+            ;; {{ref:target}} -> show the target, or its resolved label.
             (funcall mk beg (match-beginning 2))
+            (when-let* ((label (nostrdown--markup-label
+                                ref (match-string-no-properties 2))))
+              (funcall mk (match-beginning 2) (match-end 2) label))
             (funcall mk (match-end 2) end)))))
     (overlay-put ov 'nostrdown-children children)))
+
+(defun nostrdown--fill-lines (text)
+  "TEXT's lines, filled to `nostrdown-embed-fill-column' when that is set."
+  (split-string
+   (if nostrdown-embed-fill-column
+       (with-temp-buffer
+         (insert text)
+         (let ((fill-column nostrdown-embed-fill-column)
+               (sentence-end-double-space nil))
+           (fill-region (point-min) (point-max)))
+         (buffer-string))
+     text)
+   "\n"))
 
 (defun nostrdown--embed-card (ref)
   "An `after-string' card for an embed / quote / slot REF."
@@ -395,7 +447,7 @@ An Org `#+TITLE:', a Markdown / AsciiDoc heading, or front-matter `title:'."
                      (when-let* ((pk (alist-get 'author_pubkey ref)))
                        (concat (substring pk 0 8) "…"))))
          (content (alist-get 'content ref))
-         (lines (and content (split-string (string-trim content) "\n")))
+         (lines (and content (nostrdown--fill-lines (string-trim content))))
          (shown (and lines (seq-take lines nostrdown-embed-max-lines)))
          (body (cond
                 (shown (mapconcat (lambda (l) (concat "  ┃ " l)) shown "\n"))
@@ -447,6 +499,41 @@ Used for `help-echo' and `nostrdown-describe-at-point'."
          (ref (and ov (overlay-get ov 'nostrdown-ref))))
     (and ref (nostrdown--describe ref))))
 
+(defun nostrdown--token-display (ov)
+  "The |display text of the `{{ }}' token under OV, or nil."
+  (save-excursion
+    (goto-char (overlay-start ov))
+    (and (looking-at nostrdown-token-regexp)
+         (= (match-end 0) (overlay-end ov))
+         (match-beginning 4)
+         (string-trim (match-string-no-properties 4)))))
+
+(defun nostrdown--quote-block-p (ov ref)
+  "Non-nil when the quote token under OV is long enough for a block."
+  (and nostrdown-quote-block-threshold
+       (equal (alist-get 'kind ref) "quote")
+       (when-let* ((excerpt (nostrdown--token-display ov)))
+         (> (length excerpt) nostrdown-quote-block-threshold))))
+
+(defun nostrdown--block-quote (ov ref)
+  "Render OV, a quote token, as a block quote; return its trailing string.
+The excerpt is moved onto its own screen lines behind a `┃' bar and every
+wrapped line keeps the bar (`wrap-prefix'), so it wraps inside the window
+under `visual-line-mode'.  In `markup' prettify the source title is set
+under it; in `label' prettify the label already carries it."
+  (let* ((bar (propertize "  ┃ " 'face 'nostrdown-quote-bar-face))
+         (beg (overlay-start ov)) (end (overlay-end ov))
+         (at-bol (save-excursion (goto-char beg) (skip-chars-backward " \t") (bolp)))
+         (at-eol (save-excursion (goto-char end) (skip-chars-forward " \t") (eolp)))
+         (attribution (and (eq nostrdown-prettify 'markup)
+                           (when-let* ((title (alist-get 'title ref)))
+                             (propertize (concat "\n  ┗ " title)
+                                         'face 'nostrdown-quote-bar-face)))))
+    (overlay-put ov 'face (list 'nostrdown-quote-face (nostrdown--state-face ref)))
+    (overlay-put ov 'wrap-prefix bar)
+    (overlay-put ov 'before-string (concat (if at-bol "" "\n") bar))
+    (concat (or attribution "") (if at-eol "" "\n"))))
+
 (defun nostrdown--decorate (ov ref)
   "Paint overlay OV according to resolved REF."
   (overlay-put ov 'nostrdown t)
@@ -465,10 +552,15 @@ Used for `help-echo' and `nostrdown-describe-at-point'."
               (overlay-put ov 'nostrdown-display l)
               (overlay-put ov 'display l)))
     ('markup (nostrdown--hide-markup ov)))
-  (overlay-put ov 'after-string
-               (and nostrdown-inline-embeds
-                    (member (alist-get 'kind ref) '("embed" "quote" "slot"))
-                    (nostrdown--embed-card ref))))
+  (overlay-put ov 'before-string nil)
+  (overlay-put ov 'wrap-prefix nil)
+  (let ((block (and nostrdown-prettify (nostrdown--quote-block-p ov ref)
+                    (nostrdown--block-quote ov ref)))
+        (card (and nostrdown-inline-embeds
+                   (member (alist-get 'kind ref) '("embed" "quote" "slot"))
+                   (nostrdown--embed-card ref))))
+    (overlay-put ov 'after-string
+                 (and (or block card) (concat (or block "") (or card ""))))))
 
 (defun nostrdown--apply-spans (spans)
   "Paint SPANS, a list of (BEG END REF), replacing the previous overlays."
@@ -607,6 +699,7 @@ Used for `help-echo' and `nostrdown-describe-at-point'."
                                                (concat (substring target 0 10) "…"
                                                        (substring target -4))
                                              target)))
+                             (label-explicit . ,(and display t))
                              (found . ,(and (or sib entity) t))
                              (pending . ,(and entity t))
                              ,@(and sib `((title . ,(car sib))
@@ -663,11 +756,14 @@ Used for `help-echo' and `nostrdown-describe-at-point'."
         (let ((old nostrdown--revealed))
           (overlay-put old 'display (overlay-get old 'nostrdown-display))
           (dolist (c (overlay-get old 'nostrdown-children))
-            (overlay-put c 'invisible 'nostrdown))))
+            (if-let* ((d (overlay-get c 'nostrdown-display)))
+                (overlay-put c 'display d)
+              (overlay-put c 'invisible 'nostrdown)))))
       (setq nostrdown--revealed ov)
       (when ov
         (overlay-put ov 'display nil)
         (dolist (c (overlay-get ov 'nostrdown-children))
+          (overlay-put c 'display nil)
           (overlay-put c 'invisible nil))))))
 
 ;;;; Commands

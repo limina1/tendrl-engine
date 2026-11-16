@@ -7,7 +7,12 @@
 	// (which calls `api.resolveHighlights` / `api.resolveNostrdown`).
 	import { getAppState } from '$lib/state.svelte';
 	import EmbedCard from './EmbedCard.svelte';
-	import { pubkeyToHighlightFill, pubkeyToHighlightStroke } from '$lib/discussions/colors';
+	import { highlightFill, highlightStroke } from '$lib/discussions/colors';
+	import { marksOf } from '$lib/discussions/highlights';
+	import { highlightPreview } from '$lib/discussions/highlight-preview.svelte';
+	import { highlighterChoice } from '$lib/discussions/highlighter-choice.svelte';
+	import { getAuthorDisplayName } from '$lib/discussions/authors.svelte';
+	import { highlightDisplay } from '$lib/discussions/highlight-display.svelte';
 	import type { HighlightSpan } from '$lib/discussions/highlights';
 	import {
 		buildSegments,
@@ -20,6 +25,9 @@
 	import type { ResolutionTracker } from '$lib/nostr/resolution-progress.svelte';
 	import type { StyleSpan } from '$lib/layers/registry';
 	import { applyStyles, styleClass } from '$lib/layers/style-segments';
+	import { hiddenMarkerSpans } from '$lib/layers/hide-markers';
+	import { fenceLayout, layoutSegments, tableLayout } from '$lib/layers/table-layout';
+	import { layers } from '$lib/layers/store.svelte';
 
 	const app = getAppState();
 
@@ -62,8 +70,34 @@
 
 	let rootEl = $state<HTMLElement | undefined>();
 
-	const segments = $derived(
-		applyStyles(buildSegments(content, spans, refs, tokens, focusedHighlightId), styles)
+	// The highlight being captured, painted live in the style being picked
+	// (plain = your identity hue), only in the section it was selected in.
+	const liveSpans = $derived.by<HighlightSpan[]>(() => {
+		const t = highlightPreview.target;
+		if (!t || t.content !== content) return spans;
+		return [
+			...spans,
+			{
+				start: t.start,
+				end: t.end,
+				id: 'capture-preview',
+				pubkey: app.identityStatus?.pubkey ?? '',
+				highlighter: highlighterChoice.current ?? undefined
+			}
+		];
+	});
+	const segmentsFlat = $derived(
+		applyStyles(
+			buildSegments(content, liveSpans, refs, tokens, focusedHighlightId),
+			layers.hideMarkers && styles.length ? [...styles, ...hiddenMarkerSpans(content, styles)] : styles
+		)
+	);
+	// Tables a base recognised render as a real grid (lib/layers/table-layout):
+	// cells hold the source runs of their range, separators are not drawn.
+	const blocks = $derived(
+		styles.length
+			? layoutSegments(segmentsFlat, tableLayout(content, styles), fenceLayout(content, styles))
+			: layoutSegments(segmentsFlat, [])
 	);
 
 	// Progress is reported by the embed/quote/slot cards themselves (each knows
@@ -71,14 +105,68 @@
 	// step), so the tracker is passed straight through to EmbedCard below. Inline
 	// ref/wiki/mention links resolve instantly and aren't counted.
 
-	function styleFor(pubkey: string, focused: boolean): string {
-		const fill = pubkeyToHighlightFill(pubkey);
-		const stroke = pubkeyToHighlightStroke(pubkey);
-		if (focused) {
-			return `background: ${fill}; box-shadow: inset 3px 0 0 ${stroke}, 0 0 0 2px var(--state-online);`;
+	// A mark paints every highlight covering its run, each in its own ink
+	// (highlighter colour, else the author hue), at the one display alpha:
+	// fills stack as flat gradient layers, underlines as 2px lines (offset
+	// so stacked underlines stay distinct), `color` inks the letters (the
+	// topmost such layer wins), bold/italic change the letters and tint them
+	// when no fill sits under them. CSS lists layers top-first.
+	function styleFor(h: HighlightSegmentInfo): string {
+		const a = highlightDisplay.alpha / 100;
+		const topFirst = [...h.layers].reverse();
+		const unders: string[] = [];
+		const fills: string[] = [];
+		let bold = false;
+		let italic = false;
+		let ink: string | null = null;
+		for (const l of topFirst) {
+			const marks = l.highlighter ? marksOf(l.highlighter) : ['fill'];
+			const color = highlightStroke(l);
+			if (marks.includes('underline'))
+				unders.push(
+					`linear-gradient(${color}, ${color}) 0 calc(100% - ${unders.length * 3}px) / 100% 2px no-repeat`
+				);
+			if (marks.includes('fill')) {
+				const c = highlightFill(l, a);
+				fills.push(`linear-gradient(${c}, ${c})`);
+			}
+			const shape = marks.includes('bold') || marks.includes('italic');
+			if (marks.includes('bold')) bold = true;
+			if (marks.includes('italic')) italic = true;
+			if (ink === null && (marks.includes('color') || (shape && !marks.includes('fill'))))
+				ink = color;
 		}
-		return `background: ${fill}; box-shadow: inset 3px 0 0 ${stroke};`;
+		const layers = [...unders, ...fills];
+		let css = layers.length ? `background: ${layers.join(', ')};` : 'background: none;';
+		if (bold) css += ' font-weight: 700;';
+		if (italic) css += ' font-style: italic;';
+		if (ink) css += ` color: ${ink};`;
+		const top = h.layers[h.layers.length - 1];
+		const stripe = (top.highlighter ? marksOf(top.highlighter) : ['fill']).includes('fill')
+			? `inset 3px 0 0 ${highlightStroke(top)}`
+			: '';
+		const ring = h.focused ? '0 0 0 2px var(--state-online)' : '';
+		const shadow = [stripe, ring].filter(Boolean).join(', ');
+		return shadow ? `${css} box-shadow: ${shadow};` : css;
 	}
+
+	// Attribution: a highlight is someone's mark on the page — hovering it
+	// shows a tiny tooltip at the pointer naming who published it (every
+	// layer, top first); clicking it opens the drawer on it (ReaderBuffer).
+	let tip = $state<{ x: number; y: number; lines: string[] } | null>(null);
+	function showTip(e: MouseEvent, h: HighlightSegmentInfo) {
+		tip = {
+			x: e.clientX + 12,
+			y: e.clientY + 14,
+			lines: [...h.layers]
+				.reverse()
+				.map((l) => `${getAuthorDisplayName(l.pubkey)}${l.highlighter?.label ? ` · ${l.highlighter.label}` : ''}`)
+		};
+	}
+
+	type HighlightSegmentInfo = Extract<ContentSegment, { type: 'highlight' }>['highlight'];
+
+
 
 	// A ref that resolved to a sibling section rendered in the same enclosing
 	// view (the continuous reader / draft preview stamps `data-section-addr` on
@@ -174,7 +262,12 @@
      spans), so a wikilink under a highlight stays a live link. The mark
      carries no data-src-end: selection capture resolves the innermost stamped
      element, which is always one of the parts. -->
-<pre class="section-content" class:muted bind:this={rootEl}>{#each segments as seg, i (i)}{#if seg.type === 'highlight'}<mark class="hl-overlay" data-hl-ids={seg.highlight.id} data-src-start={seg.srcStart} style={styleFor(seg.highlight.pubkey, seg.highlight.focused)} title="NIP-84 highlight {seg.highlight.id.slice(0, 8)}… by {seg.highlight.pubkey.slice(0, 12)}…">{#each seg.parts as part, j (j)}{@render atom(part)}{/each}</mark>{:else}{@render atom(seg)}{/if}{/each}</pre>
+{#snippet run(seg: ContentSegment)}{#if seg.type === 'highlight'}<mark class="hl-overlay" data-hl-ids={seg.highlight.layers.map((l) => l.id).join(' ')} data-src-start={seg.srcStart} style={styleFor(seg.highlight)} onmousemove={(e) => showTip(e, seg.highlight)} onmouseleave={() => (tip = null)}>{#each seg.parts as part, j (j)}{@render atom(part)}{/each}</mark>{:else}{@render atom(seg)}{/if}{/snippet}
+<!-- A table is a scrollable grid inside the pre: each cell renders the
+     source runs of its range (stamped), the pipes and rule row are not
+     drawn. Header rows (th) go in thead. -->
+<pre class="section-content" class:muted bind:this={rootEl}>{#each blocks as b, bi (bi)}{#if b.kind === 'flow'}{#each b.segs as seg, i (i)}{@render run(seg)}{/each}{:else if b.kind === 'fence'}<span class="ly-fencewrap">{#each b.segs as seg, i (i)}{@render run(seg)}{/each}</span>{:else}<span class="ly-tablewrap"><table class="ly-grid"><tbody>{#each b.table.rows as row, ri (ri)}<tr class:ly-grid__head={row.header}>{#each { length: b.table.cols } as _, ci (ci)}{#if row.header}<th><span class="ly-cell">{#each b.cells[ri][ci] ?? [] as seg, k (k)}{@render run(seg)}{/each}</span></th>{:else}<td><span class="ly-cell">{#each b.cells[ri][ci] ?? [] as seg, k (k)}{@render run(seg)}{/each}</span></td>{/if}{/each}</tr>{/each}</tbody></table></span>{/if}{/each}</pre>
+{#if tip}<div class="hl-tip" use:portal style="left: {tip.x}px; top: {tip.y}px" role="tooltip">{#each tip.lines as line, i (i)}<div>{line}</div>{/each}</div>{/if}
 {#if preview}
 	<!-- svelte-ignore a11y_no_static_element_interactions -->
 	<div
@@ -257,6 +350,69 @@
 	.section-content :global(.ly-tag) { color: var(--fg-muted); font-family: var(--font-mono); font-size: 0.8em; font-weight: 400; }
 	.section-content :global(.ly-admon) { color: var(--accent); font-weight: 700; font-family: var(--font-mono); font-size: 0.85em; }
 	.section-content :global(.ly-mark) { opacity: 0.45; font-weight: 400; font-style: normal; }
+	/* Hidden markers (lib/layers/hide-markers): the sigil text stays in the
+	   DOM — offsets intact — it just isn't drawn. */
+	.section-content :global(.ly-hide) { display: none; }
+	/* Code fence block: lines stay whole (diagrams, wide code) and the
+	   block scrolls sideways inside the measure. The tint moves from the
+	   runs to the block. */
+	.ly-fencewrap {
+		display: block;
+		max-width: 100%;
+		overflow-x: auto;
+		white-space: pre;
+		overflow-wrap: normal;
+		text-wrap: nowrap;
+		text-align: start;
+		hyphens: manual;
+		margin: 0.2em 0;
+		padding: 0.4em 0.6em;
+		border-radius: 4px;
+		background: color-mix(in srgb, var(--fg) 7%, transparent);
+		font-family: var(--font-mono);
+		/* Tight enough that box-drawing verticals (║ │) join up. */
+		line-height: 1.2;
+	}
+	.ly-fencewrap :global(.ly-fence) { background: none; }
+	/* Table grid: scrolls sideways inside the measure instead of wrapping
+	   columns into each other; a cell wraps only past ~28em. */
+	.ly-tablewrap {
+		display: block;
+		max-width: 100%;
+		overflow-x: auto;
+		margin: 0.4em 0;
+		white-space: normal;
+		text-align: start;
+	}
+	.ly-grid {
+		border-collapse: collapse;
+		width: max-content;
+		max-width: none;
+		font-size: 0.95em;
+		line-height: 1.4;
+	}
+	.ly-grid th,
+	.ly-grid td {
+		border: 1px solid var(--panel-border, var(--border));
+		padding: 0.25em 0.7em;
+		vertical-align: top;
+		text-align: start;
+	}
+	.ly-grid th { font-weight: 650; background: var(--panel-bg-soft, transparent); }
+	.ly-grid .ly-cell {
+		display: block;
+		max-width: 28em;
+		white-space: pre-wrap;
+		overflow-wrap: break-word;
+	}
+	.section-content :global(.ly-mark.ly-listnum) { opacity: 1; }
+	.section-content :global(.ly-mark.ly-bullet) { opacity: 1; color: transparent; position: relative; }
+	.section-content :global(.ly-bullet::before) {
+		content: '•';
+		position: absolute;
+		left: 0;
+		color: var(--fg-muted);
+	}
 	/* A soft line break: the newline character stays in the DOM (offsets,
 	   capture, selection all intact) but is rendered as collapsible
 	   whitespace, so a hard-wrapped paragraph flows the way AsciiDoc /
@@ -264,6 +420,21 @@
 	   tables, headings or hard breaks — the base decides. */
 	.section-content :global(.ly-soft) { white-space: normal; }
 
+	:global(.hl-tip) {
+		position: fixed;
+		z-index: 400;
+		pointer-events: none;
+		padding: 1px 5px;
+		font-family: var(--font-sans);
+		font-size: 10px;
+		line-height: 1.4;
+		color: var(--fg);
+		background: var(--bg);
+		border: 1px solid var(--panel-border);
+		border-radius: 2px;
+		box-shadow: 0 2px 6px rgba(0, 0, 0, 0.35);
+		white-space: nowrap;
+	}
 	.hl-overlay {
 		color: inherit;
 		padding: 1px 2px;

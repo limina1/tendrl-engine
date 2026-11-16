@@ -62,7 +62,20 @@
 				></span>
 			{/if}
 
-			<span class="toast__msg">{t.message}</span>
+			<span class="toast__body">
+				<span class="toast__msg">{t.message}</span>
+				{#if t.progress}
+					<span
+						class="toast__bar"
+						role="progressbar"
+						aria-valuemin={0}
+						aria-valuemax={t.progress.total}
+						aria-valuenow={t.progress.done}
+						aria-label="{t.progress.done} of {t.progress.total}"
+						><span style="width: {Math.min(100, (t.progress.done / t.progress.total) * 100)}%"></span></span
+					>
+				{/if}
+			</span>
 
 			{#if t.pinned}
 				{#if t.activity}
@@ -170,11 +183,31 @@
 		mask: radial-gradient(circle, transparent 30%, black 32%);
 		-webkit-mask: radial-gradient(circle, transparent 30%, black 32%);
 	}
+	.toast__body {
+		flex: 1;
+		min-width: 0;
+		display: flex;
+		flex-direction: column;
+		gap: 4px;
+	}
 	.toast__msg {
 		overflow: hidden;
 		text-overflow: ellipsis;
 		white-space: nowrap;
 		flex: 1;
+	}
+	.toast__bar {
+		display: block;
+		height: 4px;
+		border-radius: 2px;
+		background: color-mix(in srgb, currentColor 18%, transparent);
+		overflow: hidden;
+	}
+	.toast__bar > span {
+		display: block;
+		height: 100%;
+		background: currentColor;
+		transition: width 160ms linear;
 	}
 	.toast__btn {
 		appearance: none;

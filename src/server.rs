@@ -499,6 +499,45 @@ pub async fn start(opts: ServeOptions) -> anyhow::Result<RunningServer> {
         .route("/api/v1/chat/load", put(api::chat_load_fragments))
         // Paid model services: accounts, balances, funding, model choice.
         .route("/api/v1/providers", get(crate::providers::handlers::state))
+        // Narration: TTS → Blossom → kind-32176 (NKBIP-07) trees bound to a
+        // publication; discovery + mirroring for readers.
+        .route("/api/v1/narration/models", get(crate::narration::handlers::models))
+        .route("/api/v1/narration/voices", get(crate::narration::handlers::voices))
+        .route(
+            "/api/v1/narration/servers",
+            get(crate::narration::handlers::servers_get).post(crate::narration::handlers::servers_set),
+        )
+        .route("/api/v1/narration/estimate", post(crate::narration::handlers::estimate))
+        .route("/api/v1/narration/review", post(crate::narration::handlers::review))
+        .route("/api/v1/narration/generate", post(crate::narration::handlers::generate))
+        .route("/api/v1/narration/sample", post(crate::narration::handlers::sample))
+        .route(
+            "/api/v1/narration/for/:pubkey/:d_tag",
+            get(crate::narration::handlers::discover),
+        )
+        .route("/api/v1/narration/mirror", post(crate::narration::handlers::mirror))
+        .route(
+            "/api/v1/narration/node/:kind/:pubkey/:d_tag",
+            get(crate::narration::handlers::discover_node),
+        )
+        .route(
+            "/api/v1/narration/event/:pubkey/:d_tag",
+            get(crate::narration::handlers::open),
+        )
+        // Events attached to a document (comments, highlights, narrations,
+        // the containing index) — the event menu's attached row.
+        .route("/api/v1/attached", get(crate::attached::handlers::get))
+        // Broadcast: the connected set around a document / event, and
+        // re-sending a picked subset of those (already-signed) events to
+        // picked relays — in any mode, local included (the pick is the approval).
+        .route("/api/v1/broadcast/plan", get(crate::broadcast::handlers::plan))
+        .route("/api/v1/broadcast/send", post(crate::broadcast::handlers::send))
+        // Reading / listening history: local "where was I" per publication.
+        .route(
+            "/api/v1/history",
+            get(crate::history::handlers::list).post(crate::history::handlers::update),
+        )
+        .route("/api/v1/history/remove", post(crate::history::handlers::remove))
         .route("/api/v1/providers/select", post(crate::providers::handlers::select))
         .route("/api/v1/providers/ceiling", post(crate::providers::handlers::ceiling))
         .route("/api/v1/providers/self-test", post(crate::providers::handlers::self_test))
@@ -774,6 +813,10 @@ pub async fn start(opts: ServeOptions) -> anyhow::Result<RunningServer> {
             get(api::fetch_events_handler),
         )
         .route(
+            "/api/v1/network/session/reset",
+            post(api::reset_session_relays_handler),
+        )
+        .route(
             "/api/v1/network/fetch-confirm",
             post(api::fetch_confirm_handler),
         )
@@ -903,9 +946,22 @@ pub async fn start(opts: ServeOptions) -> anyhow::Result<RunningServer> {
             post(api::discussion_highlight_preview_handler),
         )
         .route(
+            "/api/v1/discussions/highlight/restyle",
+            post(api::discussion_highlight_restyle_handler),
+        )
+        .route(
+            "/api/v1/discussions/highlight/restyle/preview",
+            post(api::discussion_highlight_restyle_preview_handler),
+        )
+        .route("/api/v1/highlighters", get(api::highlighters_handler))
+        .route("/api/v1/highlights/attached", post(api::highlights_attached_handler))
+        .route("/api/v1/highlights/annotate", post(api::highlight_annotate_handler))
+        .route(
             "/api/v1/discussions/delete",
             post(api::discussion_delete_handler),
         )
+        .route("/api/v1/section-edit/preview", post(api::section_edit::preview_handler))
+        .route("/api/v1/section-edit/publish", post(api::section_edit::publish_handler))
         .route(
             "/api/v1/insertions",
             post(api::insertions::insertion_publish_handler),

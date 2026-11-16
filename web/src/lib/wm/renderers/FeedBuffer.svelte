@@ -7,10 +7,13 @@
 	import type { Buffer } from '../types';
 	import type { PublicationSummary } from '$lib/types';
 	import { promptText } from '$lib/wm/text-prompt.svelte';
+	import * as history from '$lib/history.svelte';
+	import * as nar from '$lib/narration.svelte';
 	import {
 		discovery,
 		trigger as triggerTip,
-		setTipVars
+		setTipVars,
+		completeTip
 	} from '$lib/wm/discovery.svelte';
 
 	let { buffer }: { buffer: Buffer } = $props();
@@ -22,7 +25,7 @@
 	 *  at a time, picked from the relays the local store has provenance
 	 *  from) and the bookshelf (the user's saved-books list event — the
 	 *  data source lands later; the mode is here so the switch exists). */
-	type FeedMode = 'relays' | 'bookshelf';
+	type FeedMode = 'relays' | 'bookshelf' | 'history';
 	type FeedViewState = { mode: FeedMode; cursor: number };
 
 	// View state (mode + cursor) is per-buffer and survives a buffer switch
@@ -55,6 +58,25 @@
 		if (mode !== 'bookshelf') return;
 		untrack(() => void app.loadBookshelf());
 	});
+
+	// History (local, engine-side): where you were in each publication.
+	$effect(() => {
+		if (mode !== 'history') return;
+		untrack(() => void history.ensureLoaded());
+	});
+	function openHistory(h: { coord: string; title?: string | null }) {
+		const c = history.parseCoord(h.coord);
+		if (!c) return;
+		openPub({ addr: c, title: h.title ?? null, section_count: 0 });
+	}
+	async function listenHistory(h: { coord: string; title?: string | null }) {
+		const c = history.parseCoord(h.coord);
+		if (!c) return;
+		openHistory(h);
+		// The playlist comes from the cached recordings of the publication.
+		await nar.refresh(c.pubkey, c.d_tag, 'local_only');
+		if (!nar.resumeOrPlay(c.pubkey, c.d_tag, h.title ?? null)) app.pushToast('No recordings known locally for this publication', 'info');
+	}
 
 	const DEFAULT_SHELF = 'my-book-collection';
 	/** Shelf picker rows: every 30045 the pubkey publishes, default first.
@@ -186,29 +208,37 @@
 		if (cursor >= activeList.length) cursor = Math.max(0, activeList.length - 1);
 	});
 
-	// Walkthrough: once the feed has events (the user fetched), introduce the
-	// top publication + its provenance pills. Gated on `general-feed` already
-	// seen so these fire *after* the login walk's fetch beat, not on an initial
-	// local load. Fires once; trigger() itself no-ops when not armed.
-	let feedTipFired = false;
+	// Walkthrough: once the feed has events, introduce the top publication +
+	// its provenance pills — the first beats of the walk in either network mode
+	// (after the approved first pull in Confirm, the silent one in Auto).
+	// `discovery.epoch` is a dependency so a replay re-fires them with fresh
+	// vars. trigger() itself no-ops when the walk is off or the tip is seen /
+	// queued; `walk-done` seen means an established user — never nag.
 	$effect(() => {
 		const top = app.feed[0];
+		void discovery.epoch;
 		if (!top) return;
 		untrack(() => {
-			if (feedTipFired) return;
-			if (!discovery.enabled || discovery.seen.includes('feed-first-pub')) return;
-			if (!discovery.seen.includes('general-feed')) return;
-			feedTipFired = true;
+			if (!discovery.enabled || discovery.seen.includes('walk-done')) return;
 			const s = top.section_count;
 			const r = top.relays.length;
-			triggerTip('feed-first-pub', {
-				title: top.title ?? '[Untitled]',
-				sections: `${s} section${s === 1 ? '' : 's'}`
-			});
 			// Pre-stash the chained badges tip's relay count (it surfaces via `next`).
 			setTipVars('feed-first-badges', {
 				relays: r === 0 ? 'no relays yet' : `${r} relay${r === 1 ? '' : 's'}`
 			});
+			triggerTip('feed-first-pub', {
+				title: top.title ?? '[Untitled]',
+				sections: `${s} section${s === 1 ? '' : 's'}`
+			});
+		});
+	});
+
+	// Walkthrough: arriving on the feed is what `go-home` asked for — complete
+	// that card and surface the resync beat on the Sync button. Mount-once.
+	$effect(() => {
+		untrack(() => {
+			completeTip('go-home');
+			if (discovery.seen.includes('go-home')) triggerTip('feed-resync');
 		});
 	});
 
@@ -345,9 +375,12 @@
 					class="pill pill--broadcast"
 					onclick={(e) => {
 						e.stopPropagation();
-						app.handleBroadcastPublication(pub_item.addr);
+						app.broadcastModal = {
+							coord: `${pub_item.addr.kind}:${pub_item.addr.pubkey}:${pub_item.addr.d_tag}`,
+							title: pub_item.title ?? null
+						};
 					}}
-					title="Broadcast this signed local snapshot to your publish relays"
+					title="Broadcast this signed local snapshot — pick events and relays"
 				>broadcast</button>
 			{/if}
 			<!-- Provenance (local / relay / remote) lives inside the
@@ -405,6 +438,13 @@
 				aria-selected={mode === 'bookshelf'}
 				onclick={() => setMode('bookshelf')}
 			>bookshelf</button>
+			<button
+				class="mode"
+				class:mode--active={mode === 'history'}
+				role="tab"
+				aria-selected={mode === 'history'}
+				onclick={() => setMode('history')}
+			>history</button>
 		</div>
 		{#if mode === 'relays'}
 			<!-- One timeline per relay the local store has provenance from.
@@ -425,7 +465,13 @@
 			<span class="count">{app.feed.length}</span>
 			<button
 				class="sync"
-				onclick={app.handleFeedSync}
+				data-tour="feed-sync-button"
+				onclick={() => {
+					// Walkthrough: pressing Sync is what the fetch / resync cards asked for.
+					completeTip('feed-fetch');
+					completeTip('feed-resync');
+					app.handleFeedSync();
+				}}
 				disabled={app.feedSyncing}
 				title={app.feedTimeline && app.feedTimeline !== 'local'
 					? `Fetch this timeline from ${relayHost(app.feedTimeline)}`
@@ -433,7 +479,7 @@
 			>
 				{app.feedSyncing ? 'Syncing…' : 'Sync'}
 			</button>
-		{:else}
+		{:else if mode === 'bookshelf'}
 			<!-- Same listbox idiom as the relay picker: one 30045 shelf per row. -->
 			<select
 				class="timeline-select"
@@ -465,7 +511,62 @@
 			</button>
 		{/if}
 	</div>
-	{#if mode === 'bookshelf'}
+	{#if mode === 'history'}
+		{#if !history.isLoaded()}
+			<div class="empty"><p>Loading history…</p></div>
+		{:else if history.all().length === 0}
+			<div class="empty">
+				<p>Nothing read or listened to yet.</p>
+				<p class="hint">Opening a publication or playing a narration records where you were, on this device only.</p>
+			</div>
+		{:else}
+			<div class="feed-list" bind:this={listEl}>
+				{#each history.all() as h, i (h.coord)}
+					<!-- svelte-ignore a11y_no_static_element_interactions -->
+					<div
+						class="row"
+						class:row--cursor={i === cursor}
+						data-cursor={i}
+						onclick={() => { cursor = i; openHistory(h); }}
+						onkeydown={(e) => { if (e.key === 'Enter') openHistory(h); }}
+						role="button"
+						tabindex="0"
+					>
+						<span class="cursor-marker" aria-hidden="true">{i === cursor ? '›' : ' '}</span>
+						<div class="row-body">
+							<div class="row-main">
+								<span class="title">{h.title ?? history.parseCoord(h.coord)?.d_tag ?? h.coord}</span>
+								<div class="hist-places">
+									<span class="hist-kind">{history.kindLabel(h.coord)}</span>
+									{#if h.section}
+										<span class="hist-place" title={h.section.coord}>📖 {h.section.title ?? 'section'}</span>
+									{/if}
+									{#if h.audio}
+										<span class="hist-place" title={h.audio.coord}>
+											🎧 {h.audio.title ?? 'section'} · {nar.fmtTime(h.audio.position_secs)}{#if h.audio.duration_secs} / {nar.fmtTime(h.audio.duration_secs)}{/if}
+										</span>
+									{/if}
+								</div>
+								<div class="row-foot">
+									<span class="author"><ProfileName pubkey={h.author} onviewprofile={app.handleViewProfile} /></span>
+									<span class="time">{history.fmtWhen(h.updated_at)}</span>
+								</div>
+							</div>
+							<div class="hist-actions">
+								{#if h.audio}
+									<button class="hist-btn" title="Resume listening" onclick={(e) => { e.stopPropagation(); void listenHistory(h); }}>▶ listen</button>
+								{/if}
+								<button class="hist-btn" title="Forget this entry" onclick={(e) => { e.stopPropagation(); void history.remove(h.coord); }}>×</button>
+							</div>
+						</div>
+					</div>
+				{/each}
+				<div class="more">
+					<button onclick={() => void history.remove('*')}>Clear history</button>
+				</div>
+			</div>
+		{/if}
+	{:else if mode === 'bookshelf'}
 		{#if app.bookshelfLoading && !app.bookshelf}
 			<div class="empty"><p>Loading bookshelf…</p></div>
 		{:else if app.bookshelfError === 'none'}
@@ -509,10 +610,12 @@
 				{/if}
 			</div>
 		{/if}
-	{:else if app.feedLoading}
+	{:else if app.feedLoading && app.feed.length === 0}
 		<div class="empty"><p>Loading publications…</p></div>
 	{:else if app.feed.length > 0}
-		<div class="feed-list" bind:this={listEl}>
+		<!-- While a (local) read is pending the previous rows stay up,
+		     dimmed, rather than blanking to "Loading…". -->
+		<div class="feed-list" class:feed-list--pending={app.feedLoading} bind:this={listEl}>
 			{#each app.feed as pub_item, i (`${pub_item.addr.pubkey}:${pub_item.addr.d_tag}`)}
 				{@render pubRow(pub_item, i)}
 			{/each}
@@ -540,7 +643,14 @@
 
 <style>
 	.feed-wrap { display: flex; flex-direction: column; height: 100%; min-height: 0; }
+	.hist-places { display: flex; flex-wrap: wrap; gap: 4px 12px; font-size: var(--t-xs); color: var(--fg-muted); margin: 2px 0; }
+	.hist-kind { text-transform: uppercase; letter-spacing: 0.04em; opacity: 0.8; }
+	.hist-place { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
+	.hist-actions { display: flex; flex-direction: column; gap: 4px; align-items: flex-end; flex-shrink: 0; }
+	.hist-btn { background: none; border: 1px solid var(--panel-border); border-radius: var(--r-sm); color: var(--fg-muted); font: inherit; font-size: var(--t-xs); padding: 1px 6px; cursor: pointer; }
+	.hist-btn:hover { color: var(--fg); }
 	.feed-list { flex: 1; overflow-y: auto; }
+	.feed-list--pending { opacity: 0.55; }
 	.feed-header {
 		flex-shrink: 0;
 		background: var(--panel-bg);

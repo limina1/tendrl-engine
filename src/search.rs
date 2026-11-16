@@ -259,6 +259,31 @@ pub struct SearchResponse {
     pub tag_counts: std::collections::HashMap<String, Vec<TagValueCount>>,
 }
 
+/// The relays named inside the NIP-19 entities of a query string — the
+/// relay TLVs of every `nevent1…` / `naddr1…` / `nprofile1…` token
+/// (optionally `nostr:`-prefixed). The entity says where it lives, so
+/// these join the relays proposed for the search. Normalized, in
+/// first-seen order; a query with no such entity yields nothing.
+pub fn entity_relay_hints(query: &str) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for token in query.split(|c: char| c.is_whitespace() || c == '|') {
+        let entity = crate::nip19::strip_nostr_prefix(token);
+        let relays = match crate::nip19::decode(entity) {
+            Ok(crate::nip19::Decoded::Nevent { relays, .. })
+            | Ok(crate::nip19::Decoded::Naddr { relays, .. })
+            | Ok(crate::nip19::Decoded::Nprofile { relays, .. }) => relays,
+            _ => continue,
+        };
+        for r in relays {
+            let url = crate::relay_url::normalize_relay_url(&r);
+            if !url.is_empty() && !out.contains(&url) {
+                out.push(url);
+            }
+        }
+    }
+    out
+}
+
 impl SearchQuery {
     /// Parse a search query string into a structured SearchQuery.
     ///
@@ -1021,8 +1046,15 @@ mod tests {
         tlv.extend_from_slice(b"wss://r.x");
         tlv.extend([0x03u8, 4]);
         tlv.extend(30041u32.to_be_bytes());
-        let q = SearchQuery::parse(&make_bech32("nevent", &tlv)).unwrap();
+        let nevent = make_bech32("nevent", &tlv);
+        let q = SearchQuery::parse(&nevent).unwrap();
         assert_eq!(q.ids, Some(vec![TEST_ID.to_string()]));
+        // The relay it names is surfaced as a hint for the intent.
+        assert_eq!(
+            entity_relay_hints(&format!("k:1 nostr:{nevent} | foo")),
+            vec!["wss://r.x".to_string()]
+        );
+        assert!(entity_relay_hints("k:1 plain words").is_empty());
     }
 
     #[test]

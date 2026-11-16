@@ -98,6 +98,47 @@ never happen in the browser.
   write one yourself.
   The Tools sheet (=M=) carries the same door: *annotate §n* opens that
   window on the current section — M → annotate → the window, every mode.
+- Narration (2026-11-09, =feat/audiobook-blossom=): a publication's
+  kind-32176 recordings ride along with the tree — discovered locally
+  when the stream finishes, from relays with *fetch from relays* or the
+  drawer's ⟳. Tools › *recordings N* opens =NarrationDrawer=; ▶ on a
+  section title and *▶ listen* in the strip feed the global
+  =NarrationPlayer=; *narrate* opens =NarrateModal= (ppq TTS → Blossom).
+  Design + decisions: [[file:idea-audiobook-blossom.org][audiobooks on Blossom]].
+- Reading / listening history (2026-11-09, =feat/listening-history=): the
+  engine keeps one line per document in =<data_dir>/history.json=
+  (=src/history.rs=, =/api/v1/history=; local, never an event). Tracked:
+  publication indexes (30040) with the section last shown, and the atomic
+  documents (30023 articles, 30818 wikis); a 30041 is recorded only
+  *inside* its publication — opened on its own it leaves no entry. The
+  player writes the listening place (section, recording, piece, position)
+  every few seconds and on pause/stop; a finished book clears it. A fresh
+  open of a publication jumps to the remembered section; *▶ listen*
+  resumes at the remembered position on the same recording; the feed's
+  *history* tab lists entries (📖 / 🎧) with *▶ listen* and *×*. The
+  narration playback rate persists in the browser (=tendrl.narration.rate=)
+  and survives section/piece changes (=load()= resets it otherwise).
+- Attached events + the chapter player strip (2026-11-09,
+  =feat/attached-events=): every chapter with audio renders a slim
+  strip at the top of its body (▶ · narrator · voice · length ·
+  progress · *recordings* → the drawer) — the title ▶ is gone. The
+  section menu shows the *publication row* (index, publisher, published
+  at) and coloured chips — comments, highlights, narration index, 30040
+  index, audio — each opening the event in place; the first open per
+  document asks the publication's provenance relays, ungated. A 32176
+  opened on its own routes to the reader when its publication is local,
+  else to the audio view. See [[file:feat-attached-events.org][Attached events]].
+
+- Reader chrome (2026-11-12): in paged view the Prev/Next bar stays
+  pinned — the page scrolls inside =PaginatedView=, not the whole
+  column. The tools sheet (=T=) folds per section (actions · pool ·
+  markup · reading, ▸ heads, only actions open by default, remembered
+  per buffer) and is capped at =min(45vh, 420px)=. Markup gains a
+  *syntax* row (rendered | show markers), and a base draws tables as an
+  aligned, sideways-scrolling grid
+  ([[file:decision-table-grid.org][decision]]). The highlights drawer
+  follows the view: on a page it lists that page's highlights only
+  (=· this page=).
 
 * Gaps / open edges
 - Nested-publication packed cards, drill-in with breadcrumbs, and parent
@@ -122,6 +163,8 @@ never happen in the browser.
 * Related
 - [[file:index.org][Index]]
 - [[file:feat-nostrdown.org][Nostrdown]]
+- [[file:idea-rendering-layers.org][Rendering layers]]
+- [[file:decision-table-grid.org][Tables render as a grid of source runs]]
 - [[file:idea-backlinks.org][Backlinks]]
 - [[file:idea-event-badges.org][Event badges]]
 - [[file:decision-buffer-state-homes.org][Where buffer state lives]]

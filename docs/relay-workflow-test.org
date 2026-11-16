@@ -1,0 +1,293 @@
+#+TITLE: Tester worksheet — relay management and the fetch dialog
+#+STATUS: PLAN
+#+DATE: 2026-11-09
+#+STARTUP: showall
+
+Branch =feat/relay-simplify=. Tick a box when what you see matches the
+line. When it does not, leave the box empty and write what happened under
+*Notes* at the end of that section — the exact relay, what you clicked,
+what you expected.
+
+Two ideas are being tested:
+
+1. *Relay management is permanent.* Every relay is one row with five
+   switches: auth, read, write, search, broadcast.
+2. *The fetch dialog is for this session.* What you check or uncheck
+   there sticks until you restart tendrl, and changes nothing in relay
+   management.
+
+* 0. Setup
+
+Run a separate copy so your real data is untouched. From the branch
+checkout:
+
+#+begin_src bash
+pnpm -C web build && touch src/static_assets.rs && cargo build
+./target/debug/tendrl-engine --data-dir /tmp/tendrl-relay-test --port 3141
+#+end_src
+
+Open =http://localhost:3141/=. To start over at any point: stop the
+engine, =rm -rf /tmp/tendrl-relay-test=, start it again.
+
+- [ ] The app opens and shows a "Feed sync" dialog asking to approve the
+  first fetch.
+- [ ] The mode line (bottom bar) shows =confirm=.
+
+Leave the dialog open and go to section 3 first if you want to test the
+dialog cold; otherwise press *Cancel* and continue.
+
+Notes:
+
+* 1. The relays screen
+
+Open it with =SPC r r= or the =relays= entry in the mode line.
+
+** Layout
+- [ ] There is one list of relays. There is no "Discovery" section and
+  no "Indexer relays" block anywhere on the screen.
+- [ ] Every row has exactly these five switches, in this order:
+  =auth=, =read=, =write=, =search=, =broadcast=.
+- [ ] There is no =active= / =inactive= pill on any row. Each row has a
+  =deactivate= link next to the =×=.
+- [ ] Every row has a =search kinds= disclosure.
+- [ ] On a fresh install, =purplepag.es= and =user.kindpag.es= are in the
+  list with =search= on and =search kinds · 6=.
+- [ ] Opening their search kinds shows kinds 0, 3, 10002, 10007, 10088
+  and 30002.
+
+** Switches
+Pick one relay for these.
+- [ ] Clicking =read= toggles it and a "Relay config saved" toast appears.
+- [ ] Same for =write=, =search= and =broadcast=.
+- [ ] Clicking =auth= toggles it and the toast says whether tendrl will
+  authenticate to that relay.
+- [ ] Press *Refresh*: every switch is still where you left it.
+- [ ] Stop and restart the engine, reload the page: still the same.
+
+** Search kinds
+Use =+ Add relay= to add a relay you know (it arrives with read + write).
+- [ ] Open its =search kinds=, add kind =30818=. A chip appears and the
+  label reads =search kinds · 1=.
+- [ ] With =search= off, the panel says the kinds are not in use.
+- [ ] Turn =search= on: that sentence disappears.
+- [ ] Turn =search= off and on again: the kind chip is still there.
+- [ ] Click the chip's =×=: the kind is removed, and the panel says the
+  relay is asked for every kind.
+- [ ] Restart the engine: the kinds you left are still there.
+
+** Inactive section
+- [ ] Click =deactivate= on a relay. It leaves the main list and appears
+  under an *Inactive · 1* heading below it.
+- [ ] In the Inactive section the row is dimmed, its five switches are
+  shown but cannot be clicked, and the link reads =reactivate=.
+- [ ] Click =reactivate=: the row returns to the main list with the same
+  switches on as before.
+- [ ] With no inactive relays, the Inactive heading is not shown at all.
+- [ ] Deactivate a relay, restart the engine: it is still under Inactive.
+
+** Removing and resetting
+- [ ] =×= on a row removes the relay. After *Refresh* it does not come
+  back.
+- [ ] *Reset to defaults* asks "Really reset?" first; the second click
+  restores the starting list, including the two profile relays.
+
+Notes:
+
+* 2. Which relays a fetch proposes
+
+Set up three relays for this section (any you like):
+
+| name here | switches             | search kinds |
+|-----------+----------------------+--------------|
+| R         | read                 | —            |
+| S-any     | search only          | none         |
+| S-wiki    | search only          | 30818        |
+
+Stay in =confirm= mode so every fetch shows its dialog. The profile
+relays from the fresh install (search kinds 0, 3, 10002, …) count as a
+fourth case.
+
+** Feed sync (publication indexes, kind 30040)
+Reload the page, or press the feed's sync control.
+- [ ] The dialog lists R and S-any.
+- [ ] It does not list S-wiki.
+- [ ] It does not list the profile relays.
+- [ ] It does not list a relay that only has =write= on.
+
+** Search for a kind
+Open search (the =search= rail on the right) and run =k:30818= against
+relays.
+- [ ] The dialog lists R, S-any and S-wiki.
+- [ ] It does not list the profile relays.
+
+Run =k:0 by:<some npub>=.
+- [ ] The dialog lists R, S-any and the profile relays.
+- [ ] It does not list S-wiki.
+
+** A relay named inside an event reference
+Find an =nevent1…= or =naddr1…= that carries a relay you have *not*
+configured, and paste it into search.
+- [ ] The dialog lists that relay, checked.
+- [ ] The row carries a =not in your relays= tag.
+- [ ] After the fetch, the relays screen does *not* contain that relay.
+
+** Search-relay tag
+- [ ] In any dialog, a relay that is there only because it is a search
+  relay (S-any, S-wiki, the profile relays) carries a =search= tag.
+- [ ] R carries no tag.
+
+Notes:
+
+* 3. The fetch dialog remembers for the session
+
+Use any fetch that lists at least three relays.
+
+** The note and the tools
+- [ ] Under the *Relays* heading there is a line saying the selection
+  sticks for this session.
+- [ ] There is an =invert= button at the top right of the relay list.
+- [ ] On the very first dialog after starting tendrl there is *no*
+  =reset session= button.
+
+** Invert
+- [ ] With every relay checked, =invert= unchecks all of them and the
+  main button reads "Fetch from 0 relays" and cannot be pressed.
+- [ ] =invert= again checks them all.
+- [ ] Uncheck one relay, press =invert=: only that one is checked and
+  the button reads "Fetch from 1 relay".
+- [ ] =invert= does not touch the *Inactive relays* list below.
+
+** Unchecking sticks
+Uncheck one relay (call it X) and approve the fetch.
+- [ ] Trigger a *different* kind of fetch (a search, opening a
+  publication, a profile). X is listed and already unchecked.
+- [ ] That dialog now shows a =reset session= button.
+- [ ] The relays screen still shows X exactly as before — same switches,
+  not under Inactive.
+
+** Re-checking sticks
+In a dialog where X is unchecked, check it and approve.
+- [ ] The next dialog lists X checked.
+
+** Adding sticks
+Type a relay into the box (call it Y), press *Add relay*, approve.
+- [ ] The next dialog, for any kind of fetch, lists Y, checked.
+- [ ] Y carries the =not in your relays= tag.
+- [ ] The relays screen does *not* contain Y.
+- [ ] No "Saved … to your read set" toast appeared when you added it —
+  including when the dialog was a Feed sync.
+
+** The × on a row
+- [ ] =×= on a row removes it from this dialog's list.
+- [ ] In the next dialog that relay is listed again, unchecked.
+
+** An inactive relay, for now
+Deactivate a relay Z in relay management, then trigger a fetch.
+- [ ] Z appears under *Inactive relays* in the dialog, unchecked.
+- [ ] Check Z and approve. The next dialog lists Z in the main list,
+  checked.
+- [ ] On the relays screen Z is still under Inactive.
+
+** Cancel changes nothing
+- [ ] Uncheck two relays, press *Cancel*. The next dialog shows them as
+  they were before you touched them.
+
+** Reset session
+- [ ] Press =reset session= in the dialog. Every listed relay becomes
+  checked and a "Session relay choices cleared" toast appears.
+- [ ] The next dialog shows only what relay management would propose: X
+  is checked, Y is gone.
+
+** A restart ends the session
+Uncheck X, add Y, approve. Stop and restart the engine, reload.
+- [ ] The first dialog lists X checked and does not list Y.
+
+Notes:
+
+* 4. Auto mode uses the same choices
+
+Start in =confirm=. In a dialog, uncheck X and add Y, then approve.
+Switch the network mode to =auto= from the mode line.
+
+- [ ] Trigger a fetch. No dialog appears; an activity toast does.
+- [ ] Expand the toast: X is not among the relays contacted, and Y is.
+- [ ] Open the network activity popover (the network indicator in the
+  mode line). It has a block titled "this session's relay choices"
+  listing X as =off= and Y as =added=.
+- [ ] Leave the app idle for a couple of minutes, then look at *recent*
+  in the same popover: no fetch went to X.
+- [ ] Press =reset= in that block. The block disappears.
+- [ ] Trigger a fetch again: X is contacted, Y is not.
+- [ ] With no session choices, the block is not shown at all.
+
+Notes:
+
+* 5. Upgrading an existing install
+
+This checks that old settings survive. Stop the engine and replace
+=/tmp/tendrl-relay-test/relays.json= with:
+
+#+begin_src json
+{"general":[],"fetch":["wss://theforest.nostr1.com"],"publish":[],
+ "search":{"default":["wss://s1.example"],"fallback":["wss://s2.example"]},
+ "indexer":{"default":["wss://idx.example"],"fallback":[]},
+ "exclusive":{"search":false,"indexer":true},
+ "resolve_kinds":{"wss://docs.example":[30818]},
+ "inactive":{"wss://parked.example":["fetch","indexer.default"]},
+ "seed_version":1}
+#+end_src
+
+Start the engine and open the relays screen.
+
+- [ ] =theforest.nostr1.com= has only =read= on.
+- [ ] =s1.example= and =s2.example= have only =search= on and no search
+  kinds.
+- [ ] =idx.example= has only =search= on and =search kinds · 6=.
+- [ ] =docs.example= has =search= on and =search kinds · 1= (30818).
+- [ ] =parked.example= is under *Inactive*, showing =read= and =search=
+  as its roles and =search kinds · 6=.
+- [ ] Reactivating =parked.example= turns =read= and =search= on.
+- [ ] Open =/tmp/tendrl-relay-test/relays.json= in a text editor: the
+  words =indexer=, =exclusive= and =resolve_kinds= do not appear.
+
+The =.example= relays do not exist, so fetches to them fail. That is
+expected here; only the settings are being checked.
+
+Notes:
+
+* 6. Pulling your published relay lists (needs a signed-in identity)
+
+Only if you have relay lists published. On the relays screen press
+*Pull from your profile*.
+
+- [ ] The fetch dialog lists your read relays and the profile relays.
+- [ ] Suggestions from a kind-10007 list offer =+ search=.
+- [ ] Suggestions from a kind-10086 list offer =+ search (profiles)=,
+  not "+ indexer".
+- [ ] Pressing =+ search (profiles)= adds the relay with =search= on and
+  search kinds 0, 3, 10002, 10007, 10088, 30002.
+- [ ] There is no "Publish kind 10086" button.
+- [ ] The 10002, 10088 and 10007 publish buttons are still there.
+
+Notes:
+
+* 7. Phone width / Android (if you have the device)
+
+- [ ] On a narrow window the relay row wraps: the relay address stays
+  readable and all five switches plus =deactivate= are reachable.
+- [ ] The fetch dialog's =invert= and =reset session= buttons fit beside
+  the *Relays* heading without overlapping it.
+- [ ] On Android, closing the app completely and reopening it clears the
+  session choices (section 3, "A restart ends the session").
+- [ ] Sending the app to the background and returning does *not* clear
+  them.
+
+Notes:
+
+* Overall
+
+- [ ] I could always tell why a relay was in the dialog's list.
+- [ ] Nothing I did in a fetch dialog changed the relays screen.
+- [ ] Nothing I did on the relays screen was lost after a restart.
+
+What was confusing, in your own words:

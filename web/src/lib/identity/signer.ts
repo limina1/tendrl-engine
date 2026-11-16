@@ -96,66 +96,125 @@ export function detectNip07(): boolean {
  * Returns a teardown function that closes the EventSource and clears
  * the engine-side registration. Calling teardown reverses everything.
  *
- * Errors propagate from any step (extension refusal, registration
- * POST failure, EventSource open failure) — callers should fall back
- * to `engine` source on failure.
+ * Errors propagate from any step of the FIRST registration (extension
+ * refusal, registration POST failure) — callers should fall back to
+ * `engine` source on failure.
+ *
+ * The registration is self-healing. It lives only in the engine's
+ * memory, so an engine restart — or the signer channel dropping — leaves
+ * the page looking signed in while the engine has no identity at all:
+ * the author-scoped feed comes back empty, the bookshelf says "no
+ * identity", NIP-42 AUTH and every signature fail, until a page reload.
+ * So when the channel errors, this registers again (fresh token, new
+ * channel) with backoff, and calls `onReconnect` once the engine knows
+ * the identity again so the caller can re-read what depends on it.
  */
-export async function registerNip07Signer(prefetchedPubkey?: string): Promise<() => void> {
+export async function registerNip07Signer(
+	prefetchedPubkey?: string,
+	opts: { onReconnect?: () => void } = {}
+): Promise<() => void> {
 	if (!detectNip07()) {
 		throw new Error('No window.nostr signer detected');
 	}
 	const signer = window.nostr!;
 	const pubkey = prefetchedPubkey ?? (await signer.getPublicKey());
 
-	const reg = await api.registerSigner({
-		kind: 'nip07',
-		pubkey,
-		capabilities: {
-			sign_event: true,
-			nip04_encrypt: !!signer.nip04?.encrypt,
-			nip04_decrypt: !!signer.nip04?.decrypt,
-			nip44_encrypt: !!signer.nip44?.encrypt,
-			nip44_decrypt: !!signer.nip44?.decrypt,
-			auto_approve_kinds: []
-		}
-	});
+	let closed = false;
+	let es: EventSource | null = null;
+	let retryTimer: ReturnType<typeof setTimeout> | null = null;
+	let backoffMs = 1000;
 
-	// Switch the engine's active source to point at this registration.
-	// Pass pubkey so /identity status surfaces it instead of `null`.
-	await api.useIdentitySource({ source: 'nip07', signer_id: reg.signer_id, pubkey });
-
-	const url = `/api/v1/identity/signer-channel?token=${encodeURIComponent(reg.token)}`;
-	const es = new EventSource(url);
-
-	es.onmessage = async (msg) => {
-		try {
-			const data = JSON.parse(msg.data) as { type: string; req_id: string; template: EventTemplate };
-			if (data.type !== 'sign_request') return;
-			try {
-				const signed = await signer.signEvent(data.template);
-				await api.postSignResponse({
-					signer_id: reg.signer_id,
-					req_id: data.req_id,
-					signed_event: signed
-				});
-			} catch (err) {
-				await api.postSignResponse({
-					signer_id: reg.signer_id,
-					req_id: data.req_id,
-					error: err instanceof Error ? err.message : String(err)
-				});
+	async function connect(): Promise<void> {
+		const reg = await api.registerSigner({
+			kind: 'nip07',
+			pubkey,
+			capabilities: {
+				sign_event: true,
+				nip04_encrypt: !!signer.nip04?.encrypt,
+				nip04_decrypt: !!signer.nip04?.decrypt,
+				nip44_encrypt: !!signer.nip44?.encrypt,
+				nip44_decrypt: !!signer.nip44?.decrypt,
+				auto_approve_kinds: []
 			}
-		} catch (e) {
-			console.warn('[NIP-07 signer] failed to handle SSE message', e);
-		}
-	};
+		});
 
-	es.onerror = (e) => {
-		console.warn('[NIP-07 signer] SSE connection error', e);
-	};
+		// Switch the engine's active source to point at this registration.
+		// Pass pubkey so /identity status surfaces it instead of `null`.
+		await api.useIdentitySource({ source: 'nip07', signer_id: reg.signer_id, pubkey });
+		if (closed) return;
+
+		const url = `/api/v1/identity/signer-channel?token=${encodeURIComponent(reg.token)}`;
+		const channel = new EventSource(url);
+		es = channel;
+
+		channel.onopen = () => {
+			backoffMs = 1000;
+		};
+
+		channel.onmessage = async (msg) => {
+			try {
+				const data = JSON.parse(msg.data) as {
+					type: string;
+					req_id: string;
+					template: EventTemplate;
+				};
+				if (data.type !== 'sign_request') return;
+				try {
+					const signed = await signer.signEvent(data.template);
+					await api.postSignResponse({
+						signer_id: reg.signer_id,
+						req_id: data.req_id,
+						signed_event: signed
+					});
+				} catch (err) {
+					await api.postSignResponse({
+						signer_id: reg.signer_id,
+						req_id: data.req_id,
+						error: err instanceof Error ? err.message : String(err)
+					});
+				}
+			} catch (e) {
+				console.warn('[NIP-07 signer] failed to handle SSE message', e);
+			}
+		};
+
+		channel.onerror = () => {
+			if (closed || es !== channel) return;
+			// The token is single-use (the engine hands the channel out
+			// once), so the browser's own reconnect can never succeed —
+			// close it and register afresh.
+			channel.close();
+			es = null;
+			scheduleReconnect();
+		};
+	}
+
+	function scheduleReconnect() {
+		if (closed || retryTimer) return;
+		const delay = backoffMs;
+		backoffMs = Math.min(backoffMs * 2, 30_000);
+		console.warn(`[NIP-07 signer] channel lost — re-registering in ${delay}ms`);
+		retryTimer = setTimeout(async () => {
+			retryTimer = null;
+			if (closed) return;
+			try {
+				await connect();
+				opts.onReconnect?.();
+			} catch (e) {
+				// Engine still down (or restarting) — keep trying.
+				console.warn('[NIP-07 signer] re-register failed', e);
+				scheduleReconnect();
+			}
+		}, delay);
+	}
+
+	await connect();
 
 	return () => {
-		es.close();
+		closed = true;
+		if (retryTimer) clearTimeout(retryTimer);
+		es?.close();
+		es = null;
 		// Best-effort source revert; engine drops the registration on
 		// channel close anyway via the stale-sweep path.
 		api.useIdentitySource({ source: 'engine' }).catch(() => {});

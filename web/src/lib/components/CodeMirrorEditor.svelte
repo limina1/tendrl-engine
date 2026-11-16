@@ -111,7 +111,9 @@
 			if (!view) return;
 			const cur = view.state.doc.toString();
 			if (cur === v) return;
-			view.dispatch({ changes: { from: 0, to: cur.length, insert: v } });
+			// `filter: false`: an external value is authoritative — read-only
+			// ranges (lockedRanges) guard the user's typing, not the host.
+			view.dispatch({ changes: { from: 0, to: cur.length, insert: v }, filter: false });
 		});
 	});
 

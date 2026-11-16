@@ -74,7 +74,7 @@ dimensions = 384
 # [editor]
 # line_numbers = true
 # vim_mode = false
-# insert_mode = "append"
+# insert_mode = "cursor"
 
 # Composer defaults (written by Save Settings)
 # [compose]

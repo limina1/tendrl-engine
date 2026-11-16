@@ -1,4 +1,5 @@
 <script lang="ts">
+	import RefreshIcon from '$lib/components/RefreshIcon.svelte';
 	import { untrack } from 'svelte';
 	import * as api from '$lib/api';
 	import type { Profile } from '$lib/api';
@@ -24,6 +25,8 @@
 	import { shouldNetworkFetch } from '$lib/nostr/fetch-dedupe';
 	import { registerResolveView } from '$lib/nostr/resolve-status.svelte';
 	import { decideFor, ensureLoaded, spansFor } from '$lib/layers/use.svelte';
+	import * as nar from '$lib/narration.svelte';
+	import NarrationStrip from '$lib/components/NarrationStrip.svelte';
 
 	// A slim viewer for single addressable documents — NIP-23 long-form
 	// articles (kind 30023) and NKBIP-02 wiki pages (kind 30818). The
@@ -279,6 +282,10 @@
 			void loadDiscussions(addr, {
 				policy: shouldNetworkFetch(discKey) ? 'local_first' : 'local_only'
 			});
+			// Audio bound to this document: one-node discovery (provenance
+			// round, ungated) once per TTL window, local only within it.
+			const narKey = `nar:${p.kind}:${p.pubkey}:${p.dTag}`;
+			void nar.refreshNode(`${p.kind}:${p.pubkey}:${p.dTag}`, shouldNetworkFetch(narKey) ? 'local_first' : 'local_only');
 			void loadAuthor(authorPubkey);
 		} catch (e) {
 			error = api.errorMessage(e);
@@ -443,12 +450,12 @@
 			{/if}
 			<button
 				class="doc-refresh"
-				class:spinning={refreshing}
 				onclick={handleRefresh}
 				disabled={refreshing}
 				title="Fetch comments and updates from relays"
+				aria-label="Fetch comments and updates from relays"
 			>
-				↻
+				<RefreshIcon spinning={refreshing} size={14} />
 			</button>
 		</header>
 
@@ -473,6 +480,9 @@
 		{/if}
 
 		<div class="doc-content" style={readingVars()}>
+			{#if addrStr}
+				<NarrationStrip coord={addrStr} title={title ?? kindLabel} pubTitle={title} />
+			{/if}
 			<HighlightCapture getContent={highlightContentFor} onposted={refreshDiscussionsLocal} />
 			<!-- data-section-addr marks the highlight-capture boundary; the body
 			     text here is verbatim source (text + exact-text marks only), so
@@ -636,6 +646,9 @@
 		padding: 4px 8px;
 		border-radius: var(--radius);
 		cursor: pointer;
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
 	}
 	.doc-refresh:hover:not(:disabled) {
 		color: var(--id-yours);
@@ -644,14 +657,6 @@
 	.doc-refresh:disabled {
 		cursor: default;
 		opacity: 0.5;
-	}
-	.doc-refresh.spinning {
-		animation: doc-spin 0.8s linear infinite;
-	}
-	@keyframes doc-spin {
-		to {
-			transform: rotate(360deg);
-		}
 	}
 
 	.author-chip {

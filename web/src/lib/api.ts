@@ -1,3 +1,4 @@
+import { onIngested } from './network/ingest';
 import type {
 	TagValueCount,
 	BunkerConnectResponse,
@@ -21,6 +22,7 @@ import type {
 	SearchResponse,
 	EmbeddingStatusResponse,
 	NetworkStatus,
+	SessionRelays,
 	NetworkMode,
 	DocumentFile,
 	ImportResult,
@@ -31,7 +33,7 @@ import type {
 	Inventory
 } from './types';
 import type { ThreadNode } from './discussions/thread';
-import type { Highlight, HighlightSpan } from './discussions/highlights';
+import type { Highlight, HighlightSpan, Highlighter } from './discussions/highlights';
 import type { ResolvedRef, ParsedToken } from './nostr/nostrdown';
 
 async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> {
@@ -737,10 +739,18 @@ export interface DraftComposeSection {
 	d_tag?: string;
 	/** Per-section content-format override; absent = inherit the draft's. */
 	format?: string;
-	tags: { name: string; value: string }[];
+	tags: DraftTag[];
 	/** Transclude slot target (naddr/coordinate) — set when this item is a slot,
 	 *  restored on resume so the `{{slot:…}}` line comes back. */
 	slot?: string;
+}
+
+/** A stored draft tag; `verbatim` ones carry their other values in `extra`. */
+export interface DraftTag {
+	name: string;
+	value: string;
+	extra?: string[];
+	verbatim?: boolean;
 }
 
 export interface DraftComposeState {
@@ -751,7 +761,7 @@ export interface DraftComposeState {
 	/** Output kind — absent/30040 = publication; any other kind = atomic draft
 	 *  (blog/wiki/custom) so resume reopens the composer in the right mode. */
 	kind?: number;
-	tags: { name: string; value: string }[];
+	tags: DraftTag[];
 	sections: DraftComposeSection[];
 }
 
@@ -769,13 +779,13 @@ export interface SaveDraftPayload {
 	title: string;
 	/** Default content format (canonical mimetype) — restored on resume. */
 	format?: string;
-	tags: [string, string][];
+	tags: WireTag[];
 	sections: {
 		title: string;
 		content: string;
 		format?: string;
 		level?: number;
-		tags: [string, string][];
+		tags: WireTag[];
 		d_tag?: string;
 		/** Transclude slot target (naddr/coordinate to a 30040/30041). */
 		slot?: string;
@@ -1133,17 +1143,25 @@ async function fetchEventOrNull(url: string): Promise<SingleEventResponse> {
 function eventFetchQs(opts: {
 	policy?: 'local_only' | 'local_first' | 'fetch_always';
 	bypassOffline?: boolean;
+	/** Relay hints — the relays an `nevent` / `naddr` names in its own
+	 *  TLVs. They join the relays proposed for this one fetch. */
+	relays?: string[];
 }): string {
 	const params = new URLSearchParams();
 	if (opts.policy) params.set('policy', opts.policy);
 	if (opts.bypassOffline) params.set('confirm', 'true');
+	if (opts.relays?.length) params.set('relays', opts.relays.join(','));
 	const qs = params.toString();
 	return qs ? `?${qs}` : '';
 }
 
 export function getEvent(
 	eventId: string,
-	opts: { policy?: 'local_only' | 'local_first' | 'fetch_always'; bypassOffline?: boolean } = {}
+	opts: {
+		policy?: 'local_only' | 'local_first' | 'fetch_always';
+		bypassOffline?: boolean;
+		relays?: string[];
+	} = {}
 ) {
 	return fetchEventOrNull(`/api/v1/events/${eventId}${eventFetchQs(opts)}`);
 }
@@ -1156,9 +1174,9 @@ export function getAddressable(
 	pubkey: string,
 	d_tag: string,
 	policy?: 'local_only' | 'local_first' | 'fetch_always',
-	opts: { bypassOffline?: boolean } = {}
+	opts: { bypassOffline?: boolean; relays?: string[] } = {}
 ) {
-	const qs = eventFetchQs({ policy, bypassOffline: opts.bypassOffline });
+	const qs = eventFetchQs({ policy, bypassOffline: opts.bypassOffline, relays: opts.relays });
 	return fetchEventOrNull(
 		`/api/v1/addressable/${kind}/${pubkey}/${encodeURIComponent(d_tag)}${qs}`
 	);
@@ -1695,13 +1713,13 @@ export interface PublishRequest {
 	 *  or its short name. REQUIRED — the engine stamps it as each 30041's `m`
 	 *  tag and refuses (400) without it. Never written on the 30040. */
 	format: string;
-	tags: [string, string][];
+	tags: WireTag[];
 	sections: {
 		title: string;
 		content: string;
 		/** Per-section override of the request's `format`. */
 		format?: string;
-		tags: [string, string][];
+		tags: WireTag[];
 		level?: number;
 		/** Reuse this section d-tag (republish replace) instead of minting. */
 		d_tag?: string;
@@ -1772,7 +1790,7 @@ export type PublishBlock =
 			title: string;
 			/** Per-block override of the request's `format`. */
 			format?: string;
-			tags: [string, string][];
+			tags: WireTag[];
 			content: string;
 			/** Reuse this 30041 d-tag (nanoid) on republish; omit to mint fresh. */
 			d_tag?: string;
@@ -1780,7 +1798,7 @@ export type PublishBlock =
 	| {
 			kind: 'imported';
 			title: string;
-			tags: [string, string][];
+			tags: WireTag[];
 			source_addr: { kind: number; pubkey: string; d_tag: string };
 			content: string;
 			author: string;
@@ -1789,7 +1807,7 @@ export type PublishBlock =
 			kind: 'forked';
 			title: string;
 			format?: string;
-			tags: [string, string][];
+			tags: WireTag[];
 			original_addr: { kind: number; pubkey: string; d_tag: string };
 			content: string;
 			original_author: string;
@@ -1801,7 +1819,7 @@ export interface PublishBlocksRequest {
 	title: string;
 	/** Content format for every event-emitting block — see PublishRequest. */
 	format: string;
-	tags: [string, string][];
+	tags: WireTag[];
 	/** Reuse this index d-tag (nanoid) on republish; omit to mint fresh. */
 	d_tag?: string;
 	blocks: PublishBlock[];
@@ -1915,9 +1933,8 @@ export function backfillPublication(pubkey: string, d_tag: string, depth?: numbe
 }
 
 /** Pull a user's relay-list events (kinds 10002 / 10007 / 10086 /
- *  10088 / 30002) through the engine's indexer composition — read
- *  relays first, falling through to indexer.default → indexer.fallback
- *  if the primary returns zero. Honors NetworkMode::Confirm via the
+ *  10088 / 30002) from the read relays plus the search relays serving
+ *  those kinds. Honors NetworkMode::Confirm via the
  *  activity-event modal. The web reads the events back from local
  *  nostrdb via api.search after this resolves. */
 export function pullUserData(pubkey: string, modeConfirm = true) {
@@ -1942,14 +1959,6 @@ export interface NamedRelaySet {
 	urls: string[];
 }
 
-/** Two-tier membership for a discovery class — `default` joins the
- *  primary fan-out (or replaces read with `exclusive`), `fallback`
- *  kicks in only on default-miss. */
-export interface DiscoveryClass {
-	default: string[];
-	fallback: string[];
-}
-
 export function getRelayConfig() {
 	return fetchJson<{
 		general: { urls: string[]; kinds: number[] };
@@ -1959,15 +1968,14 @@ export function getRelayConfig() {
 		/** NIP-42 opt-in set: relays the engine authenticates to when
 		 *  challenged. Local-only, never published. */
 		auth: { urls: string[]; kinds: number[] };
-		search: DiscoveryClass;
-		indexer: DiscoveryClass;
-		exclusive: { search: boolean; indexer: boolean };
+		/** Search relays — a per-relay flag. A search relay joins the read
+		 *  relays for every fetch whose kinds it serves. */
+		search: { urls: string[] };
 		named_sets: NamedRelaySet[];
-		/** Per-relay resolve-kind claims, keyed by normalized URL. A URL
-		 *  absent from the map claims nothing, and resolution for a kind
-		 *  nobody claims falls back to the read relays — so an empty map
-		 *  is exactly the pre-routing behavior. */
-		resolve_kinds: Record<string, number[]>;
+		/** Per-relay search kinds, keyed by normalized URL: the kinds a
+		 *  search relay is asked for. A search relay absent from the map
+		 *  serves any kind. */
+		search_kinds: Record<string, number[]>;
 		/** Parked relays: URL → the set memberships held when the relay
 		 *  was deactivated. Presence in the map IS the inactive state —
 		 *  the URL sits in no working set until reactivated. */
@@ -2085,24 +2093,6 @@ export function relayListPublishDiff(req: {
 	});
 }
 
-/** Toggle the `exclusive` flag for a discovery class. ON = read relays
- *  bypassed entirely for this class's lookup type. */
-export function setDiscoveryExclusive(klass: 'search' | 'indexer', value: boolean) {
-	return fetchJson<{ updated: boolean; message: string }>('/api/v1/config/update', {
-		method: 'POST',
-		body: JSON.stringify({ set_exclusive: { class: klass, value } })
-	});
-}
-
-/** Merge the engine's well-known indexer/search defaults into the
- *  current `default` tiers. Idempotent — already-present URLs skip. */
-export function restoreDiscoveryDefaults() {
-	return fetchJson<{ updated: boolean; message: string }>('/api/v1/config/update', {
-		method: 'POST',
-		body: JSON.stringify({ restore_discovery_defaults: true })
-	});
-}
-
 export interface SnapshotPayload {
 	include_relays?: boolean;
 	editor?: { line_numbers: boolean; vim_mode: boolean; insert_mode: string };
@@ -2207,6 +2197,7 @@ export async function refreshProfiles(pubkeys: string[]): Promise<void> {
 }
 
 export async function getProfile(pubkey: string): Promise<Profile> {
+	wantedProfiles.add(pubkey);
 	const cached = profileCache.get(pubkey);
 	if (cached) return cached;
 
@@ -2232,12 +2223,37 @@ export async function getProfile(pubkey: string): Promise<Profile> {
 	return promise;
 }
 
+// Profiles someone on the page has asked for. When the engine announces
+// a kind-0 for one of them (`ingested`), it is re-read from the local
+// store — that is how a detached relay prefetch reaches the UI, and how
+// a newer profile replaces a cached one.
+const wantedProfiles = new Set<string>();
+const profileRefreshQueue = new Set<string>();
+let profileRefreshTimer: ReturnType<typeof setTimeout> | null = null;
+
+onIngested((n) => {
+	for (const pk of n.profiles) {
+		if (wantedProfiles.has(pk)) profileRefreshQueue.add(pk);
+	}
+	if (profileRefreshQueue.size === 0 || profileRefreshTimer) return;
+	// nostrdb finishes writing a moment after the announcement.
+	profileRefreshTimer = setTimeout(async () => {
+		profileRefreshTimer = null;
+		const batch = [...profileRefreshQueue];
+		profileRefreshQueue.clear();
+		for (const pk of batch) profileCache.delete(pk);
+		await Promise.all(batch.map((pk) => getProfile(pk)));
+		notifyProfileUpdate();
+	}, 400);
+});
+
 /// Debounced profile prefetch — collects pubkeys over 300ms then fires once
 let prefetchQueue: Set<string> = new Set();
 let prefetchTimer: ReturnType<typeof setTimeout> | null = null;
 
 export function prefetchProfiles(pubkeys: string[]) {
 	for (const pk of pubkeys) {
+		if (pk.length === 64) wantedProfiles.add(pk);
 		if (!profileCache.has(pk) && pk.length === 64) prefetchQueue.add(pk);
 	}
 	if (prefetchQueue.size === 0) return;
@@ -2251,15 +2267,19 @@ async function flushPrefetch() {
 	prefetchTimer = null;
 	if (batch.length === 0) return;
 
+	// Local first: show whatever the store already holds…
+	await Promise.all(batch.map((pk) => getProfile(pk)));
+	notifyProfileUpdate();
+
+	// …then ask the relays for the ones it doesn't. The engine detaches
+	// this fetch and answers at once; the profiles arrive through the
+	// `ingested` announcement handled above.
 	try {
 		await fetchJson<{ fetched: number }>('/api/v1/profiles/fetch', {
 			method: 'POST',
 			body: JSON.stringify({ pubkeys: batch })
 		});
 	} catch { /* ignore */ }
-
-	await Promise.all(batch.map(pk => getProfile(pk)));
-	notifyProfileUpdate();
 }
 
 // Ignore List API
@@ -2355,7 +2375,7 @@ export function setAutoEmbed(auto_embed: boolean) {
 
 // Claude Code Sessions API
 
-import type { ClaudeSessionSummary, ClaudeSessionMessage } from './types';
+import type { ClaudeSessionSummary, ClaudeSessionMessage, WireTag } from './types';
 
 export function listClaudeSessions() {
 	return fetchJson<{ sessions: ClaudeSessionSummary[]; count: number }>('/api/v1/claude-sessions');
@@ -2454,6 +2474,15 @@ export async function importJsonl(
 
 export function getNetworkStatus() {
 	return fetchJson<NetworkStatus>('/api/v1/network/status');
+}
+
+/** Forget this session's relay overrides — the fetch-modal choices
+ *  (relays turned off / added) that otherwise stick until the engine
+ *  restarts. */
+export function resetSessionRelays() {
+	return fetchJson<{ reset: boolean; session: SessionRelays }>('/api/v1/network/session/reset', {
+		method: 'POST'
+	});
 }
 
 /** Kill one in-flight relay fetch by id, or all of them when id is omitted.
@@ -2647,6 +2676,8 @@ export function publishHighlight(req: {
 	context?: string;
 	/** Optional annotation → NIP-84 quote highlight. */
 	comment?: string;
+	/** The highlight's style → `["highlighter", label, #rrggbb]`. */
+	highlighter?: Highlighter;
 	relays?: string[];
 }) {
 	return fetchJson<DiscussionPublishResponse>('/api/v1/discussions/highlight', {
@@ -2751,6 +2782,7 @@ export function previewHighlight(req: {
 	offset?: [number, number];
 	context?: string;
 	comment?: string;
+	highlighter?: Highlighter;
 }): Promise<{
 	event: {
 		kind: number;
@@ -2761,6 +2793,80 @@ export function previewHighlight(req: {
 	};
 }> {
 	return fetchJson('/api/v1/discussions/highlight/preview', {
+		method: 'POST',
+		body: JSON.stringify(req)
+	});
+}
+
+/** One label → colour pair found on an author's highlights (engine
+ *  `discussions::highlighter_pairs`): newest highlight's colour per label. */
+export interface HighlighterPair extends Highlighter {
+	count: number;
+	last_used: number;
+}
+
+export interface HighlightersResponse {
+	pubkey: string;
+	/** That author's highlights considered (superseded ones excluded). */
+	highlights: number;
+	highlighters: HighlighterPair[];
+	/** A relay round ran (fetch_always and approved). */
+	fetched: boolean;
+}
+
+/** The highlighters found on an author's 9802s — the capture picker's chips.
+ *  `pubkey` omitted → yours. `fetch_always` is Confirm-gated. */
+export function listHighlighters(
+	pubkey?: string,
+	policy: 'local_only' | 'fetch_always' = 'local_only'
+): Promise<HighlightersResponse> {
+	const q = new URLSearchParams({ policy });
+	if (pubkey) q.set('pubkey', pubkey);
+	return fetchJson<HighlightersResponse>(`/api/v1/highlighters?${q}`);
+}
+
+/** Recolour one of your highlights: the engine publishes a new 9802 with the
+ *  same text + tags, the new style and `["supersedes", old]`; the old one
+ *  drops out of every list. `highlighter: null` → a plain highlight. */
+export function restyleHighlight(req: {
+	event_id: string;
+	highlighter: Highlighter | null;
+	relays?: string[];
+}) {
+	return fetchJson<DiscussionPublishResponse>('/api/v1/discussions/highlight/restyle', {
+		method: 'POST',
+		body: JSON.stringify({ ...req, highlighter: req.highlighter ?? undefined })
+	});
+}
+
+/** What hangs off one highlight (engine `highlights_attached_handler`). */
+export interface HighlightAttached {
+	/** The highlighter's own annotation — a kind-30041 parented on the 9802. */
+	annotation: DiscussionEvent | null;
+	/** Kind-1111 comments rooted at the 9802, threaded engine-side. */
+	comments: import('./discussions/thread').ThreadNode[];
+	comment_count: number;
+}
+
+export function highlightsAttached(
+	ids: string[],
+	policy: 'local_only' | 'local_first' | 'fetch_always' = 'local_only'
+): Promise<{ items: Record<string, HighlightAttached> }> {
+	return fetchJson('/api/v1/highlights/attached', {
+		method: 'POST',
+		body: JSON.stringify({ ids, policy })
+	});
+}
+
+/** Publish (or revise) your annotation on one of your highlights — the why,
+ *  for knowledge-base readers. `root` = the publication you're reading. */
+export function annotateHighlight(req: {
+	highlight_id: string;
+	content: string;
+	root?: string;
+	relays?: string[];
+}) {
+	return fetchJson<DiscussionPublishResponse>('/api/v1/highlights/annotate', {
 		method: 'POST',
 		body: JSON.stringify(req)
 	});
@@ -3857,3 +3963,626 @@ export function routstrTopup(cashu_token: string): Promise<{ ok: boolean; balanc
 export function routstrRefund(): Promise<{ token: string | null; sats?: number }> {
 	return fetchJson(`${PROVIDERS}/routstr/refund`, { method: 'POST' });
 }
+
+// ---------------------------------------------------------------------------
+// Narration — TTS → Blossom → kind-32176 (NKBIP-07) recordings bound to a
+// publication's nodes by A/E/K. Engine: src/narration.rs, src/blossom.rs.
+// ---------------------------------------------------------------------------
+
+const NARRATION = '/api/v1/narration';
+
+export interface TtsModel {
+	id: string;
+	provider: string;
+	price_per_1k: number;
+	min_per_request?: number;
+	char_cap: number;
+}
+
+export interface TtsVoice {
+	id: string;
+	name?: string;
+	provider?: string;
+	model_id?: string;
+	language?: string;
+	description?: string | null;
+	gender?: string;
+	preview_url?: string;
+}
+
+export type NarrationVersionMatch = 'exact' | 'other_version' | 'unpinned';
+
+/** A kind-32176 event ranked against one tree node (engine `Recording`). */
+export interface NarrationRecording {
+	id: string;
+	pubkey: string;
+	created_at: number;
+	d_tag: string;
+	title: string;
+	about?: string;
+	about_event?: string;
+	about_kind?: number;
+	pieces: { sha256: string; size: number }[];
+	children: [string, string][];
+	full_hash?: string;
+	size?: number;
+	duration_secs?: number;
+	mime?: string | null;
+	servers: string[];
+	voice?: string;
+	model?: string;
+	lang?: string;
+	transcript?: string;
+	transcript_format: string;
+	relays: string[];
+	version_match: NarrationVersionMatch;
+	urls: string[];
+	/** Candidate URLs per `b` piece, assembly order. */
+	piece_urls: string[][];
+	mine: boolean;
+}
+
+export interface NarrationNode {
+	coord: string;
+	event_id?: string;
+	title: string;
+	depth: number;
+	is_index: boolean;
+	/** Current spoken text of a section — compared against transcripts. */
+	spoken?: string;
+	recordings: NarrationRecording[];
+}
+
+export interface NarrationDiscovery {
+	nodes: NarrationNode[];
+	servers: string[];
+	fetched_from: string[];
+}
+
+export interface NarrationPlanNode {
+	coord: string;
+	event_id?: string | null;
+	title: string;
+	depth: number;
+	is_index: boolean;
+	chars: number;
+	chunks: number;
+	/** Expected MP3 bytes and how many blobs that is at the piece cap. */
+	est_bytes?: number;
+	est_pieces?: number;
+	preview?: string | null;
+	/** The section's own spoken text + its review (estimate `review: true`). */
+	spoken?: string | null;
+	review?: TranscriptReview | null;
+	/** A transcript override made on another version of this section. */
+	stale?: boolean;
+}
+
+/** One flagged span of a section's spoken text (src/transcript.rs). Byte
+ *  offsets (`start`/`end`) go back to the engine; `js_start`/`js_end`
+ *  index the JS string for display. */
+export interface TranscriptFlag {
+	kind:
+		| 'footnote_section'
+		| 'footnote_definition'
+		| 'footnote_marker'
+		| 'citation'
+		| 'foreign_script'
+		| 'all_caps'
+		| 'number_dense'
+		| 'symbols'
+		| 'url'
+		| 'markup'
+		| 'run_on';
+	action: 'skip' | 'review';
+	start: number;
+	end: number;
+	js_start: number;
+	js_end: number;
+	excerpt: string;
+	reason: string;
+	suggest?: string | null;
+}
+
+export interface TranscriptReview {
+	section?: { action: 'skip' | 'review'; reason: string } | null;
+	flags: TranscriptFlag[];
+}
+
+/** A change to a section's spoken text, in its byte offsets (empty `with` = skip). */
+export interface TranscriptEdit {
+	start: number;
+	end: number;
+	with: string;
+}
+
+/** The narrator's decisions for one section — resolved engine-side. */
+export interface TranscriptOverride {
+	event_id?: string | null;
+	text?: string;
+	edits?: TranscriptEdit[];
+}
+
+export interface NarrationEstimate {
+	model: TtsModel;
+	nodes: NarrationPlanNode[];
+	sections: number;
+	total_chars: number;
+	total_chunks: number;
+	estimate_usd: number;
+	est_bytes?: number;
+	piece_cap_bytes?: number;
+	balance_usd: number | null;
+	server: string | null;
+}
+
+export interface NarrateRequest {
+	pubkey: string;
+	d_tag: string;
+	model: string;
+	voice?: string;
+	language?: string;
+	force?: boolean;
+	broadcast?: boolean;
+	transcript?: boolean;
+	server?: string;
+	only?: string[];
+	/** Reviewed transcripts by section coordinate. */
+	transcripts?: Record<string, TranscriptOverride>;
+}
+
+export type NarrationGenEvent =
+	| { type: 'plan'; nodes: NarrationPlanNode[]; total_chars: number; total_chunks: number; estimate_usd: number; server: string }
+	| { type: 'section_start'; index: number; total: number; coord: string; title: string; chunks: number }
+	| { type: 'chunk'; index: number; total: number; section: number }
+	| { type: 'skipped'; coord: string; reason: string; existing: string }
+	| { type: 'uploaded'; coord: string; sha256: string; url: string; size: number; duration_secs: number | null; piece: number; pieces: number }
+	| { type: 'signed'; coord: string; narration: string; event_id: string }
+	| { type: 'broadcast'; successful: number; total: number }
+	| { type: 'done'; root: string | null; leaves: number; spent_usd: number | null; balance_usd: number | null }
+	| { type: 'error'; message: string; coord: string | null };
+
+export function getNarrationModels(): Promise<{
+	models: TtsModel[];
+	default: string;
+	default_voice: string;
+	ppq_configured: boolean;
+}> {
+	return fetchJson(`${NARRATION}/models`);
+}
+
+export function getNarrationVoices(opts: { language?: string; model?: string } = {}): Promise<{ voices: TtsVoice[] }> {
+	const q = new URLSearchParams();
+	if (opts.language) q.set('language', opts.language);
+	if (opts.model) q.set('model', opts.model);
+	const qs = q.toString();
+	return fetchJson(`${NARRATION}/voices${qs ? `?${qs}` : ''}`);
+}
+
+export function getNarrationServers(): Promise<{ servers: string[]; suggested: string[]; path: string }> {
+	return fetchJson(`${NARRATION}/servers`);
+}
+
+export function setNarrationServers(servers: string[]): Promise<{ servers: string[] }> {
+	return fetchJson(`${NARRATION}/servers`, { method: 'POST', body: JSON.stringify({ servers }) });
+}
+
+export function estimateNarration(req: {
+	pubkey: string;
+	d_tag: string;
+	model: string;
+	only?: string[];
+	transcripts?: Record<string, TranscriptOverride>;
+	/** Include each section's spoken text + review on the plan nodes. */
+	review?: boolean;
+}): Promise<NarrationEstimate> {
+	return fetchJson(`${NARRATION}/estimate`, { method: 'POST', body: JSON.stringify(req) });
+}
+
+/** Apply `edits` to `text` and review the result (engine-side): the edit
+ *  view's starting text, and the re-check of a hand-edited transcript. */
+export function reviewNarrationText(req: { text: string; title?: string; edits?: TranscriptEdit[] }): Promise<TranscriptReview & { text: string }> {
+	return fetchJson(`${NARRATION}/review`, { method: 'POST', body: JSON.stringify(req) });
+}
+
+/** Recordings per node of the publication tree, ranked (exact version
+ *  first). `local_first` reaches relays only when nothing is local;
+ *  `fetch_always` always asks (Confirm-gated). */
+export function getNarrations(
+	pubkey: string,
+	d_tag: string,
+	policy: 'local_only' | 'local_first' | 'fetch_always' = 'local_only'
+): Promise<NarrationDiscovery> {
+	return fetchJson(`${NARRATION}/for/${pubkey}/${encodeURIComponent(d_tag)}?policy=${policy}`);
+}
+
+/** Recordings bound to one document on its own (article / wiki / spec /
+ *  a section outside its publication) — one-node discovery. */
+export function getNarrationNode(
+	kind: number,
+	pubkey: string,
+	d_tag: string,
+	policy: 'local_only' | 'local_first' | 'fetch_always' = 'local_only'
+): Promise<NarrationDiscovery> {
+	return fetchJson(`${NARRATION}/node/${kind}/${pubkey}/${encodeURIComponent(d_tag)}?policy=${policy}`);
+}
+
+export interface AudiobookChapter {
+	title: string;
+	/** Coordinate of the narrated node, when the leaf is bound. */
+	about?: string;
+	/** That node is in the local store (the reader can show it). */
+	about_local: boolean;
+	recording: NarrationRecording;
+}
+
+/** A kind-32176 event opened as a book (engine `Audiobook`). */
+export interface Audiobook {
+	narration: NarrationRecording;
+	is_root: boolean;
+	about?: string;
+	about_kind?: number;
+	about_title?: string;
+	about_local: boolean;
+	/** The local 30040 listing the narrated section, if the node is one. */
+	about_publication?: string;
+	chapters: AudiobookChapter[];
+	missing: string[];
+	servers: string[];
+	fetched_from: string[];
+}
+
+export function getNarrationEvent(
+	pubkey: string,
+	d_tag: string,
+	policy: 'local_only' | 'local_first' | 'fetch_always' = 'local_only'
+): Promise<Audiobook> {
+	return fetchJson(`${NARRATION}/event/${pubkey}/${encodeURIComponent(d_tag)}?policy=${policy}`);
+}
+
+// Attached events — what hangs off a document (engine `attached.rs`): the
+// event menu's publication row + the comment / highlight / narration chips.
+
+export interface AttachedEvent {
+	id: string;
+	kind: number;
+	pubkey: string;
+	created_at: number;
+	content: string;
+	tags: string[][];
+	sig?: string;
+	relays?: string[];
+}
+
+export interface AttachedResponse {
+	target: AttachedEvent | null;
+	target_coord?: string | null;
+	target_kind?: number | null;
+	/** The publication index the target belongs to (itself for a 30040). */
+	publication: AttachedEvent | null;
+	comments: AttachedEvent[];
+	highlights: AttachedEvent[];
+	/** Kind-32176 roots bound to the publication. */
+	narration_index: AttachedEvent[];
+	/** Kind-32176 leaves bound to the target (or its sections). */
+	narration_leaves: AttachedEvent[];
+	/** 30040 indexes containing the target (empty when it is one). */
+	index: AttachedEvent[];
+	/** An index's own children (sections, nested indexes) in TOC order. */
+	sections: AttachedEvent[];
+	provenance: string[];
+	fetched_from: string[];
+}
+
+/** `local_first` runs the ungated provenance round (the relays the document
+ *  came from); `fetch_always` the gated widening round. */
+export function getAttached(opts: {
+	coord?: string;
+	id?: string;
+	policy?: 'local_only' | 'local_first' | 'fetch_always';
+}): Promise<AttachedResponse> {
+	const q = new URLSearchParams();
+	if (opts.coord) q.set('coord', opts.coord);
+	if (opts.id) q.set('id', opts.id);
+	q.set('policy', opts.policy ?? 'local_only');
+	return fetchJson(`/api/v1/attached?${q.toString()}`);
+}
+
+// ---- Broadcast picker (src/broadcast.rs) ----
+
+/** One event connected to a document, as the broadcast modal lists it. */
+export interface BroadcastRow {
+	id: string;
+	kind: number;
+	kind_name: string | null;
+	pubkey: string;
+	author: string | null;
+	created_at: number;
+	/** index · section · highlight · comment · annotation · narration ·
+	 *  merge request · deletion · reaction · reply · bookshelf · reference */
+	role: string;
+	label: string;
+	coord: string | null;
+	/** Relays it was seen on / sent to; empty = local only. */
+	relays: string[];
+	/** Retracted by a same-author kind 5 — listed, not preselected. */
+	deleted: boolean;
+}
+
+export interface BroadcastPlan {
+	root: string;
+	title: string | null;
+	rows: BroadcastRow[];
+	relays: { url: string; publish: boolean; broadcast: boolean }[];
+	local_mode: boolean;
+	truncated: boolean;
+}
+
+export interface BroadcastSendResult {
+	events: number;
+	landed: number;
+	relays: { relay: string; accepted: number; rejected: number; message: string | null }[];
+}
+
+/** Everything local connected to a document (`coord`, newest version) or
+ *  to one exact event (`id`). Reads the local store only. */
+export function getBroadcastPlan(root: { coord?: string; id?: string }): Promise<BroadcastPlan> {
+	const q = new URLSearchParams();
+	if (root.coord) q.set('coord', root.coord);
+	else if (root.id) q.set('id', root.id);
+	return fetchJson(`/api/v1/broadcast/plan?${q.toString()}`);
+}
+
+/** Re-send the picked (already-signed) events to the picked relays —
+ *  works in every network mode, local included. */
+export function broadcastSelected(ids: string[], relays: string[]): Promise<BroadcastSendResult> {
+	return fetchJson('/api/v1/broadcast/send', {
+		method: 'POST',
+		body: JSON.stringify({ ids, relays })
+	});
+}
+
+export function mirrorNarration(req: { url: string; server?: string }): Promise<{
+	results: { server: string; ok: boolean; descriptor?: unknown; error?: string }[];
+}> {
+	return fetchJson(`${NARRATION}/mirror`, { method: 'POST', body: JSON.stringify(req) });
+}
+
+/** Speak a short text with a voice (TTS only — no upload, no event; a
+ *  fraction of a cent). Resolves to an object URL for an <audio> element;
+ *  the caller revokes it. */
+export async function sampleNarration(req: {
+	model: string;
+	voice?: string;
+	language?: string;
+	text: string;
+}): Promise<string> {
+	const res = await fetch(`${NARRATION}/sample`, {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify(req)
+	});
+	if (!res.ok) {
+		const text = await res.text().catch(() => '');
+		let msg = text;
+		try {
+			msg = (JSON.parse(text) as { error?: { message?: string } | string }).error as string;
+			if (typeof msg === 'object' && msg) msg = (msg as { message?: string }).message ?? text;
+		} catch {
+			// plain text
+		}
+		throw new Error(msg || `${res.status}`);
+	}
+	return URL.createObjectURL(await res.blob());
+}
+
+/** POST SSE: run a narration, calling `onEvent` per engine event. Resolves
+ *  when the stream ends (after `done` or a fatal `error`). */
+export async function streamNarration(
+	req: NarrateRequest,
+	onEvent: (ev: NarrationGenEvent) => void,
+	signal?: AbortSignal
+): Promise<void> {
+	const res = await fetch(`${NARRATION}/generate`, {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify(req),
+		signal
+	});
+	if (!res.ok || !res.body) {
+		const text = await res.text().catch(() => '');
+		let msg = text;
+		try {
+			msg = (JSON.parse(text) as { error?: string }).error ?? text;
+		} catch {
+			// plain text
+		}
+		throw new Error(msg || `${res.status}`);
+	}
+	const reader = res.body.getReader();
+	const decoder = new TextDecoder();
+	let buf = '';
+	for (;;) {
+		const { done, value } = await reader.read();
+		if (done) break;
+		buf += decoder.decode(value, { stream: true });
+		let sep: number;
+		while ((sep = buf.indexOf('\n\n')) !== -1) {
+			const frame = buf.slice(0, sep);
+			buf = buf.slice(sep + 2);
+			for (const line of frame.split('\n')) {
+				const t = line.trim();
+				if (!t.startsWith('data:')) continue;
+				const payload = t.slice(5).trim();
+				if (!payload) continue;
+				try {
+					onEvent(JSON.parse(payload) as NarrationGenEvent);
+				} catch (e) {
+					console.error('[narration] bad SSE frame', e, payload);
+				}
+			}
+		}
+	}
+}
+
+// Reading / listening history — the engine's local "where was I" per
+// publication (`<data_dir>/history.json`; never an event).
+export interface ReadPlace {
+	coord: string;
+	event_id?: string;
+	title?: string | null;
+}
+export interface ListenPlace {
+	coord: string;
+	title?: string | null;
+	recording_id: string;
+	piece: number;
+	position_secs: number;
+	duration_secs: number;
+}
+export interface HistoryEntry {
+	/** `30040:pubkey:d` */
+	coord: string;
+	title?: string | null;
+	author: string;
+	section?: ReadPlace;
+	audio?: ListenPlace;
+	updated_at: number;
+}
+export interface HistoryUpdate {
+	coord: string;
+	title?: string | null;
+	author?: string;
+	section?: ReadPlace;
+	audio?: ListenPlace;
+	clear_section?: boolean;
+	clear_audio?: boolean;
+}
+export function getHistory() {
+	return fetchJson<{ entries: HistoryEntry[]; path: string }>('/api/v1/history');
+}
+export function updateHistory(up: HistoryUpdate) {
+	return fetchJson<{ entry: HistoryEntry }>('/api/v1/history', { method: 'POST', body: JSON.stringify(up) });
+}
+/** `coord: '*'` clears everything. */
+export function removeHistory(coord: string) {
+	return fetchJson<{ removed: boolean }>('/api/v1/history/remove', { method: 'POST', body: JSON.stringify({ coord }) });
+}
+
+// ── Section edit + merge requests (kind 818) ───────────────────────────────
+// `/api/v1/section-edit/*` edits one 30041 in place (or one 30023 / 30818 /
+// 30817): own → republish under the same d; someone else's → a fork under
+// the editor's key + a kind-818 merge request to the owner.
+
+export type EditRoute = 'republish' | 'fork_into_index' | 'fork_and_request';
+
+export interface DiffHunkLine {
+	kind: 'context' | 'removed' | 'added';
+	line: string;
+	n_before?: number;
+	n_after?: number;
+}
+
+export interface UnsignedEvent {
+	kind: number;
+	content: string;
+	tags: string[][];
+	created_at?: number;
+	pubkey?: string;
+}
+
+export interface MergeDestination {
+	url: string;
+	reasons: ('inbox' | 'found_on' | 'hint' | 'mine')[];
+}
+
+export interface MergeDestinations {
+	target: string;
+	owner: string;
+	destinations: MergeDestination[];
+	deliverable: boolean;
+	inbox_known: boolean;
+	provenance_known: boolean;
+	note?: string;
+}
+
+export interface SectionEditRequest {
+	/** The edited version's id (pins the base) or its coordinate. */
+	section: string;
+	/** The containing index (`30040:pk:d`) the edit was placed in. */
+	index?: string;
+	content: string;
+	title?: string;
+	format?: string;
+	/** The author's tags (the tags panel) — replace the base's own tags. */
+	tags?: WireTag[];
+	with_derivative?: boolean;
+	message?: string;
+	broadcast?: boolean;
+	relays?: string[];
+	mode_confirm?: boolean;
+}
+
+export interface SectionEditPreview {
+	route: EditRoute;
+	kind: number;
+	base_coordinate: string;
+	base_id: string;
+	owner: string;
+	section: UnsignedEvent;
+	section_coordinate: string;
+	index?: UnsignedEvent | null;
+	hunks: DiffHunkLine[][];
+	title_changed: boolean;
+	format: string;
+	unchanged: boolean;
+	moved_on: boolean;
+	merge_request?: UnsignedEvent;
+	destinations?: MergeDestinations;
+	index_coordinate: string | null;
+	overwrites?: string;
+}
+
+export interface SectionEditPublished extends PublishResponse {
+	route: EditRoute;
+	section: { id: string } & UnsignedEvent;
+	section_coordinate: string;
+	index?: unknown;
+	merge_request?: { id: string } & UnsignedEvent;
+	relays_used: string[];
+}
+
+export function sectionEditPreview(req: SectionEditRequest): Promise<SectionEditPreview> {
+	return fetchJson('/api/v1/section-edit/preview', { method: 'POST', body: JSON.stringify(req) });
+}
+
+export function sectionEditPublish(req: SectionEditRequest): Promise<SectionEditPublished> {
+	return fetchJson('/api/v1/section-edit/publish', { method: 'POST', body: JSON.stringify(req) });
+}
+
+/** The 818 list row — the same shape as `MergeRequest`. */
+export type MergeRequestRow = MergeRequest;
+
+export interface MergeReview {
+	merge_request: MergeRequestRow;
+	status: MergeStatus;
+	role: string;
+	base: { coordinate: string; base_id?: string; current_id: string; moved_on: boolean };
+	source: { coordinate: string; id: string };
+	sections: {
+		original: string;
+		derivative: string;
+		title: string;
+		format: string;
+		hunks: DiffHunkLine[][];
+		tags_added: string[][];
+		tags_removed: string[][];
+		next: UnsignedEvent;
+	}[];
+	note?: string;
+}
+
+export function reviewMergeRequest(id: string): Promise<MergeReview> {
+	return fetchJson(`/api/v1/merge-requests/${encodeURIComponent(id)}/diff`);
+}
+

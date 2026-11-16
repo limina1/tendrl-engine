@@ -871,7 +871,11 @@ fn wants_relays(input: &Value) -> bool {
 /// The relay set for a targeted fetch: the configured relays plus any relay
 /// hints local events attach to this id / coordinate.
 fn relays_for_target(engine: &Arc<Engine>, target: &str) -> Vec<String> {
-    let mut relays = engine.relay_config().all_urls();
+    let is_id = target.len() == 64 && target.bytes().all(|b| b.is_ascii_hexdigit());
+    let kind = (!is_id)
+        .then(|| target.split(':').next().and_then(|k| k.parse::<u64>().ok()))
+        .flatten();
+    let mut relays = engine.relays_for_kinds(kind.as_ref().map(std::slice::from_ref));
     for hint in engine.relay_hints_for_target(target) {
         if !relays.contains(&hint) {
             relays.push(hint);
@@ -1012,7 +1016,7 @@ async fn list_section_versions(engine: &Arc<Engine>, input: Value) -> Result<Val
 /// `approved: false`). Auto mode proceeds immediately. Tag filters (`d:`,
 /// `T:`, `t:`, `a:`…) travel in the DSL like any other clause.
 async fn relay_search(engine: &Arc<Engine>, q: &str, query: &SearchQuery) -> Result<Value> {
-    let relays = engine.relay_config().all_urls();
+    let relays = engine.relays_for_kinds(query.kind_filter.as_deref());
     let op = match engine
         .begin_fetch_operation(
             crate::network::FetchPattern::Search,
@@ -1825,7 +1829,7 @@ async fn prepare_merge(engine: &Arc<Engine>, input: Value) -> Result<Value> {
     let entries = |tags: &[Vec<String>], skip: &[&str]| -> Vec<TagEntry> {
         tags.iter()
             .filter(|t| t.len() > 1 && !skip.contains(&t[0].as_str()))
-            .map(|t| TagEntry { name: t[0].clone(), value: t[1].clone() })
+            .map(|t| TagEntry { name: t[0].clone(), value: t[1].clone(), extra: Vec::new(), verbatim: false })
             .collect()
     };
     let section_from = |next: &crate::signing::EventTemplate, d_tag: Option<String>| SectionCompose {
@@ -2025,6 +2029,7 @@ fn tag_pairs(v: Option<&Value>) -> Vec<crate::publication::compose::TagEntry> {
                     Some(crate::publication::compose::TagEntry {
                         name: t.first()?.as_str()?.to_string(),
                         value: t.get(1)?.as_str()?.to_string(),
+                        ..Default::default()
                     })
                 })
                 .collect()

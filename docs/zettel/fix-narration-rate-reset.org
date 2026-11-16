@@ -1,0 +1,31 @@
+#+TITLE: Fix: Narration Playback Speed Lost at Every Section
+#+TYPE: fix
+#+STATUS: fixed
+#+DATE: 2026-11-09
+
+* The issue (observed 2026-11-09 on Android, v0.17.0)
+
+Pick 1.5× in the player; when the next section (or the next NKBIP-07
+piece of the same section) starts, playback is back at 1×.
+
+Cause: the HTML media *load algorithm* resets =playbackRate= to
+=defaultPlaybackRate=. =NarrationPlayer= set only =playbackRate=, and
+every track change calls =load()= on the new =src=.
+
+* The fix (commit =f4cb74f=, v0.18.0)
+
+- Set =defaultPlaybackRate= *and* =playbackRate= from the store, and
+  re-apply after =load()= and on =loadedmetadata=.
+- Persist the rate in =localStorage= (=tendrl.narration.rate=) so it
+  also survives a reload / app restart. Gotcha: the loader must be
+  declared *before* the =$state= literal whose initializer calls it —
+  a =const= key in the temporal dead zone made the =try/catch= return 1
+  silently.
+
+Verified headlessly at the section boundary (rate 1.5 held through
+=emptied → loadstart → playing=) and after a reload.
+
+* Related
+
+- [[file:feat-history.org][Reading & listening history]] — same slice
+- [[file:idea-audiobook-blossom.org][Audiobooks on Blossom]]

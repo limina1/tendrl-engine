@@ -29,6 +29,7 @@ export const KNOWN_KINDS: { kind: number; label: string; note: string }[] = [
 	{ kind: 30041, label: 'Publication section', note: 'NKBIP-01' },
 	{ kind: 30023, label: 'Long-form article', note: 'NIP-23' },
 	{ kind: 30818, label: 'Wiki article', note: 'NKBIP-02' },
+	{ kind: 32176, label: 'Narration', note: 'NKBIP-07' },
 	{ kind: 1, label: 'Short note', note: 'NIP-01' },
 	{ kind: 1111, label: 'Comment', note: 'NIP-22' },
 	{ kind: 9802, label: 'Highlight', note: 'NIP-84' },

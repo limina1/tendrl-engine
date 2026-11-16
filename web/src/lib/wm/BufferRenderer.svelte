@@ -16,8 +16,9 @@
 	import DiscussionViewBuffer from './renderers/DiscussionViewBuffer.svelte';
 	import RepositoryBuffer from './renderers/RepositoryBuffer.svelte';
 	import AnnotationsBuffer from './renderers/AnnotationsBuffer.svelte';
-import NotificationsBuffer from './renderers/NotificationsBuffer.svelte';
-import MergeRequestReviewBuffer from './renderers/MergeRequestReviewBuffer.svelte';
+	import NotificationsBuffer from './renderers/NotificationsBuffer.svelte';
+	import MergeRequestReviewBuffer from './renderers/MergeRequestReviewBuffer.svelte';
+	import AudiobookBuffer from './renderers/AudiobookBuffer.svelte';
 
 	let { buffer }: { buffer: Buffer } = $props();
 </script>
@@ -59,6 +60,8 @@ import MergeRequestReviewBuffer from './renderers/MergeRequestReviewBuffer.svelt
 		<NotificationsBuffer {buffer} />
 	{:else if buffer.kind === 'review'}
 		<MergeRequestReviewBuffer {buffer} />
+	{:else if buffer.kind === 'audiobook'}
+		<AudiobookBuffer {buffer} />
 	{:else}
 		<div class="missing">no renderer registered for kind {buffer.kind}</div>
 	{/if}

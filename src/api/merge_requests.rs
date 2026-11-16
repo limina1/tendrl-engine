@@ -29,7 +29,8 @@ use serde_json::{json, Value};
 use crate::api::AppState;
 use crate::engine::FetchPolicy;
 use crate::error::EngineError;
-use crate::publication::insertion::{coord_parts, event_coordinate, event_tags, index_children, is_definition, is_glossary};
+use crate::publication::event_util::{coord_parts, event_coordinate, event_tags, index_children};
+use crate::publication::insertion::{is_definition, is_glossary};
 use crate::signing::EventTemplate;
 use crate::publication::merge_request::{destination_set, find_replacements, index_diff, is_deliverable, line_diff, reaction_template, resolve_status, verdict_of, Destination, DiffHunk, IndexDiff, MergeRequest, MergeStatus};
 
@@ -69,7 +70,7 @@ pub async fn destinations(engine: &AppState, req: &DestinationsRequest) -> Resul
     let target = req.target.trim().to_string();
     let (kind, target_pk, _) = coord_parts(&target)
         .ok_or_else(|| EngineError::BadRequest(format!("target is not a coordinate: `{target}`")))?;
-    if !matches!(kind, 30040 | 30041 | 30818) {
+    if !matches!(kind, 30040 | 30041 | 30023 | 30818 | 30817) {
         return Err(EngineError::BadRequest(format!("a merge request targets a 30040 or 30041, not kind {kind}")));
     }
     let owner = req
@@ -86,7 +87,7 @@ pub async fn destinations(engine: &AppState, req: &DestinationsRequest) -> Resul
     let inbox = engine.inbox_relays_for(&owner, policy, req.mode_confirm).await?;
     // Provenance of the target and, for a section, of its index too: the
     // relay that served the publication is one the owner published to.
-    let mut provenance = engine.provenance_for(&target).await;
+    let mut provenance = engine.provenance_for(&target);
     if kind == 30041 {
         // the indexes that list this section (local) — their provenance counts too
         let indexes = engine
@@ -96,7 +97,7 @@ pub async fn destinations(engine: &AppState, req: &DestinationsRequest) -> Resul
             .unwrap_or_default();
         for ix in indexes {
             for r in ix.get("relays").and_then(Value::as_array).into_iter().flatten().filter_map(Value::as_str) {
-                let r = crate::relay_url::normalize_relay_url(r);
+                let r = crate::nip11::normalize_relay_url(r);
                 if !r.is_empty() && !provenance.contains(&r) {
                     provenance.push(r);
                 }
@@ -307,10 +308,10 @@ async fn verdict_relays(engine: &AppState, mr: &MergeRequest, extra: Option<&[St
     let mut urls: Vec<String> = extra.map(|v| v.to_vec()).unwrap_or_default();
     let policy = if mode_confirm { FetchPolicy::LocalFirst } else { FetchPolicy::LocalOnly };
     urls.extend(engine.inbox_relays_for(&mr.pubkey, policy, mode_confirm).await.unwrap_or_default());
-    urls.extend(engine.provenance_for(&mr.id).await);
+    urls.extend(engine.provenance_of_id(&mr.id));
     let mut out: Vec<String> = Vec::new();
     for u in urls {
-        let n = crate::relay_url::normalize_relay_url(&u);
+        let n = crate::nip11::normalize_relay_url(&u);
         if !n.is_empty() && !out.contains(&n) {
             out.push(n);
         }
@@ -485,15 +486,29 @@ fn first_tag<'a>(tags: &'a [Vec<String>], name: &str) -> Option<&'a str> {
 fn next_section(original: &Value, derivative: &Value, owner: &str, created_at: i64) -> (EventTemplate, Vec<Vec<String>>, Vec<Vec<String>>) {
     let o_tags = event_tags(original);
     let d_tags = event_tags(derivative);
-    let is_ref = |t: &Vec<String>| REF_TAGS.contains(&tag_name(t));
+    // fork / source pointers belong to the derivative, never the owner's version
+    let is_ref = |t: &Vec<String>| {
+        REF_TAGS.contains(&tag_name(t)) && !matches!(t.get(3).map(String::as_str), Some("fork" | "source"))
+    };
     let same = |x: &Vec<String>, y: &Vec<String>| x.first() == y.first() && x.get(1) == y.get(1);
     let added: Vec<Vec<String>> = d_tags.iter().filter(|t| is_ref(t) && !o_tags.iter().any(|o| same(o, t))).cloned().collect();
     let removed: Vec<Vec<String>> = o_tags.iter().filter(|t| is_ref(t) && !d_tags.iter().any(|d| same(d, t))).cloned().collect();
     let mut tags: Vec<Vec<String>> = o_tags.iter().filter(|t| tag_name(t) != "client").cloned().collect();
+    tags.retain(|t| !(is_ref(t) && removed.iter().any(|r| same(r, t))));
     tags.extend(added.iter().cloned());
+    // A section edit may retitle or re-declare the format: the derivative's
+    // `title` and `m` win (everything else stays the owner's).
+    for name in ["title", "m"] {
+        if let Some(v) = first_tag(&d_tags, name) {
+            match tags.iter_mut().find(|t| tag_name(t) == name) {
+                Some(t) if t.len() >= 2 => t[1] = v.to_string(),
+                _ => tags.push(vec![name.to_string(), v.to_string()]),
+            }
+        }
+    }
     (
         EventTemplate {
-            kind: 30041,
+            kind: original.get("kind").and_then(Value::as_u64).unwrap_or(30041) as u32,
             created_at,
             tags,
             content: derivative.get("content").and_then(Value::as_str).unwrap_or("").to_string(),
@@ -572,7 +587,7 @@ pub async fn review(engine: &AppState, id: &str, me: &str) -> Result<ReviewRespo
     let mut index = None;
     let mut cited: Vec<String> = Vec::new();
     let mut promoted_in_source: Vec<String> = Vec::new();
-    if mr.target_kind == 30041 {
+    if mr.target_kind != 30040 {
         let (next, added, removed) = next_section(&current, &source, &owner, now);
         let tags = event_tags(&current);
         sections.push(ReviewSection {
@@ -682,13 +697,7 @@ fn a_values(ev: &Value) -> Vec<String> {
 }
 
 fn format_of(ev: &Value) -> String {
-    match crate::publication::relink::section_format(ev) {
-        crate::nostrdown::RelinkFormat::Markdown => "markdown",
-        crate::nostrdown::RelinkFormat::Org => "org",
-        crate::nostrdown::RelinkFormat::Asciidoc => "asciidoc",
-        crate::nostrdown::RelinkFormat::Plain => "plain",
-    }
-    .to_string()
+    crate::mimetype::from_event(ev).and_then(crate::mimetype::short_name).unwrap_or("plain").to_string()
 }
 
 /// GET /api/v1/merge-requests/:id/diff
@@ -915,5 +924,51 @@ mod tests {
         // the engine's default publish set rides along as `mine` — never as inbox / found-on
         assert!(d2.destinations.iter().filter(|x| !x.reasons.contains(&Reason::Inbox)).all(|x| x.reasons == vec![Reason::Mine]));
         assert!(destinations(&engine, &DestinationsRequest { target: "30023:x:y".into(), owner: None, policy: None, mode_confirm: false }).await.is_err());
+    }
+
+    /// A stranger edits one section of the owner's publication: the planner
+    /// forks it and names it in an 818; the owner's review pairs fork and
+    /// base and its next version keeps the owner's `d` with the new text
+    /// and title.
+    #[tokio::test]
+    async fn a_section_edit_by_a_stranger_reviews_as_the_owners_next_version() {
+        use crate::publication::section_edit::{merge_request_for, plan, EditRoute, SectionEdit};
+        let dir = tempfile::tempdir().unwrap();
+        let engine = Arc::new(crate::engine::Engine::new(dir.path()).unwrap());
+        std::mem::forget(dir);
+        let owner = pk_of(OWNER_SEC);
+        let me = pk_of(ME_SEC);
+        let s_tags = vec![vec!["d".into(), "s1".into()], vec!["title".into(), "One".into()], vec!["m".into(), "text/markdown".into()], vec!["t".into(), "keep".into()]];
+        let (sid, s_ev) = signed(OWNER_SEC, 30041, "first line\nsecond line", s_tags, 900);
+        ingest(&engine, &s_ev, &sid).await;
+        let ix_tags = vec![vec!["d".into(), "book".into()], vec!["title".into(), "Book".into()], vec!["a".into(), format!("30041:{owner}:s1")]];
+        let (iid, ix_ev) = signed(OWNER_SEC, 30040, "", ix_tags, 901);
+        ingest(&engine, &ix_ev, &iid).await;
+
+        let edit = SectionEdit { content: "first line\nsecond line, sharper".into(), title: Some("Uno".into()), format: None, tags: None };
+        let p = plan(&s_ev, Some(&ix_ev), &me, &edit, "", false, 950).unwrap();
+        assert_eq!(p.route, EditRoute::ForkAndRequest);
+        let (fid, f_ev) = signed(ME_SEC, 30041, &p.section.content, p.section.tags.clone(), 950);
+        ingest(&engine, &f_ev, &fid).await;
+        let t = merge_request_for(&p, &fid, "", &MergeHints::default(), 951).unwrap();
+        let (mid, m_ev) = signed(ME_SEC, 818, &t.content, t.tags.clone(), 951);
+        ingest(&engine, &m_ev, &mid).await;
+
+        let rv = review(&engine, &mid, &owner).await.unwrap();
+        assert_eq!(rv.role, "owner");
+        assert!(!rv.base.moved_on);
+        assert!(rv.index.is_none(), "a section target merges without touching the index");
+        assert_eq!(rv.sections.len(), 1);
+        let next = &rv.sections[0].next;
+        assert_eq!(next.content, "first line\nsecond line, sharper");
+        let tag = |n: &str| next.tags.iter().find(|t| t[0] == n).map(|t| t[1].clone());
+        assert_eq!(tag("d").as_deref(), Some("s1"), "the owner's own d");
+        assert_eq!(tag("title").as_deref(), Some("Uno"), "the retitle carries");
+        assert_eq!(tag("t").as_deref(), Some("keep"));
+        assert!(next.tags.iter().all(|t| t[0] != "E"), "the owner's version is not a derivative");
+        assert!(rv.sections[0].hunks.iter().flatten().any(|h| h.line == "second line, sharper"));
+        // the requester sees the same review; a stranger is refused
+        assert_eq!(review(&engine, &mid, &me).await.unwrap().role, "requester");
+        assert!(review(&engine, &mid, &"c".repeat(64)).await.is_err());
     }
 }

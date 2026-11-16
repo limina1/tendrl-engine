@@ -26,6 +26,7 @@
 
 use tauri::Manager;
 
+mod media;
 mod nip55;
 
 /// Stable loopback port. The WebView origin (scheme+host+port) keys ALL of
@@ -119,6 +120,7 @@ pub fn run() {
 
     tauri::Builder::default()
         .plugin(nip55::init())
+        .plugin(media::init())
         .setup(|app| {
             let data_root = app.path().app_data_dir()?;
             std::fs::create_dir_all(&data_root)?;

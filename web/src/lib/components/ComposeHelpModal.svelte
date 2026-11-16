@@ -43,26 +43,30 @@
 			</p>
 
 			<div class="ch-scroll">
-				<div class="ch-group">Output</div>
-				{@render row('kind', 'Publication (30040/41 graph) · Blog (30023) · Wiki (30818) · Custom')}
-				{@render row('atomic kinds', 'Blog/Wiki/Custom publish the whole body as one event')}
-				{@render row('Publication', 'a title present → sections bind under one 30040 index')}
-				{@render row('Notes', 'no title → each section a standalone 30041, no index')}
+				<div class="ch-group">Type and Style</div>
+				{@render row('Publication', 'a 30040 index over the 30041 sections')}
+				{@render row('Notes', 'each section a standalone 30041, no index')}
+				{@render row('Wiki · Spec · Blog', '30818 · 30817 · 30023 — the whole body as one event')}
+				{@render row('Custom kind', 'any other kind number, one event')}
+				{@render row('Style', 'Markdown · Org · AsciiDoc · plain — the m tag; changing it re-reads the text')}
 
-				<div class="ch-group">View modes</div>
-				{@render row('Full', 'each section as an editable card')}
-				{@render row('Plain', 'one text buffer + a live detected-section outline')}
+				<div class="ch-group">View</div>
+				{@render row('Rendered', 'styled; the markup hides except on the line you edit')}
+				{@render row('Show markers', 'styled; the markup shows, dimmed')}
+				{@render row('Source', 'the plain text')}
 				{@render row('Read', 'preview the rendered result in its own buffer')}
 
-				<div class="ch-group">Plain-mode structure</div>
-				{@render row('= Title', 'level 1 — the publication itself (one, at top)')}
-				{@render row('== Heading', 'level 2 — starts a section')}
-				{@render row('=== Sub', 'level 3+ — nested sub-index (when nest > flat)')}
-				{@render row('delim', 'the heading delimiter character (= default, # Markdown)')}
-				{@render row('nest', 'flat, or fold deeper headings into nested 30040 indices')}
-				{@render row(':key: value', 'a ["key","value"] tag — works in every mode')}
-				{@render row(':tags: a, b', 'expands to t tags (#a #b) — works in every mode')}
-				{@render row('+ Section', 'append a new section (Full mode)')}
+				<div class="ch-group">Headings (in your style: # · * · =)</div>
+				{@render row('H1', 'the title (a 30040, or the article title)')}
+				{@render row('H2', 'starts a section — a 30041 (in Notes: a note)')}
+				{@render row('H3', 'a sub-section; its H2 becomes a nested 30040')}
+				{@render row('H4+', 'stays inside the section text')}
+				{@render row('toolbar', 'H1–H4, bold, italic, code, link, list, quote, code block, {{ }}, [[ ]]')}
+
+				<div class="ch-group">Tags (the rail)</div>
+				{@render row('name + values', 'one row per tag; + value adds another — ["r", "wss://…", "read"]')}
+				{@render row('Publication / section', 'the index’s tags, or the section under the cursor')}
+				{@render row('d · title · m · a', 'set by the engine, shown read-only')}
 
 				<div class="ch-group">Nostrdown references</div>
 				{@render row('{{ref:slug}}', 'link a sibling section by its title-slug')}
@@ -74,22 +78,15 @@
 				{@render row('#heading', 'append to target a heading anchor')}
 				{@render row('⌘/Ctrl-click', 'follow a recognized {{…}} reference in the editor')}
 
-				<div class="ch-group">Sections (Full)</div>
-				{@render row('locked', 'imported / new sections arrive locked — claim (yellow) to edit')}
-				{@render row('Unlock / Lock all', 'bulk claim / re-lock against a source publication')}
-				{@render row('drag', 'reorder; collapse a card to its title')}
-
-				<div class="ch-group">Selection toolbar</div>
-				{@render row('All / Inv', 'select all sections / invert the selection')}
-				{@render row('◂', 'send selected sections to chat')}
-				{@render row('▸', 'publish selected sections locally')}
-				{@render row('🗑', 'remove from compose (arm again to delete everywhere)')}
-				{@render row('▸ all', 'collapse / expand every section')}
+				<div class="ch-group">Outline</div>
+				{@render row('click', 'jump to the section')}
+				{@render row('↑ / ↓', 'reorder (its tags move with it)')}
+				{@render row('locked', "a placed edit's sibling sections are read-only")}
+				{@render row('Unlock / Lock all', 'open every section of the publication, or re-lock untouched ones')}
 
 				<div class="ch-group">Sign → broadcast</div>
 				{@render row('Preview events', 'inspect the exact JSON first')}
 				{@render row('Sign', 'sign a snapshot — the only way into the db')}
-				{@render row('Sign (N)', 'sign just the checked sections')}
 				{@render row('Diff vs published', 'compare to the last published version')}
 				{@render row('republish / fork', 'same title reuses identifiers & replaces; else new')}
 				{@render row('broadcast', 'sending to relays is a separate, later step')}

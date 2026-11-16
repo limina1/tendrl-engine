@@ -24,7 +24,12 @@
 	import AnnotationRequestModal from '$lib/components/AnnotationRequestModal.svelte';
 	import RelinkModal from '$lib/components/RelinkModal.svelte';
 	import EventComposerModal from '$lib/components/EventComposerModal.svelte';
+	import EditReviewModal from '$lib/components/EditReviewModal.svelte';
+	import MergeRequestsModal from '$lib/components/MergeRequestsModal.svelte';
 	import AgentServicesModal from '$lib/components/AgentServicesModal.svelte';
+	import NarrateModal from '$lib/components/NarrateModal.svelte';
+	import BroadcastModal from '$lib/components/BroadcastModal.svelte';
+	import NarrationPlayer from '$lib/components/NarrationPlayer.svelte';
 	// fetch-events self-starts the SSE subscription at module scope; we
 	// only need confirmState here to render the modal.
 	import { confirmState } from '$lib/network/fetch-events.svelte';
@@ -32,7 +37,6 @@
 	// importing it here is what boots the 🔔 counts.
 	import '$lib/notifications.svelte';
 	import { trigger as triggerTip, setWalkthroughWorld } from '$lib/wm/discovery.svelte';
-	import { identityCanSign } from '$lib/identity/signer';
 	import type { NostrEvent, SearchResult } from '$lib/types';
 	import { getActiveStore } from '$lib/wm/buffer-store.svelte';
 
@@ -40,16 +44,19 @@
 
 	const app = createAppState();
 
-	// Walkthrough: the "feed sync" confirm modal is the first surface of the
-	// login walk. When a fetch intent opens it, point at it — `feed-sync` while
-	// the pull is still broad (logged out / unscoped), `general-feed` once the
-	// query carries an author scope (signed in), which is the later "now it's
-	// optional" beat. Both no-op unless the walkthrough is armed + unseen.
+	// Walkthrough: the Confirm-mode fetch modal is the first surface of the
+	// first-run walk. When a fetch intent opens it, point at it — `feed-sync`
+	// ("approve the first pull") while the user is logged out, `general-feed`
+	// (the standalone "now it's optional" tip) once they have an identity. The
+	// gate is the *user's* identity, not whether the query carries authors: the
+	// engine also scopes the feed by config authors and the assistant's key, so
+	// a logged-out query can be author-scoped. Both no-op unless the walkthrough
+	// is armed + unseen.
 	$effect(() => {
 		const intent = confirmState.intent;
 		if (intent?.type !== 'intent') return;
-		const scoped = (intent.summary?.filters ?? []).some((f) => (f.authors?.length ?? 0) > 0);
-		triggerTip(scoped ? 'general-feed' : 'feed-sync');
+		const signedIn = !!app.identityStatus?.pubkey;
+		triggerTip(signedIn ? 'general-feed' : 'feed-sync');
 	});
 
 	// One-time client setup: kick off initialization and start the network
@@ -66,8 +73,10 @@
 			// Let the walkthrough read live world-state so its first-run beats can
 			// self-suppress when their goal is already met (already signed in,
 			// pool already populated). Read lazily at trigger time, not reactively.
+			// "Has identity" means a pubkey — a watch-only npub counts: the feed
+			// is scoped to it and there is nothing to teach about signing in.
 			setWalkthroughWorld(() => ({
-				hasIdentity: identityCanSign(app.identityStatus),
+				hasIdentity: !!app.identityStatus?.pubkey,
 				dbHasEvents: app.feed.length > 0
 			}));
 			app.initialize();
@@ -245,9 +254,28 @@
 	<EventComposerModal />
 {/if}
 
+{#if app.editReview}
+	<EditReviewModal />
+{/if}
+
+{#if app.mergeRequests}
+	<MergeRequestsModal />
+{/if}
+
 {#if app.agentServicesModal}
 	<AgentServicesModal />
 {/if}
+
+{#if app.narrateModal}
+	<NarrateModal />
+{/if}
+{#if app.broadcastModal}
+	<BroadcastModal />
+{/if}
+
+<!-- The one narration player: renders only while a playlist is loaded,
+     survives buffer switches. -->
+<NarrationPlayer />
 
 <ComparePublishModal />
 

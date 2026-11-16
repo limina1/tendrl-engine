@@ -61,6 +61,56 @@ pub struct TagEntry {
     pub name: String,
     /// Tag value (for "tags" name, comma-separated values become multiple "t" tags)
     pub value: String,
+    /// Values after the first, for a multi-value tag set in the tags panel
+    /// (`["name", value, extra…]`). Only read when `verbatim`.
+    pub extra: Vec<String>,
+    /// Emit exactly as entered: no `tags` → `t` expansion, no comma split.
+    /// Set for tags that arrive as `{name, values}` (the composer's tags
+    /// panel); the legacy `[name, value]` pair keeps the inline-syntax rules.
+    pub verbatim: bool,
+}
+
+impl TagEntry {
+    /// A multi-value tag emitted as `[name, values…]`, verbatim.
+    pub fn verbatim(name: impl Into<String>, values: Vec<String>) -> Self {
+        let mut it = values.into_iter();
+        TagEntry {
+            name: name.into(),
+            value: it.next().unwrap_or_default(),
+            extra: it.collect(),
+            verbatim: true,
+        }
+    }
+}
+
+/// A compose tag on the wire: the legacy `["name", "value"]` pair (inline
+/// syntax rules: `tags` expands to `t`, commas split values) or
+/// `{"name": …, "values": […]}` — the tags panel's multi-value form,
+/// emitted verbatim as `["name", values…]`.
+#[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
+#[serde(untagged)]
+pub enum WireTag {
+    Pair(String, String),
+    Full { name: String, values: Vec<String> },
+}
+
+impl From<&WireTag> for TagEntry {
+    fn from(w: &WireTag) -> Self {
+        match w {
+            WireTag::Pair(name, value) => TagEntry {
+                name: name.clone(),
+                value: value.clone(),
+                ..Default::default()
+            },
+            WireTag::Full { name, values } => TagEntry::verbatim(name.clone(), values.clone()),
+        }
+    }
+}
+
+impl From<WireTag> for TagEntry {
+    fn from(w: WireTag) -> Self {
+        TagEntry::from(&w)
+    }
 }
 
 /// A section being composed (for 30041 events)
@@ -195,6 +245,7 @@ pub fn stamp_mimetype(tags: &mut Vec<TagEntry>, mimetype: &str) {
     tags.push(TagEntry {
         name: "m".to_string(),
         value: mimetype.to_string(),
+        ..Default::default()
     });
 }
 
@@ -391,6 +442,7 @@ impl ComposeState {
                     self.tags.push(TagEntry {
                         name: self.current_tag_name.clone(),
                         value: self.current_tag_value.clone(),
+                        ..Default::default()
                     });
                     self.current_tag_name.clear();
                     self.current_tag_value.clear();
@@ -415,6 +467,7 @@ impl ComposeState {
                         section.tags.push(TagEntry {
                             name: section.current_tag_name.clone(),
                             value: section.current_tag_value.clone(),
+                            ..Default::default()
                         });
                         section.current_tag_name.clear();
                         section.current_tag_value.clear();
@@ -519,6 +572,7 @@ impl ComposeState {
                         section.tags.push(TagEntry {
                             name: section.current_tag_name.clone(),
                             value: section.current_tag_value.clone(),
+                            ..Default::default()
                         });
                     }
                     section.current_tag_name.clear();
@@ -533,6 +587,7 @@ impl ComposeState {
                     self.tags.push(TagEntry {
                         name: self.current_tag_name.clone(),
                         value: self.current_tag_value.clone(),
+                        ..Default::default()
                     });
                 }
                 self.current_tag_name.clear();
@@ -682,7 +737,11 @@ impl ComposeState {
     pub fn tags_to_nostr_format(tags: &[TagEntry]) -> Vec<Vec<String>> {
         let mut result = Vec::new();
         for tag in tags {
-            if tag.name == "tags" {
+            if tag.verbatim {
+                let mut row = vec![tag.name.clone(), tag.value.clone()];
+                row.extend(tag.extra.iter().cloned());
+                result.push(row);
+            } else if tag.name == "tags" {
                 // Special case: "tags" expands comma-separated values into individual "t" tags
                 for t in tag.value.split(',') {
                     let t = t.trim();
@@ -1148,6 +1207,26 @@ impl ComposeBlockState {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn wire_tags_keep_pairs_legacy_and_full_tags_verbatim() {
+        let wire: Vec<WireTag> = serde_json::from_str(
+            r#"[["tags","a, b"],{"name":"summary","values":["one, two"]},{"name":"r","values":["wss://x","read"]},["l","p, q"]]"#,
+        )
+        .unwrap();
+        let tags: Vec<TagEntry> = wire.iter().map(TagEntry::from).collect();
+        let row = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        assert_eq!(
+            ComposeState::tags_to_nostr_format(&tags),
+            vec![
+                row(&["t", "a"]),
+                row(&["t", "b"]),
+                row(&["summary", "one, two"]),
+                row(&["r", "wss://x", "read"]),
+                row(&["l", "p", "q"]),
+            ]
+        );
+    }
+
     use super::*;
 
     fn m_of(tags: &[TagEntry]) -> Vec<String> {
@@ -1157,8 +1236,8 @@ mod tests {
     #[test]
     fn stamp_mimetype_replaces_rather_than_duplicates() {
         let mut tags = vec![
-            TagEntry { name: "t".into(), value: "x".into() },
-            TagEntry { name: "m".into(), value: "text/org".into() },
+            TagEntry { name: "t".into(), value: "x".into(), ..Default::default() },
+            TagEntry { name: "m".into(), value: "text/org".into(), ..Default::default() },
         ];
         stamp_mimetype(&mut tags, "text/markdown");
         assert_eq!(m_of(&tags), vec!["text/markdown"]);
@@ -1180,7 +1259,7 @@ mod tests {
     fn stamp_section_mimetypes_stamps_sections_only_and_skips_slots() {
         let mut compose = ComposeState {
             format: Some("markdown".into()),
-            tags: vec![TagEntry { name: "t".into(), value: "nostr".into() }],
+            tags: vec![TagEntry { name: "t".into(), value: "nostr".into(), ..Default::default() }],
             sections: vec![
                 SectionCompose { title: "A".into(), ..Default::default() },
                 SectionCompose { title: "B".into(), format: Some("org".into()), ..Default::default() },
@@ -1345,16 +1424,19 @@ mod tests {
             TagEntry {
                 name: "tags".to_string(),
                 value: "rust, nostr, programming".to_string(),
+                ..Default::default()
             },
             // Add a simple single-value tag
             TagEntry {
                 name: "author".to_string(),
                 value: "testuser".to_string(),
+                ..Default::default()
             },
             // Add a multi-value tag (comma-separated becomes single tag with multiple values)
             TagEntry {
                 name: "relay".to_string(),
                 value: "wss://relay1.com, wss://relay2.com".to_string(),
+                ..Default::default()
             },
         ];
 

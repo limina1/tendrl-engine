@@ -1,3 +1,93 @@
+## v0.21.0 — 2026-11-12
+
+- feat(reader): code fences as their own block — lines kept whole, scroll sideways
+- feat(broadcast): one picker for any event — re-send signed events, never sign
+- fix(reader): remember the tree depth per publication
+- feat(highlighters): `color` mark — ink the letters, no background
+- fix(web): refresh buttons spin their icon, not their box
+- style(network): local mode in gunmetal — its own --state-local token
+- docs(zettel): table grid decision, Emacs client note, reader chrome + syntax view
+- feat(emacs): filled embed cards, block quotes, wrapped content buffers
+- feat(reader): table grid + rendered/show-markers syntax toggle
+- feat(web): local network mode + back-up-to-relays modal
+- feat(network): local mode — no relay sockets; backup plan + broadcast
+- fix(reader): pinned pager, foldable capped tools sheet, page-scoped highlights drawer
+- fix(config): vim mode off by default
+
+## v0.20.1 — 2026-11-11
+
+- fix(highlighters): a style needs no label — the label is a class, the style is a look
+
+## v0.20.0 — 2026-11-11
+
+- fix(publish): expect rate limits — adaptive per-relay pace, send only what's missing, toast that lasts
+- fix(publish): confirmed operations get their live progress toast; broadcast summary outlives a long broadcast
+- fix(publish): windowed, paced, retrying broadcast with read-back verification and a progress bar
+- feat(highlighters): live preview — the selected passage takes the style as you pick it
+- feat(highlighters): drawer comment + annotate icons
+- feat(highlighters): engine — highlight annotations (30041, insertion-shaped) + attached comments
+- feat(highlighters): marks — fill / underline / bold / italic in the highlighter's ink; pointer tooltip attribution
+- feat(highlighters): delete your highlights from the drawer
+- fix(highlighters): focus a drawer entry imperatively — the effect froze the reader; verify recipe
+- feat(highlighters): drawer — label filter, alpha, click-to-focus flash, recolour, adopt
+- feat(highlighters): capture picker — your highlights / use another's, standard colours + HSV
+- feat(highlighters): web — highlighter types + API, colour painting, overlapping highlights blend
+- feat(highlighters): engine — highlighter tag, overlapping spans, restyle + supersede, per-author listing
+- docs(zettel): highlighters carry no behaviour — annotation requests act, highlights focus
+- docs(zettel): highlighters — decisions: supersede pointer, global alpha, opt-in annotation, no NIP-32
+- docs(zettel): highlighters — reference label, recolour from the highlights drawer
+- docs(zettel): highlighters — label + colour on the 9802, discovered from existing highlights
+- docs(zettel): highlighters are events, picked up like writing styles
+- docs(zettel): idea — highlighters (function + colour pairs)
+- docs: CLAUDE.md entries for section edit / merge requests / Composer v2; commands.org verify recipe
+- feat(merge-requests): owner review — list, diff, merge, decline
+- feat(edit): Edit from the event menu — section in its publication, whole publication, or one article
+- feat(composer): Composer v2 — one rendered editor, Type + Style, outline and tags rail
+- feat(compose): multi-value tags — {name, values} on the wire, emitted verbatim
+- feat(section-edit): atomic kinds — 30023 / 30818 / 30817 republish own, fork under the same d with NIP-54 fork markers + 818
+- feat(section-edit): edit one section in place — republish own, fork into own index, or fork + kind-818
+- feat(merge-requests): port the pure kind-818 core from feat/annotations-table
+
+## v0.19.0 — 2026-11-09
+
+- docs: CLAUDE.md module entry for transcript.rs (narration transcript review)
+- feat(narrate): transcript review step — skip, keep or replace flagged spans before narrating
+- feat(narration): reviewed transcripts drive estimate and generate
+- feat(narration): transcript review — flag what a section should not read as-is
+- fix(narration): AsciiDoc spans, hard breaks and footnote markers are not read aloud
+- fix(publication): read a mixed index in a-tag order, not leaves-then-indexes
+- feat(narration): player above the pager, TOC speaker badge, T slugs on recordings, ASCII Blossom auth
+- feat(narration): a partial narration still gets its root; sections chip (teal) on an index's menu
+- docs: attached-events feature note, provenance-first decision, network/reader/audiobook links, commands recipe, CLAUDE.md module entry
+- fix(network): the ungated provenance round honours relays switched off for the session
+- feat(attached): attached events in the menu, provenance-first fetch, audiobook view, per-chapter player, profile narration tabs
+- fix(identity): NIP-07 signer re-registers when the engine restarts or the channel drops
+- feat(network): local-first, reactive display — ingest announcements; background profile fetch no longer holds a request
+- docs(relays): kasten notes for the five-flag relay model + session choices; tester worksheet
+- docs(zettel): history feature note, WebView-stays-the-player decision, two fix notes; index/fix-index/mobile/audiobook links
+- feat(relays): one flat relay list with five flags, search kinds, session-scoped fetch choices
+
+## v0.18.0 — 2026-11-09
+
+- feat(history): reading / listening history — resume where you were; narration speed persists across sections
+- feat(android): narration keeps playing in the background — media foreground service + MediaSession, WebView stays the player
+
+## v0.17.0 — 2026-11-09
+
+- feat(narration): playback-speed multiplier on the voice preview (shared with the player)
+- feat(narration): language dropdown from the model's voices; lang stamped from the voice when unset
+- feat(narration): hear a voice before narrating — provider clip + a paid sample of your own text
+- feat(narration): split long sections into NKBIP-07 pieces; BUD-06 preflight; narrate from the tools row
+- feat(narration): inspect recordings — event viewer, sources, root row, per-section narrate, Media Session
+- feat(narration): publications read aloud — ppq TTS → Blossom → kind-32176 trees
+- docs(zettel): audiobook — confirmed A/E/K binding, transcript default, nested walk, MP3-only probe
+- docs(zettel): idea-audiobook-blossom — research + proposed workflow for TTS narration on Blossom via NKBIP-07
+- docs: zero-config quick start for testers; start.sh runs on defaults without config.toml
+- fix(walkthrough): chained cards keep their slot; overlay shows the first clickable queued card
+- fix(walkthrough): first-run walk is mode-agnostic and never dies silently (F1–F3)
+- docs(zettel): walkthrough & onboarding fix map — workflow breaks, popups, terminology, explainability, seven fix sets
+- feat(emacs): nostrdown markup prettify shows resolved labels; event buffers get kind-default formats and `m` re-render
+
 ## v0.16.0 — 2026-11-03
 
 - feat(web): Edit in the event menu reopens a replaceable event in the composer

@@ -6,6 +6,52 @@ Log defects here as they're found mid-task, then fix on a dedicated =bugs=
 branch (via worktree) and merge back to the integration branch — don't fold
 unrelated bug fixes into feature/cleanup commits. Tick =FIXED= with the commit.
 
+* FIXED — narration reads AsciiDoc role spans, hard breaks and footnote markers aloud
+:PROPERTIES:
+:found: 2026-11-09 (Russell, /Mysticism and Logic/ "III. Time": the TTS input held =[.i0]#… + #= around a Sufi verse and =[5]=)
+:fixed: 2026-11-09, =bugs= branch
+:END:
+
+** Symptom
+=spoken_text= for =text/asciidoc= left inline attribute lists
+(=[.sc]#London#=, =[.i0]#…#=), the =␠+= hard line break, superscript
+footnote refs (=^[5]^= → "[5]") and stray =#= from spans broken across
+lines in the text sent to TTS. Verse lines ran together with no pause.
+
+** Cause / fix
+=strip_asciidoc= only unwrapped constrained emphasis. It now drops a
+trailing =␠+=, footnote refs (=^[n]^= and a bracketed number glued to a
+word, the plain-text Gutenberg form), attribute lists in front of a =#=
+span, unconstrained =##…##= / =**…**= / =__…__=, and leftover =#= tokens
+(keeping =#1=); a =[verse]= =____= block reads one paragraph per line.
+Regression test: =spoken_text_asciidoc_spans_breaks_footnotes_verse=. The
+data side (the importer emitting role spans for Gutenberg poems / small
+caps) was fixed in the import and the 5 affected leaves republished.
+
+* FIXED — mixed TOC renders every nested index after every leaf
+:PROPERTIES:
+:found: 2026-11-09 (Russell, /Mysticism and Logic/ — chapters I and VIII, the two chapter-indexes, sank to the bottom of the book's TOC)
+:fixed: 2026-11-09, =bugs= branch
+:END:
+
+** Symptom
+A 30040 whose =a= tags interleave 30041 leaves and nested 30040 indexes
+(front matter, chapter I as an index, chapters II–VII as leaves, chapter
+VIII as an index, …) read in the wrong order: all leaves first, then all
+nested indexes. A flat publication (leaves only) never showed it.
+
+** Cause / fix
+=Publication::from_event= splits =a= tags by kind into =sections= and
+=nested= and nothing kept their interleaving; the stream
+(=PubLoadEvent::Index.children=), =build_toc=, the draft flattener
+(=publication_to_draft_compose=) and the sibling walk each emitted
+"sections, then nested". NKBIP-01 reading order is =a=-tag order.
+=Publication.order= (=ChildSlot=) now records each child's slot in tag
+order and =Publication::children()= yields them interleaved (falling back to
+sections-then-nested for an unloaded stub); every order-sensitive walk goes
+through it. The web reader already follows the streamed =children= list.
+Regression test: =test_children_keep_a_tag_order=.
+
 * FIXED — nostrdown parse/resolve panics on multi-byte chars in `[[ ]]` targets
 :PROPERTIES:
 :found: 2026-08-11 (Wikipedia-derived 30818 article: no wikilinks rendered, worker panic)
@@ -326,6 +372,43 @@ only the first was audited for the copy affordance.
 clipboard+toast pattern: EventViewModal (reuses its =copyText=), the
 legacy json-modal header, and ProfileResultItem's fold-out.
 
+* FIXED — broadcast of a large tree silently loses most of it (relay rate limits)
+:PROPERTIES:
+:found: 2026-11-11 (broadcasting naddr …nostr-archive-standards, 468 events, to wss://buzz.nostr4.co)
+:fixed: 2026-11-11 on =bugs=
+:END:
+=publish_batch= fired every event of a tree down one socket at once, then
+treated 5 s of relay silence (and a spent 60 s budget) as *success* for
+whatever was unanswered. buzz.nostr4.co (Buzz 0.2.1: AUTH + restricted
+writes, documented default 10 events/s per pubkey) took the first 51
+events in tree order and nothing after — 416 of 468 never landed. AUTH
+and membership were fine (the 52 that landed are readable with AUTH).
+
+Fix (=src/relay.rs=, =src/api.rs::publish_and_verify=, web toast):
+- windowed send: ≤ 10 events awaiting OK, one EVENT per 100 ms;
+- =rate-limited:= refusals retried with 1/2/4/8 s backoff;
+- a socket dropped mid-batch is reopened (re-AUTH) and the unanswered
+  events re-sent, up to 3 times;
+- a relay that never sends OK is detected after one silent window; the
+  rest go out without waiting, marked =unconfirmed=;
+- after a publish/broadcast every event is *read back* from each relay by
+  id; what the relay stored settles each result (and records provenance);
+- the activity toast shows a determinate progress bar (per event, per
+  relay) and closes with "N/M confirmed on the relays".
+Note: buzz also requires AUTH to *read* — a client that doesn't AUTH (or
+isn't a member) sees none of it.
+
+Follow-up (same day): at 10/s buzz still turned away ~half (249/468), the
+2-minute toast vanished mid-broadcast, and a re-broadcast re-sent all 468.
+Now rate limits are *expected*: each =rate-limited:= halves the pace (down
+to 1 per 10 s) and requeues; 20 clean accepts speed it back up; the pace
+a relay tolerated is remembered for the session (=relay::learned_gap=); a
+batch stops only after 2 min with nothing accepted, not after a fixed
+total. =publish_and_verify= reads back what each relay already has first
+and sends only the missing events. The toast stays up while progress
+arrives, shows the pace ("rate-limited, pacing 1/s"), and ends with
+"N/M confirmed · K missing (reason) — broadcast again to send only those".
+
 * OPEN — relay working-set UX: no removal from confirm modals; no NIP-65 seeding (UPSTREAM: tendrl-web)
 :PROPERTIES:
 :found: 2026-08-10 (Android device pass, feat/mobile-shell)
@@ -356,6 +439,20 @@ docs/amber-nip55-signing-plan.md "Open questions")
 - ws://localhost:3334 removed from DEFAULT_RELAYS (guaranteed-refused
   connection in every fresh install's sets; worst on device).
 - PublishConfirmModal "Add relay" now persists to the publish set.
+
+* FIXED — refresh/fetch buttons rotate their whole box; glyph off-centre (web)
+:PROPERTIES:
+:found: 2026-11-12 (user, during feat/local-mode review)
+:END:
+Four "fetch from relays" buttons spun the *button* (=class:spinning= /
+=class:spin= put a rotate animation on it), so the bordered box turned
+while loading, and the ⟳ / ↻ text glyph sat off-centre (font metrics).
+Sites: event menu attached-row refresh (=EventViewModal=), reader tools
+"fetch from relays" (=ReaderBuffer=), =DocBuffer= refresh, =AudiobookBuffer=
+refresh. Fix: =RefreshIcon.svelte= — an SVG arrow that spins about its own
+centre (=transform-box: fill-box=); buttons are inline-flex centred and
+never animate. Verified via CDP: button transform stays =none=, icon
+centre offset 0 in the menu button through a full turn.
 
 * OPEN — mobile feed: no pull-down-to-refresh gesture (UPSTREAM-ish: web polish)
 :PROPERTIES:

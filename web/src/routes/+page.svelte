@@ -52,6 +52,7 @@
 		replayWalkthrough,
 		runTour,
 		trigger as triggerTip,
+		completeTip,
 		armSurfaceTour,
 		discovery,
 		TIPS
@@ -147,6 +148,8 @@
 				buffer: { id: 'settings', kind: 'settings', label: 'settings' }
 			});
 		else if (kind === 'search') store.openBuffer({ className: 'research', buffer: searchBuf });
+		else if (kind === 'feed')
+			store.openBuffer({ className: 'work', buffer: { id: 'feed', kind: 'feed', label: 'feed' } });
 		// reader/etc. need a loaded document — leave those to an already-open buffer.
 	}
 	function guidesForClass(cls: ClassName): GuideEntry[] {
@@ -195,7 +198,10 @@
 				key: '__first_run__',
 				label: 'First-run walkthrough',
 				done: discovery.seen.includes('walk-done'),
-				run: () => replayWalkthrough()
+				run: () => {
+					openForTour('feed');
+					replayWalkthrough();
+				}
 			},
 			...work,
 			menu
@@ -305,6 +311,17 @@
 					id: buffer_id,
 					kind: 'doc',
 					label: 'doc',
+					kicker
+				}
+			});
+		},
+		onAudiobook: (buffer_id, kicker) => {
+			store.openBuffer({
+				className: 'work',
+				buffer: {
+					id: buffer_id,
+					kind: 'audiobook',
+					label: 'audio',
 					kicker
 				}
 			});
@@ -719,6 +736,7 @@
 		}
 		if (cmd.id === 'tendrl-run-walkthrough') {
 			closeMinibuffer();
+			openForTour('feed');
 			replayWalkthrough();
 			return;
 		}
@@ -768,6 +786,11 @@
 		}
 		if (cmd.id === 'tendrl-annotations-table') {
 			openAnnotationsTable();
+			closeMinibuffer();
+			return;
+		}
+		if (cmd.id === 'tendrl-merge-requests') {
+			app.mergeRequests = {};
 			closeMinibuffer();
 			return;
 		}
@@ -1100,8 +1123,10 @@
 		mb.selectedIndex = 0;
 	}
 
+	// auto → confirm → local → auto: each step trusts relays a little less.
 	function toggleNetworkMode() {
-		const next = app.networkStatus?.mode === 'auto' ? 'confirm' : 'auto';
+		const cur = app.networkStatus?.mode ?? app.savedNetworkMode;
+		const next = cur === 'auto' ? 'confirm' : cur === 'confirm' ? 'local' : 'auto';
 		app.handleSetNetworkMode(next);
 	}
 
@@ -1307,6 +1332,11 @@
 		// frame — no "loading" placeholder, no flash.
 		const mode = app.networkStatus?.mode ?? app.savedNetworkMode;
 		const active = (app.networkStatus?.active_fetches ?? 0) > 0;
+		if (mode === 'local') {
+			// Local = neutral: nothing reaches a relay, so there is nothing
+			// in flight to show — publishing stores locally until you broadcast.
+			return { label: 'local', pillClass: 'pill--localmode', dotClass: 'dot--local' };
+		}
 		if (mode === 'confirm') {
 			// Confirm = orange (id-diverged): the engine is gating
 			// fetches behind the user's explicit approval. The "warm"
@@ -1387,18 +1417,23 @@
 		if (mePubkey) prefetchAuthors([mePubkey]);
 	});
 
-	// Walkthrough: the moment a sign-in lands (false→true), point at the me-chip
-	// to explain the name-less pubkey. Guarded so it fires once per login, not on
-	// every reactive re-run; resets on logout. trigger() itself no-ops when the
-	// walkthrough is off or this tip is already seen.
+	// Walkthrough: the moment a sign-in lands (false→true), point at the me-chip.
+	// Only while the walk is in progress (`sign-in` seen — the user was told to
+	// sign in), so an upgrade or a keyring auto-load never pops it unbidden.
+	// Guarded so it fires once per login, not on every reactive re-run; resets
+	// on logout. The body adapts: a name-less pubkey gets the "your profile
+	// arrives with the next Sync" note, a resolved one doesn't.
 	let signedInTipFired = false;
 	$effect(() => {
-		// Only when there's genuinely no name yet — the tip literally explains the
-		// name-less pubkey, so showing it to someone whose profile is already
-		// resolved (e.g. an established user replaying the walk) is wrong.
-		if (mePubkey && !meName && !signedInTipFired) {
+		if (mePubkey && !signedInTipFired) {
 			signedInTipFired = true;
-			triggerTip('signed-in-noname');
+			if (!discovery.seen.includes('sign-in')) return;
+			completeTip('sign-in-methods');
+			triggerTip('signed-in', {
+				nameNote: meName
+					? ''
+					: " A pubkey but no name or avatar yet — that's expected: your profile (a `kind 0` event) arrives with the next Sync."
+			});
 		} else if (!mePubkey) {
 			signedInTipFired = false;
 		}
@@ -1876,7 +1911,7 @@
 						e.preventDefault();
 						openRelays();
 					}}
-					title="Click to toggle auto/confirm fetching · right-click for relay configuration"
+					title="Click to cycle auto → confirm → local · right-click for relay configuration"
 				>
 					<span class="dot {networkPill.dotClass}"></span>
 					{networkPill.label}

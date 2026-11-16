@@ -22,10 +22,11 @@
 	// identity, silently; a relay without it has its challenge ignored
 	// and its auth-required refusal logged as status — never a prompt.
 	//
-	// `search` is a plain per-row toggle like read/write (backed by
-	// `search.default` — NIP-50 search fetches fan out across toggled
-	// relays). Only `indexer` keeps the dedicated Discovery section
-	// with its default/fallback tiers.
+	// One flat list, five flags per relay: auth, read, write, search,
+	// broadcast. `search` relays join the read relays for every fetch
+	// whose kinds they serve — their "search kinds" (none listed = any
+	// kind). There are no separate indexer / discovery relays: a profile
+	// relay is a search relay narrowed to kind 0 and the relay-list kinds.
 	type RelayRow = {
 		url: string;
 		read: boolean;
@@ -33,27 +34,20 @@
 		/** NIP-42 opt-in: authenticate to this relay when it challenges. */
 		auth: boolean;
 		broadcast: boolean;
-		/** Member of the search class (NIP-50 fan-out). */
+		/** Search relay: joins the read relays for fetches of its
+		 *  search kinds. */
 		search: boolean;
 		/** False = parked: kept on file with its roles/claims but in no
 		 *  working set — every operation skips it until reactivated. */
 		active: boolean;
-		/** Resolve-kind claims — the kinds this relay is asked for when
-		 *  resolving a known target. Empty = no claim, and resolution for
-		 *  an unclaimed kind uses the read relays exactly as before. A row
-		 *  may carry claims with no policy at all: a resolution-only
-		 *  target that stays out of feeds and searches. */
+		/** Search kinds — the kinds this relay is asked for as a search
+		 *  relay. Empty = any kind. Only counts while `search` is on. */
 		kinds: number[];
 	};
 
-	// Discovery section rows — one entry per (URL, tier) in a class.
-	// Per the composition matrix, a URL is EITHER default OR fallback
-	// within a class, never both.
-	type DiscoveryRow = { url: string; tier: 'default' | 'fallback' };
-
 	let rows = $state<RelayRow[]>([]);
-	let indexerRows = $state<DiscoveryRow[]>([]);
-	let indexerExclusive = $state(false);
+	const activeRows = $derived(rows.filter((r) => r.active));
+	const inactiveRows = $derived(rows.filter((r) => !r.active));
 	let initialRelays = $state<string[]>([]);
 	let namedSets = $state<api.NamedRelaySet[]>([]);
 	let expandedSet = $state<string | null>(null);
@@ -62,7 +56,7 @@
 	let error = $state<string | null>(null);
 	let expanded = $state(new Set<string>());
 	// Second disclosure per row, independent of the NIP-11 one: the
-	// resolve-kinds editor.
+	// search-kinds editor.
 	let kindsOpen = $state(new Set<string>());
 	let kindDraft = $state<Record<string, string>>({});
 	// Map<normalizedUrl, Nip11Status> — refreshed reactively as fetches
@@ -186,21 +180,15 @@
 			for (const url of cfg.publish?.urls ?? []) ensure(url).write = true;
 			for (const url of cfg.broadcast?.urls ?? []) ensure(url).broadcast = true;
 			for (const url of cfg.auth?.urls ?? []) ensure(url).auth = true;
-			// Claims are policy-independent, so a relay can appear here with
-			// no set membership at all — the resolution-only target. `ensure`
-			// gives it a row with every policy toggle off.
-			for (const [url, kinds] of Object.entries(cfg.resolve_kinds ?? {})) {
+			for (const url of cfg.search?.urls ?? []) ensure(url).search = true;
+			// Kinds are kept on file when the search flag is off, so a
+			// relay can appear here with no set membership at all.
+			for (const [url, kinds] of Object.entries(cfg.search_kinds ?? {})) {
 				ensure(url).kinds = [...kinds].sort((a, b) => a - b);
 			}
-			// Search class flattened onto the main rows — the engine's
-			// gen-1 upgrade folds fallback into default, but read both
-			// tiers here so a not-yet-migrated file still shows its rows.
-			for (const url of [...(cfg.search?.default ?? []), ...(cfg.search?.fallback ?? [])]) {
-				ensure(url).search = true;
-			}
 			// Parked relays: not in any working set, so they only appear
-			// via the inactive map. Reconstruct their role pills from the
-			// recorded memberships and dim the row.
+			// via the inactive map. Reconstruct their roles from the
+			// recorded memberships; they render in the Inactive section.
 			for (const [url, memberships] of Object.entries(cfg.inactive ?? {})) {
 				const r = ensure(url);
 				r.active = false;
@@ -212,19 +200,10 @@
 					else if (set === 'publish') r.write = true;
 					else if (set === 'broadcast') r.broadcast = true;
 					else if (set === 'auth') r.auth = true;
-					else if (set.startsWith('search.')) r.search = true;
+					else if (set === 'search') r.search = true;
 				}
 			}
 			rows = [...map.values()].sort((a, b) => a.url.localeCompare(b.url));
-
-			// Indexer keeps the Discovery section with per-tier rows so
-			// the user can see explicitly which tier each URL belongs
-			// to (and switch between them with the radio toggles).
-			indexerRows = [
-				...(cfg.indexer?.default ?? []).map((url): DiscoveryRow => ({ url, tier: 'default' })),
-				...(cfg.indexer?.fallback ?? []).map((url): DiscoveryRow => ({ url, tier: 'fallback' }))
-			].sort((a, b) => a.url.localeCompare(b.url));
-			indexerExclusive = cfg.exclusive?.indexer ?? false;
 			// Kick off NIP-11 fetches up-front so the badges fill in
 			// without the user expanding each row.
 			for (const r of rows) primeInfo(r.url, force);
@@ -274,8 +253,8 @@
 	});
 
 	/** Park / unpark a relay. The engine records (and restores) the
-	 *  row's set memberships; reload afterwards so pills, counts, and
-	 *  the dimmed state all come from authoritative config. */
+	 *  row's set memberships; reload afterwards so the row lands in the
+	 *  right section with roles from authoritative config. */
 	async function toggleActive(url: string) {
 		const row = rows.find((r) => r.url === url);
 		if (!row) return;
@@ -284,7 +263,9 @@
 		try {
 			await api.setRelayActive(url, next);
 			app.pushToast(
-				next ? `${shorten(url)} active` : `${shorten(url)} inactive — kept, but skipped by every operation`,
+				next
+					? `${shorten(url)} reactivated`
+					: `${shorten(url)} moved to Inactive — kept, but skipped by every operation`,
 				'success',
 				2500
 			);
@@ -322,15 +303,7 @@
 					2500
 				);
 			} else if (field === 'search') {
-				if (next.search) {
-					await api.addRelay('search.default', url);
-				} else {
-					// Clear BOTH tiers — a not-yet-migrated file may still
-					// hold this URL in fallback, and the toggle means
-					// "out of the search class", not "out of one tier".
-					await api.removeRelay('search.default', url);
-					await api.removeRelay('search.fallback', url);
-				}
+				await (next.search ? api.addRelay('search', url) : api.removeRelay('search', url));
 			} else {
 				// Reconcile the row's read/write into explicit fetch + publish set
 				// membership, and drop it from the legacy `general` set (which means
@@ -356,7 +329,7 @@
 		kindsOpen = next;
 	}
 
-	/** Write a relay's claims through to relays.json, optimistically. */
+	/** Write a relay's search kinds through to relays.json, optimistically. */
 	async function saveKinds(url: string, kinds: number[]) {
 		const prev = rows;
 		const sorted = [...new Set(kinds)].sort((a, b) => a - b);
@@ -366,7 +339,7 @@
 		} catch (e) {
 			rows = prev; // revert on failure
 			app.pushToast(
-				`Couldn't save resolve kinds: ${e instanceof Error ? e.message : String(e)}`,
+				`Couldn't save search kinds: ${e instanceof Error ? e.message : String(e)}`,
 				'error',
 				5000
 			);
@@ -438,13 +411,11 @@
 			await api.removeRelay('fetch', url);
 			await api.removeRelay('publish', url);
 			await api.removeRelay('broadcast', url);
-			// Search flattened onto the main rows — a full delete clears
-			// both of its tiers as well.
-			await api.removeRelay('search.default', url);
-			await api.removeRelay('search.fallback', url);
-			// Claims outlive set membership by design (a claims-only relay
-			// is a valid row), so a full delete has to clear them too or
-			// the row would come back with every toggle off.
+			await api.removeRelay('auth', url);
+			await api.removeRelay('search', url);
+			// Search kinds outlive the search flag by design, so a full
+			// delete has to clear them too or the row would come back
+			// with every toggle off.
 			await api.setRelayKinds(url, []);
 			app.pushToast(`Removed ${shorten(url)} from tendrl`, 'info', 2500);
 			await load();
@@ -454,132 +425,6 @@
 				`Couldn't remove ${shorten(url)}: ${e instanceof Error ? e.message : String(e)}`,
 				'error',
 				5000
-			);
-		}
-	}
-
-	// ------------------------------------------------------------------
-	// Discovery section — Indexer only. (Search flattened to a per-row
-	// toggle on the main list; the two-tier UI remains for indexer.)
-	// ------------------------------------------------------------------
-	type DiscoveryClass = 'indexer';
-
-	function rowsFor(_klass: DiscoveryClass): DiscoveryRow[] {
-		return indexerRows;
-	}
-	function setRowsFor(_klass: DiscoveryClass, next: DiscoveryRow[]) {
-		indexerRows = next;
-	}
-
-	/** Switch a discovery row's tier (default ⇄ fallback). Adding to
-	 *  the target tier auto-strips from the sibling on the engine via
-	 *  the mutex enforced in relay_store::RelayStore::add. */
-	async function setTier(klass: DiscoveryClass, url: string, tier: 'default' | 'fallback') {
-		const before = rowsFor(klass);
-		const next = before.map((r) => (r.url === url ? { ...r, tier } : r));
-		setRowsFor(klass, next);
-		try {
-			await api.addRelay(`${klass}.${tier}`, url);
-			app.pushToast(`${shorten(url)} → ${klass}.${tier}`, 'success', 1800);
-		} catch (e) {
-			setRowsFor(klass, before);
-			app.pushToast(
-				`Couldn't move tier: ${e instanceof Error ? e.message : String(e)}`,
-				'error',
-				4000
-			);
-		}
-	}
-
-	/** Remove a URL from a discovery class entirely (both tiers). */
-	async function removeDiscovery(klass: DiscoveryClass, url: string) {
-		const before = rowsFor(klass);
-		setRowsFor(
-			klass,
-			before.filter((r) => r.url !== url)
-		);
-		try {
-			await api.removeRelay(`${klass}.default`, url);
-			await api.removeRelay(`${klass}.fallback`, url);
-			app.pushToast(`Removed ${shorten(url)} from ${klass}`, 'info', 1800);
-		} catch (e) {
-			setRowsFor(klass, before);
-			app.pushToast(
-				`Couldn't remove: ${e instanceof Error ? e.message : String(e)}`,
-				'error',
-				4000
-			);
-		}
-	}
-
-	/** Toggle the per-class `exclusive` flag. ON = read relays bypassed
-	 *  for this class's lookup type. */
-	async function toggleExclusive(klass: DiscoveryClass) {
-		const before = indexerExclusive;
-		const next = !before;
-		indexerExclusive = next;
-		try {
-			await api.setDiscoveryExclusive(klass, next);
-			app.pushToast(
-				`${klass} exclusive: ${next ? 'on' : 'off'}`,
-				'success',
-				1800
-			);
-		} catch (e) {
-			indexerExclusive = before;
-			app.pushToast(
-				`Couldn't toggle exclusive: ${e instanceof Error ? e.message : String(e)}`,
-				'error',
-				4000
-			);
-		}
-	}
-
-	let restoringDefaults = $state(false);
-	/** Merge the engine's well-known indexer/search defaults. Useful
-	 *  when relays.json predates the discovery defaults (e.g. existing
-	 *  users from before Phase 3) — fresh installs already get them
-	 *  via seed_from_initial. */
-	async function restoreDefaults() {
-		restoringDefaults = true;
-		try {
-			const resp = await api.restoreDiscoveryDefaults();
-			app.pushToast(resp.message, 'success', 3000);
-			await load();
-		} catch (e) {
-			app.pushToast(
-				`Couldn't restore defaults: ${e instanceof Error ? e.message : String(e)}`,
-				'error',
-				4500
-			);
-		} finally {
-			restoringDefaults = false;
-		}
-	}
-
-	/** Prompt for a new URL and add it to a discovery class's default
-	 *  tier. The user can move it to fallback afterward with the radio. */
-	async function promptAddDiscovery(klass: DiscoveryClass) {
-		const url = await promptText({
-			title: `Add ${klass} relay`,
-			placeholder: 'wss://relay.example.org',
-			hint: `Lands in ${klass}.default — move it to fallback after with the radio.`
-		});
-		if (!url) return;
-		// Local dedup against the current rows
-		if (rowsFor(klass).some((r) => normalizeRelayUrl(r.url) === normalizeRelayUrl(url))) {
-			app.pushToast(`${shorten(url)} already in ${klass}`, 'info', 2500);
-			return;
-		}
-		try {
-			await api.addRelay(`${klass}.default`, url);
-			await load();
-			app.pushToast(`Added ${shorten(url)} to ${klass}.default`, 'success', 2500);
-		} catch (e) {
-			app.pushToast(
-				`Couldn't add: ${e instanceof Error ? e.message : String(e)}`,
-				'error',
-				4000
 			);
 		}
 	}
@@ -935,18 +780,31 @@
 		return rows.find((r) => rowKeyFor(r.url) === key);
 	}
 
+	/** Search kinds for a profile / relay-list relay (the former
+	 *  "indexer" role) — mirrors the engine's INDEXER_KINDS. */
+	const PROFILE_KINDS = [0, 3, 10002, 10007, 10088, 30002];
 	type ImportRole = 'fetch' | 'publish' | 'both' | 'broadcast' | 'search' | 'indexer';
 	async function importSuggestion(s: PulledRelay, role: ImportRole) {
 		try {
 			if (role === 'fetch' || role === 'both') await api.addRelay('fetch', s.url);
 			if (role === 'publish' || role === 'both') await api.addRelay('publish', s.url);
 			if (role === 'broadcast') await api.addRelay('broadcast', s.url);
-			// Pull-from-profile suggestions default to the `.default`
-			// tier — the user can move them to fallback later from the
-			// Phase-5 Discovery section.
-			if (role === 'search') await api.addRelay('search.default', s.url);
-			if (role === 'indexer') await api.addRelay('indexer.default', s.url);
-			app.pushToast(`Added ${shorten(s.url)} to ${role}`, 'success', 2500);
+			if (role === 'search') await api.addRelay('search', s.url);
+			// A published "indexer" relay (kind 10086) is a search relay
+			// narrowed to profiles and relay lists.
+			if (role === 'indexer') {
+				await api.addRelay('search', s.url);
+				if (!rows.find((r) => rowKeyFor(r.url) === rowKeyFor(s.url))?.kinds.length) {
+					await api.setRelayKinds(s.url, PROFILE_KINDS);
+				}
+			}
+			app.pushToast(
+				role === 'indexer'
+					? `Added ${shorten(s.url)} as a search relay for profiles + relay lists`
+					: `Added ${shorten(s.url)} to ${role}`,
+				'success',
+				2500
+			);
 			await load();
 		} catch (e) {
 			app.pushToast(
@@ -1019,7 +877,7 @@
 			: k === 10007
 				? 'search (NIP-50)'
 				: k === 10086
-					? 'indexer'
+					? 'indexer, now search'
 					: 'broadcast';
 	}
 
@@ -1185,10 +1043,12 @@
 		if (kind === 10088) {
 			return rows.filter((r) => r.active && r.broadcast).map((r) => r.url);
 		}
-		// Search flattened to a main-row toggle; indexer is still the
-		// union of both tiers from the Discovery section.
 		if (kind === 10007) return rows.filter((r) => r.active && r.search).map((r) => r.url);
-		if (kind === 10086) return indexerRows.map((r) => r.url);
+		// No indexer class any more: the 10086 equivalent is the search
+		// relays that serve profiles.
+		if (kind === 10086) {
+			return rows.filter((r) => r.active && r.search && r.kinds.includes(0)).map((r) => r.url);
+		}
 		return [];
 	}
 
@@ -1513,7 +1373,7 @@
 	<div class="relays-header">
 		<div class="relays-header-title">
 			<span>Relay configuration</span>
-			<span class="relays-hint">read/write/auth apply live and persist</span>
+			<span class="relays-hint">auth · read · write · search · broadcast — changes apply live and persist</span>
 		</div>
 		<div class="relays-header-actions">
 			<button
@@ -1521,7 +1381,7 @@
 				class:btn-reset--armed={resetArmed}
 				onclick={resetToDefaults}
 				disabled={resetting}
-				title="Reset all relay sets to the first-boot defaults: read/write re-seeded from initial_relays, broadcast cleared, discovery back to built-ins. Named sets are kept. Local only — your published relay lists are untouched."
+				title="Reset all relay sets to the first-boot defaults: read/write re-seeded from initial_relays, broadcast cleared, search relays and search kinds back to built-ins. Named sets are kept. Local only — your published relay lists are untouched."
 			>
 				{resetting ? 'Resetting…' : resetArmed ? 'Really reset?' : 'Reset to defaults'}
 			</button>
@@ -1541,10 +1401,9 @@
 	</div>
 
 	<!-- Pull-from-profile: fetches the user's relay-list events
-	     (10002/10007/10086/10088/30002) through the engine's indexer
-	     composition — read relays first, falling through to
-	     indexer.default → indexer.fallback. Suggestions never
-	     auto-apply; the user picks per relay. -->
+	     (10002/10007/10086/10088/30002) from the read relays plus the
+	     search relays serving those kinds. Suggestions never auto-apply;
+	     the user picks per relay. -->
 	<div class="pull-bar">
 		{#if !pulled && !pulling && !pullError}
 			<button
@@ -1553,7 +1412,7 @@
 				disabled={!app.myPubkey}
 				title={!app.myPubkey
 					? 'Sign in first'
-					: 'Fetch your published relay lists (kinds 10002 / 10007 / 10086 / 10088 / 30002) through the indexer composition.'}
+					: 'Fetch your published relay lists (kinds 10002 / 10007 / 10086 / 10088 / 30002) from your read relays and the search relays serving those kinds.'}
 			>
 				Pull from your profile
 			</button>
@@ -1564,7 +1423,7 @@
 					No relays configured. Add at least one read relay below — or seed via <code>initial_relays</code> in <code>config.toml</code> under <code>[relay]</code>.
 				</span>
 			{:else}
-				<span class="pull-hint">Walks the indexer composition; you choose what to import. Pulls kind 10002 / 10007 / 10086 / 10088 / 30002.</span>
+				<span class="pull-hint">Asks your read relays and matching search relays; you choose what to import. Pulls kind 10002 / 10007 / 10086 / 10088 / 30002.</span>
 			{/if}
 		{:else if pulling}
 			<span class="pull-status">Fetching your relay list…</span>
@@ -1684,16 +1543,19 @@
 										<button class="pull-add" onclick={() => importSuggestion(s, 'search')}>+ search</button>
 									{/if}
 								{:else if kind === 10086}
-									{@const alreadyInIndexer = indexerRows.some((r) => r.url === s.url)}
-									{#if !alreadyInIndexer}
-										<button class="pull-add" onclick={() => importSuggestion(s, 'indexer')}>+ indexer</button>
+									{#if !existing?.search}
+										<button
+											class="pull-add"
+											onclick={() => importSuggestion(s, 'indexer')}
+											title="Add as a search relay for profiles and relay lists"
+										>+ search (profiles)</button>
 									{/if}
 								{:else if kind === 10088}
 									{#if !existing?.broadcast}
 										<button class="pull-add" onclick={() => importSuggestion(s, 'broadcast')}>+ broadcast</button>
 									{/if}
 								{/if}
-								{#if (kind === 10002 && existing && (existing.read || existing.write)) || (kind === 10007 && existing?.search) || (kind === 10086 && indexerRows.some((r) => r.url === s.url)) || (kind === 10088 && existing?.broadcast)}
+								{#if (kind === 10002 && existing && (existing.read || existing.write)) || (kind === 10007 && existing?.search) || (kind === 10086 && existing?.search) || (kind === 10088 && existing?.broadcast)}
 									<span class="pulled-state">already in {kind === 10002 ? 'read/write' : classNameForKind(kind as 10002 | 10007 | 10086 | 10088)}</span>
 								{/if}
 							</div>
@@ -1743,7 +1605,7 @@
 		     section's toggles), not in the global footer. -->
 		<div class="rw-section">
 			<div class="rw-section-head">
-				<span class="rw-section-title">Read / Write / Broadcast / Search</span>
+				<span class="rw-section-title">Relays</span>
 				<div class="rw-section-actions">
 					<button
 						class="btn-add" onclick={promptAdd}
@@ -1788,8 +1650,7 @@
 				</div>
 			</div>
 		</div>
-		<div class="relays-list">
-			{#each rows as row (row.url)}
+		{#snippet relayCard(row: RelayRow)}
 				{@const status = statusFor(row.url)}
 				{@const doc = docFor(row.url)}
 				{@const lim = doc?.limitation}
@@ -1843,36 +1704,36 @@
 						</div>
 
 						<!-- Second disclosure, sibling to the NIP-11 one: the kinds
-						     this relay is asked for when resolving a known target.
-						     Sits between identity and policy because it refines
-						     policy rather than replacing it. -->
+						     this relay is asked for as a search relay. It narrows
+						     the search flag. -->
 						<button
 							class="relay-kinds-toggle"
 							class:relay-kinds-toggle--set={row.kinds.length > 0}
 							onclick={() => toggleKinds(row.url)}
 							aria-expanded={kindsOpen.has(row.url)}
-							title="Event kinds this relay is asked to resolve. Empty = no claim; resolution uses your read relays as before."
+							title={row.search
+								? 'Event kinds this search relay is asked for. Empty = any kind.'
+								: 'Search kinds only apply while the search flag is on.'}
 						>
-							{kindsOpen.has(row.url) ? '▾' : '▸'} resolve kinds{row.kinds.length
+							{kindsOpen.has(row.url) ? '▾' : '▸'} search kinds{row.kinds.length
 								? ` · ${row.kinds.length}`
 								: ''}
 						</button>
 
 						<div class="relay-toggles">
 							<button
-								class="pill toggle-pill toggle-pill--power"
-								class:toggle-pill--on={row.active}
-								onclick={() => toggleActive(row.url)}
-								title={row.active
-									? 'Active — every operation may use this relay per its roles. Click to deactivate: the relay is kept (URL, roles, resolve kinds) but skipped by everything until you reactivate it.'
-									: 'Inactive — kept on file but skipped by every operation. Click to reactivate with the same roles it had.'}
-							>{row.active ? 'active' : 'inactive'}</button>
+								class="pill toggle-pill"
+								class:toggle-pill--on={row.auth}
+								disabled={!row.active}
+								onclick={() => toggle(row.url, 'auth')}
+								title="NIP-42: answer this relay's AUTH challenge as the active identity, without prompting. Off = ignore its challenges; the relay's auth-required refusals show as status only."
+							>auth</button>
 							<button
 								class="pill toggle-pill"
 								class:toggle-pill--on={row.read}
 								disabled={!row.active}
 								onclick={() => toggle(row.url, 'read')}
-								title="Read from this relay"
+								title="Read from this relay — it is asked for every fetch, whatever the kind"
 							>read</button>
 							<button
 								class="pill toggle-pill"
@@ -1882,27 +1743,28 @@
 								title="Publish to this relay (your own signed events land here)"
 							>write</button>
 							<button
+								class="pill toggle-pill toggle-pill--search"
+								class:toggle-pill--on={row.search}
+								disabled={!row.active}
+								onclick={() => toggle(row.url, 'search')}
+								title="Search relay — joins your read relays for every fetch whose kinds it serves (its search kinds; none listed = any kind)"
+							>search</button>
+							<button
 								class="pill toggle-pill toggle-pill--broadcast"
 								class:toggle-pill--on={row.broadcast}
 								disabled={!row.active}
 								onclick={() => toggle(row.url, 'broadcast')}
 								title="Mark this relay as a broadcast / aggregator target. Never auto-published to — only when you explicitly opt in per event."
 							>broadcast</button>
-							<button
-								class="pill toggle-pill"
-								class:toggle-pill--on={row.auth}
-								disabled={!row.active}
-								onclick={() => toggle(row.url, 'auth')}
-								title="NIP-42: answer this relay's AUTH challenge as the active identity, without prompting. Off = ignore its challenges; the relay's auth-required refusals show as status only."
-							>auth</button>
-							<button
-								class="pill toggle-pill toggle-pill--search"
-								class:toggle-pill--on={row.search}
-								disabled={!row.active}
-								onclick={() => toggle(row.url, 'search')}
-								title="Use this relay for free-text (NIP-50) search fetches — it joins the fan-out of every search-typed fetch"
-							>search</button>
 						</div>
+
+						<button
+							class="relay-park"
+							onclick={() => toggleActive(row.url)}
+							title={row.active
+								? 'Deactivate: move this relay to the Inactive section. It is kept (URL, roles, search kinds) but skipped by everything until you reactivate it.'
+								: 'Reactivate with the same roles it had.'}
+						>{row.active ? 'deactivate' : 'reactivate'}</button>
 
 						<button
 							class="relay-remove"
@@ -1914,10 +1776,13 @@
 					{#if kindsOpen.has(row.url)}
 						<div class="relay-kinds-panel">
 							<p class="kinds-help">
-								Kinds listed here are resolved from <em>this</em> relay. A claim is
-								exclusive: once any relay claims a kind, resolving it asks the
-								claimants and no one else. Kinds nobody claims keep using your read
-								relays.
+								As a search relay, this relay is asked for the kinds listed here —
+								in addition to your read relays, which are always asked. With no
+								kinds listed it is asked for everything. The fetch modal starts from
+								exactly this set.
+								{#if !row.search}
+									<strong>Search is off for this relay, so these kinds are not in use.</strong>
+								{/if}
 							</p>
 
 							{#if row.kinds.length}
@@ -1926,7 +1791,7 @@
 										<button
 											class="pill kinds-chip"
 											onclick={() => removeKind(row.url, k)}
-											title="Remove this claim"
+											title="Stop asking this relay for this kind"
 										>
 											{kindLabel(k)} <span class="kinds-num">k:{k}</span>
 											<span class="kinds-x">×</span>
@@ -1935,7 +1800,7 @@
 								</div>
 							{:else}
 								<p class="empty muted kinds-empty">
-									No claims — this relay is not preferred for resolving anything.
+									No kinds listed — as a search relay it is asked for every kind.
 								</p>
 							{/if}
 
@@ -2141,99 +2006,33 @@
 						</div>
 					{/if}
 				</div>
+		{/snippet}
+
+		<div class="relays-list">
+			{#each activeRows as row (row.url)}
+				{@render relayCard(row)}
 			{/each}
+			{#if activeRows.length === 0 && !loading}
+				<p class="empty muted">No active relays — add one above, or reactivate one below.</p>
+			{/if}
 		</div>
 
-		<!-- Discovery section — Indexer only (search is a per-row toggle
-		     on the main list above). Each relay is in EITHER default OR
-		     fallback (mutex enforced server-side). The `exclusive`
-		     toggle in the subsection header controls whether the read
-		     relays are bypassed for that lookup type. -->
-		<div class="discovery">
-			<div class="discovery-header-row">
-				<span class="discovery-header">Discovery</span>
-				<button
-					class="btn-add"
-					onclick={restoreDefaults}
-					disabled={restoringDefaults}
-					title="Add the engine's well-known indexer relays (purplepag.es, user.kindpag.es) to indexer.default if missing. Idempotent — relays already present are skipped."
-				>
-					{restoringDefaults ? 'Restoring…' : 'Restore defaults'}
-				</button>
-			</div>
-			{#each ['indexer'] as klass (klass)}
-				{@const rows0 = indexerRows}
-				{@const excl = indexerExclusive}
-				{@const publishKind = 10086}
-				{@const publishCount = rows0.length}
-				<div class="discovery-subsection">
-					<div class="discovery-sub-head">
-						<span class="discovery-sub-title">Indexer relays</span>
-						<button
-							class="pill toggle-pill discovery-excl"
-							class:toggle-pill--on={excl}
-							onclick={() => toggleExclusive(klass as DiscoveryClass)}
-							title={excl
-								? `Exclusive ON — ${klass} lookups bypass read relays entirely. Toggle off to ALSO fan out across read relays.`
-								: `Exclusive OFF — ${klass}.default joins read relays in the primary fan-out. Toggle on to use ${klass} relays ONLY.`}
-						>exclusive: {excl ? 'on' : 'off'}</button>
-						<span class="discovery-spacer"></span>
-						<button
-							class="btn-add" onclick={() => promptAddDiscovery(klass as DiscoveryClass)}
-							title="Add a {klass} relay (lands in .default — move to fallback after)"
-						>+ Add</button>
-						<button
-							class="btn-publish-list btn-publish-list--{klass}"
-							onclick={() => publishRelayListByKind(publishKind)}
-							disabled={publishingKind !== null || publishCount === 0 || !app.myPubkey}
-							title={!app.myPubkey
-								? 'Sign in first to publish.'
-								: publishCount === 0
-									? `No ${klass} relays configured.`
-									: `Sign a kind ${publishKind} (${klass} list, NIP-44 encrypted) with ${publishCount} relay${publishCount === 1 ? '' : 's'}.`}
-						>
-							{publishingKind === publishKind ? 'Publishing…' : `Publish kind ${publishKind} (${publishCount})`}
-						</button>
-					</div>
-					{#if rows0.length === 0}
-						<p class="empty muted">No {klass} relays. Add one above, or use "Pull from your profile" to import an existing list.</p>
-					{:else}
-						<div class="discovery-list">
-							{#each rows0 as drow (drow.url)}
-								<div class="discovery-row">
-									<div class="discovery-tier-group">
-										<label class="discovery-tier">
-											<input
-												type="radio"
-												name="{klass}-tier-{drow.url}"
-												checked={drow.tier === 'default'}
-												onchange={() => setTier(klass as DiscoveryClass, drow.url, 'default')}
-											/>
-											<span>default</span>
-										</label>
-										<label class="discovery-tier">
-											<input
-												type="radio"
-												name="{klass}-tier-{drow.url}"
-												checked={drow.tier === 'fallback'}
-												onchange={() => setTier(klass as DiscoveryClass, drow.url, 'fallback')}
-											/>
-											<span>fallback</span>
-										</label>
-									</div>
-									<span class="discovery-url">{shorten(drow.url)}</span>
-									<button
-										class="pull-add discovery-remove"
-										onclick={() => removeDiscovery(klass as DiscoveryClass, drow.url)}
-										title="Remove from {klass} entirely"
-									>×</button>
-								</div>
-							{/each}
-						</div>
-					{/if}
+		{#if inactiveRows.length > 0}
+			<!-- Parked relays: kept on file (URL, roles, search kinds) but
+			     in no working set, so every operation skips them. They
+			     can still be opted into one fetch from the fetch modal. -->
+			<div class="inactive-section">
+				<div class="inactive-header">
+					<span>Inactive · {inactiveRows.length}</span>
+					<span class="relays-hint">kept with their roles, skipped by every operation</span>
 				</div>
-			{/each}
-		</div>
+				<div class="relays-list">
+					{#each inactiveRows as row (row.url)}
+						{@render relayCard(row)}
+					{/each}
+				</div>
+			</div>
+		{/if}
 
 		<!-- Named sets — NIP-51 kind 30002 thematic groupings. Orthogonal
 		     to the functional classes above; a relay can sit in any
@@ -2523,100 +2322,41 @@
 		align-items: center;
 	}
 
-	/* ----- Discovery section (Phase 5) ----- */
-	.discovery {
-		display: flex;
-		flex-direction: column;
-		gap: 10px;
-		margin: 12px 0;
-		padding-top: 10px;
+	.inactive-section {
+		margin-top: 14px;
 		border-top: 1px solid var(--panel-border);
+		padding-top: 8px;
 	}
-	.discovery-header-row {
+	.inactive-header {
 		display: flex;
-		flex-wrap: wrap;
-		align-items: center;
-		justify-content: space-between;
-		gap: 6px 8px;
-	}
-	.discovery-header {
-		font-family: var(--font-mono);
-		font-size: var(--t-xs);
-		color: var(--muted);
-		text-transform: uppercase;
-		letter-spacing: 0.04em;
-	}
-	.discovery-subsection {
-		display: flex;
-		flex-direction: column;
-		gap: 4px;
-	}
-	.discovery-sub-head {
-		display: flex;
-		align-items: center;
-		gap: 8px;
-		padding: 4px 0;
-		flex-wrap: wrap;
-	}
-	.discovery-sub-title {
-		font-weight: 500;
-		font-size: var(--t-sm);
-	}
-	.discovery-excl {
-		font-size: var(--t-xs);
-		font-family: var(--font-mono);
-		padding: 2px 8px;
-	}
-	.discovery-spacer {
-		flex: 1;
-	}
-	.discovery-list {
-		display: flex;
-		flex-direction: column;
-		gap: 2px;
-		padding-left: 4px;
-	}
-	.discovery-row {
-		display: grid;
-		grid-template-columns: auto 1fr auto;
+		align-items: baseline;
 		gap: 10px;
-		align-items: center;
-		padding: 3px 6px;
-		border-radius: 3px;
-	}
-	.discovery-row:hover {
-		background: color-mix(in srgb, var(--fg) 4%, transparent);
-	}
-	.discovery-tier-group {
-		display: flex;
-		gap: 8px;
-	}
-	.discovery-tier {
-		display: inline-flex;
-		gap: 4px;
-		align-items: center;
-		font-family: var(--font-mono);
+		text-transform: uppercase;
+		letter-spacing: 0.06em;
 		font-size: var(--t-xs);
-		color: var(--muted);
+		color: var(--base5);
+	}
+	.inactive-header .relays-hint {
+		text-transform: none;
+		letter-spacing: 0;
+	}
+	.relay-park {
+		appearance: none;
+		background: none;
+		border: none;
+		color: var(--base5);
+		font: inherit;
+		font-size: var(--t-xs);
 		cursor: pointer;
-	}
-	.discovery-tier input[type='radio'] {
-		margin: 0;
-	}
-	.discovery-tier:has(input:checked) {
-		color: var(--fg);
-	}
-	.discovery-url {
-		font-family: var(--font-mono);
-		font-size: var(--t-xs);
-		overflow: hidden;
-		text-overflow: ellipsis;
+		padding: 0 4px;
 		white-space: nowrap;
 	}
-	.discovery-remove {
-		font-size: var(--t-sm);
-		line-height: 1;
-		padding: 0 6px;
+	.relay-park:hover {
+		color: var(--fg);
+		text-decoration: underline;
+	}
+	.relay-card--inactive .relay-park {
+		color: var(--orange, #cb4b16);
 	}
 
 	.relays-list {
@@ -2796,15 +2536,9 @@
 		cursor: default;
 		pointer-events: none;
 	}
-	/* Park/unpark master switch — reads as state, not role. */
-	.toggle-pill--power:not(.toggle-pill--on) {
-		border-color: var(--orange, #cb4b16);
-		color: var(--orange, #cb4b16);
-	}
-	/* Parked rows stay listed (URL, roles, claims survive) but read as
-	   dormant: everything dims except the power pill. */
-	.relay-card--inactive .relay-row > :not(.relay-toggles),
-	.relay-card--inactive .relay-toggles > :not(.toggle-pill--power) {
+	/* Parked rows (Inactive section) keep URL, roles and search kinds
+	   but read as dormant: everything dims except the reactivate link. */
+	.relay-card--inactive .relay-row > :not(.relay-park) {
 		opacity: 0.5;
 	}
 	.toggle-pill:hover {

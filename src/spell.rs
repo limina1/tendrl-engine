@@ -2664,7 +2664,8 @@ pub async fn book_save_handler(
 
     let mut broadcast_results = None;
     let mut accepted = false;
-    if req.broadcast {
+    // Local mode keeps it local: stored, marked local until a backup broadcast.
+    if req.broadcast && !engine.is_local() {
         let relays = req
             .relays
             .clone()

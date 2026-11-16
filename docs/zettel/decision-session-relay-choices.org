@@ -1,0 +1,63 @@
+#+TITLE: Decision: Fetch-Modal Relay Choices Are Session State
+#+TYPE: decision
+#+STATUS: current
+#+DATE: 2026-11-09
+
+* The decision
+
+What you pick in the fetch modal lasts for the *session* and is owned by
+the engine. Relay management is the only place a relay changes for good.
+
+- *Session* = the engine process: one app launch on Android, however
+  long the engine runs on desktop.
+- A relay left unchecked goes *off*: skipped by every later fetch.
+- A relay added in the modal (typed in, or a parked relay opted in)
+  goes *on*: it joins every later fetch you start.
+- Both apply in Auto mode as well as Confirm.
+
+* Why
+
+- Before, the selection was component state and died when the modal
+  closed, so the same relay had to be unchecked on every fetch.
+- Before, some modal edits were *durable* by accident: "Add relay" on a
+  feed sync, and any relay brought into a search, were written to the
+  read set. A one-off choice quietly changed configuration.
+- Two lifetimes, two surfaces: the modal is "for now", the relays
+  screen is "from now on". Neither leaks into the other.
+- Engine-owned, because the engine composes the proposal and because
+  Auto mode has no modal to hold state in.
+
+* Consequences / how
+
+- =network::SessionRelays { off, on }= in =NetworkActivity=, in memory
+  only. A decision is folded in *whole*: every relay the modal listed
+  ends up picked (cleared from =off=) or not (added to =off=); a picked
+  relay that was never listed goes =on=.
+- =begin_operation=: Auto applies the overrides and emits the applied
+  set; Confirm lists proposed ∪ =on= and sends =Intent.session_off= so
+  the modal starts those rows unchecked.
+- =off= is enforced at the =tracked_fetch= funnel, so background
+  passes (section backfill, profile prefetch) skip those relays too.
+  =on= joins user-initiated operations and default-composed fetches.
+- =POST /api/v1/network/session/reset=; =NetworkStatus.session=.
+- Web: modal has *invert*, *reset session*, a one-line note on the
+  lifetime, and tags (=search=, =not in your relays=). The activity
+  center lists the session's choices with a reset — the only place
+  they are visible in Auto mode.
+- Publishes are not affected; the publish modal keeps its own picker.
+
+* Open edges
+
+- A relay hint (from an =nevent=, or a comment's =e= tag) that was
+  turned off stays off for the session, even for the event that names
+  it. It is listed unchecked in Confirm; in Auto it is silently left
+  out.
+- Desktop engines run for days, so "session" can be long. The reset is
+  the escape hatch; there is no expiry.
+
+* Related
+- [[file:decision-relay-flags-search-kinds.org][One relay list, five flags]]
+- [[file:feat-network.org][Network modes]] — the intent pattern
+- [[file:idea-entity-hinted-relay-intent.org][Entity-hinted relay intent]]
+- [[file:feat-relays.org][Relay management]]
+- [[file:index.org][Index]]

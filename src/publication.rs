@@ -20,6 +20,8 @@ pub mod insertion;
 pub mod relink;
 pub mod merge_request;
 pub mod tree_emit;
+pub mod event_util;
+pub mod section_edit;
 
 /// Kind constants for NKBIP-01 publications
 pub const KIND_PUBLICATION_INDEX: u64 = 30040;
@@ -357,9 +359,56 @@ pub struct Publication {
     /// `"fork"`. Drives the `fork` provenance pill on every surface that
     /// renders this publication.
     pub forked: bool,
+    /// The index's children in `a`-tag order — the reading order NKBIP-01
+    /// prescribes. `sections` and `nested` hold the two kinds apart; this
+    /// interleaves them again. Empty on a stub that hasn't loaded (then
+    /// [`Publication::children`] falls back to sections-then-nested).
+    #[serde(default)]
+    pub order: Vec<ChildSlot>,
+}
+
+/// One child of an index, by position in `sections` or `nested`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ChildSlot {
+    Section(usize),
+    Nested(usize),
+}
+
+/// A borrowed child of an index, in reading order.
+#[derive(Debug, Clone, Copy)]
+pub enum Child<'a> {
+    Section(&'a Section),
+    Nested(&'a Publication),
 }
 
 impl Publication {
+    /// The index's children in reading order (`a`-tag order), leaves and
+    /// nested indexes interleaved. Every TOC / stream / flatten walk goes
+    /// through here — splitting by kind first is what put every nested
+    /// index after every leaf.
+    pub fn children(&self) -> Vec<Child<'_>> {
+        let complete = self.order.len() == self.sections.len() + self.nested.len()
+            && self.order.iter().all(|slot| match *slot {
+                ChildSlot::Section(i) => i < self.sections.len(),
+                ChildSlot::Nested(i) => i < self.nested.len(),
+            });
+        if complete {
+            return self
+                .order
+                .iter()
+                .map(|slot| match *slot {
+                    ChildSlot::Section(i) => Child::Section(&self.sections[i]),
+                    ChildSlot::Nested(i) => Child::Nested(&self.nested[i]),
+                })
+                .collect();
+        }
+        self.sections
+            .iter()
+            .map(Child::Section)
+            .chain(self.nested.iter().map(Child::Nested))
+            .collect()
+    }
+
     /// Extract metadata from a publication index event
     ///
     /// Note: Publication index events (kind 30040) should not have content per NKBIP-01,
@@ -431,12 +480,14 @@ impl Publication {
         // Separate a-tags: 30041 → sections, 30040 → nested publication stubs
         let mut sections = Vec::new();
         let mut nested = Vec::new();
+        let mut order = Vec::new();
         let mut sec_pos = 0;
 
         for a in section_addrs {
             // Any zettel kind (30041 + long-form/wiki) is a content leaf;
             // 30040 is a nested index; everything else is dropped.
             if is_zettel_kind(a.kind) {
+                order.push(ChildSlot::Section(sections.len()));
                 sections.push(Section {
                     addr: a,
                     event: LoadStatus::Pending,
@@ -447,6 +498,7 @@ impl Publication {
                 });
                 sec_pos += 1;
             } else if a.kind == KIND_PUBLICATION_INDEX {
+                order.push(ChildSlot::Nested(nested.len()));
                 nested.push(Publication {
                     addr: a.clone(),
                     index: LoadStatus::Pending,
@@ -464,6 +516,7 @@ impl Publication {
                     relays: Vec::new(),
                     signed: true,
                     forked: false,
+                    order: Vec::new(),
                 });
             }
         }
@@ -503,6 +556,7 @@ impl Publication {
             relays,
             signed,
             forked,
+            order,
         })
     }
 
@@ -515,13 +569,15 @@ impl Publication {
     /// Get all loaded section contents as a flat list
     pub fn all_content(&self) -> Vec<&str> {
         let mut contents = Vec::new();
-        for section in &self.sections {
-            if let Some(content) = &section.content {
-                contents.push(content.as_str());
+        for child in self.children() {
+            match child {
+                Child::Section(section) => {
+                    if let Some(content) = &section.content {
+                        contents.push(content.as_str());
+                    }
+                }
+                Child::Nested(nested) => contents.extend(nested.all_content()),
             }
-        }
-        for nested in &self.nested {
-            contents.extend(nested.all_content());
         }
         contents
     }
@@ -1183,10 +1239,9 @@ impl<'a> PublicationEngine<'a> {
         }
         let read_relays = self.engine.relays();
         // Addressable coordinates carry their kind, so `addr_filters`
-        // yields single-kind filters and claims can route each one —
-        // a claimed kind goes to its claimants, everything else to the
-        // read set. No claims = every filter to every read relay, the
-        // shape this had before routing existed.
+        // yields single-kind filters: every filter goes to the read
+        // relays, and each also goes to the search relays serving its
+        // kind.
         let plan = self.engine.plan_resolve_fetch(&filters, &read_relays);
         if plan.is_empty() {
             return;
@@ -1432,10 +1487,8 @@ impl<'a> PublicationEngine<'a> {
 
         // 4. Open the operation with a structured summary so the
         //    confirm modal shows the DSL + filter list + composition.
-        //    Filters are single-kind by construction above, so claims can
-        //    route each one: a claimed kind goes to its claimants, the
-        //    rest to the read set. With no claims anywhere the plan is
-        //    every filter to every read relay — exactly the old shape.
+        //    Every filter goes to the read relays; each also goes to the
+        //    search relays serving its kind.
         let read_relays = self.engine.relays();
         let plan = self.engine.plan_resolve_fetch(&filters, &read_relays);
         let relays: Vec<String> = plan.iter().map(|(r, _)| r.clone()).collect();
@@ -1817,26 +1870,27 @@ impl<'a> PublicationEngine<'a> {
             let mut child_ancestors = ancestors;
             child_ancestors.insert(addr.clone());
 
-            // 2. Ordered child list: leaf sections first, then nested indexes
-            //    (matching `build_toc`). A nested index is in-horizon iff there
-            //    is depth budget left and it doesn't point back up the path.
-            let mut children: Vec<PubChildRef> = Vec::new();
-            for section in &pub_.sections {
-                children.push(PubChildRef {
-                    addr: section.addr.clone(),
-                    is_index: false,
-                    in_horizon: true,
-                });
-            }
-            for nested in &pub_.nested {
-                let will_recurse =
-                    remaining_depth > 0 && !child_ancestors.contains(&nested.addr);
-                children.push(PubChildRef {
-                    addr: nested.addr.clone(),
-                    is_index: true,
-                    in_horizon: will_recurse,
-                });
-            }
+            // 2. Ordered child list in `a`-tag order (leaves and nested
+            //    indexes interleaved, matching `build_toc`). A nested index is
+            //    in-horizon iff there is depth budget left and it doesn't
+            //    point back up the path.
+            let children: Vec<PubChildRef> = pub_
+                .children()
+                .into_iter()
+                .map(|child| match child {
+                    Child::Section(section) => PubChildRef {
+                        addr: section.addr.clone(),
+                        is_index: false,
+                        in_horizon: true,
+                    },
+                    Child::Nested(nested) => PubChildRef {
+                        addr: nested.addr.clone(),
+                        is_index: true,
+                        in_horizon: remaining_depth > 0
+                            && !child_ancestors.contains(&nested.addr),
+                    },
+                })
+                .collect();
 
             // Content format: this index's own `text/*` declaration (if any)
             // becomes the default its children inherit; otherwise whatever
@@ -1979,27 +2033,30 @@ impl<'a> PublicationEngine<'a> {
     pub fn build_toc(&self, pub_: &Publication, depth: usize) -> Vec<TocEntry> {
         let mut entries = Vec::new();
 
-        for section in &pub_.sections {
-            entries.push(TocEntry {
-                addr: section.addr.clone(),
-                title: section
-                    .title
-                    .clone()
-                    .unwrap_or_else(|| format!("Section {}", section.position + 1)),
-                depth,
-                loaded: section.event.is_loaded(),
-                is_publication: false,
-                content: section.content.clone(),
-                format: section
-                    .event
-                    .data()
-                    .and_then(crate::mimetype::from_event)
-                    .map(String::from),
-                children: Vec::new(),
-            });
-        }
-
-        for nested in &pub_.nested {
+        for child in pub_.children() {
+            let nested = match child {
+                Child::Section(section) => {
+                    entries.push(TocEntry {
+                        addr: section.addr.clone(),
+                        title: section
+                            .title
+                            .clone()
+                            .unwrap_or_else(|| format!("Section {}", section.position + 1)),
+                        depth,
+                        loaded: section.event.is_loaded(),
+                        is_publication: false,
+                        content: section.content.clone(),
+                        format: section
+                            .event
+                            .data()
+                            .and_then(crate::mimetype::from_event)
+                            .map(String::from),
+                        children: Vec::new(),
+                    });
+                    continue;
+                }
+                Child::Nested(nested) => nested,
+            };
             let children = self.build_toc(nested, depth + 1);
             entries.push(TocEntry {
                 addr: nested.addr.clone(),
@@ -2206,10 +2263,11 @@ impl<'a> PublicationEngine<'a> {
         let response = match policy {
             FetchPolicy::FetchAlways => {
                 // A relay timeline syncs from its own relay only; the
-                // composite feed and the local timeline use the read set.
+                // composite feed and the local timeline use the read set
+                // plus the search relays serving publication indexes.
                 let relays: Vec<String> = match &timeline {
                     RelayTimeline::Relay(url) => vec![url.clone()],
-                    _ => self.engine.relays(),
+                    _ => self.engine.relays_for_kinds(Some(&[30040])),
                 };
                 let label = match &timeline {
                     RelayTimeline::Relay(url) => format!("Feed sync — {url}"),
@@ -3022,14 +3080,11 @@ impl<'a> PublicationEngine<'a> {
                 resolved.coord = Some(addr.to_a_tag());
                 // Route through `get_events` (not `get_addressable`) so a
                 // FetchAlways fetch goes through the Confirm intent flow.
-                // The kind is known here, so resolve-kind claims apply:
-                // a claimed kind fetches from its claimants (mercury for
-                // publication/wiki kinds by default), everything else
-                // from the read set. This used to override with the
-                // `search` relay class — a misnomer; that class now
-                // serves actual search.
-                let claimed = self.engine.resolve_relays_for_kind(kind_int as u64);
-                let over = claimed.as_deref();
+                // No override: the engine composes the set from the
+                // filter's kind — the read relays plus the search relays
+                // serving it (mercury for publication/wiki kinds by
+                // default).
+                let over: Option<&[String]> = None;
                 let filter = serde_json::json!({
                     "kinds": [kind_int], "authors": [pubkey], "#d": [d_tag], "limit": 1,
                 });
@@ -3131,16 +3186,10 @@ impl<'a> PublicationEngine<'a> {
             let created = e.get("created_at").and_then(Value::as_i64).unwrap_or(0);
             (author_match as u8, created)
         };
-        // Wikilinks resolve to 30818 only, so the target kind is known
-        // exactly — which means the relay set is knowable exactly. If any
-        // relay claims 30818, ask the claimants instead of the whole read
-        // set (an explicit `relays` override still wins). See
+        // Wikilinks resolve to 30818 only. With no explicit `relays`
+        // override the engine composes the set from that kind: the read
+        // relays plus the search relays serving 30818. See
         // `docs/zettel/idea-relay-kind-routing.org`.
-        let claimed = relays
-            .is_none()
-            .then(|| self.engine.resolve_relays_for_kind(30818))
-            .flatten();
-        let relays = relays.or(claimed.as_deref());
         let mut best: std::collections::HashMap<String, Value> = std::collections::HashMap::new();
         // Merge one query pass's events into `best`, scored per topic.
         // Chunked so a link-dense article can't mint a filter with hundreds
@@ -3398,12 +3447,14 @@ fn collect_sibling_entries(pubn: &Publication) -> Vec<SiblingEntry> {
         }
     }
     fn walk(pubn: &Publication, out: &mut Vec<SiblingEntry>) {
-        for s in &pubn.sections {
-            out.push(entry_for(&s.addr, s.event.data()));
-        }
-        for nested in &pubn.nested {
-            out.push(entry_for(&nested.addr, nested.index.data()));
-            walk(nested, out);
+        for child in pubn.children() {
+            match child {
+                Child::Section(s) => out.push(entry_for(&s.addr, s.event.data())),
+                Child::Nested(nested) => {
+                    out.push(entry_for(&nested.addr, nested.index.data()));
+                    walk(nested, out);
+                }
+            }
         }
     }
     // The publication's own address is a sibling too: a section may
@@ -4055,6 +4106,7 @@ pub fn build_block_publication_events(
                     tags: block.tags.iter().map(|t| crate::publication::compose::TagEntry {
                         name: t.name.clone(),
                         value: t.value.clone(),
+                        ..Default::default()
                     }).collect(),
                     ..Default::default()
                 };
@@ -4609,6 +4661,7 @@ mod tests {
         let tags = vec![TagEntry {
             name: "tags".to_string(),
             value: "rust, nostr".to_string(),
+            ..Default::default()
         }];
         let event = build_atomic_event(
             30023,
@@ -4837,6 +4890,59 @@ mod tests {
         assert_eq!(pub_.sections.len(), 1); // only 30041
         assert_eq!(pub_.nested.len(), 2);   // 30040 sub-pubs
         assert_eq!(pub_.section_count(), 3); // total children
+    }
+
+    /// Children come back in `a`-tag order with leaves and nested indexes
+    /// interleaved — splitting by kind first put every 30040 after every
+    /// 30041 (a book's chapter-index children sank to the end of its TOC).
+    #[test]
+    fn test_children_keep_a_tag_order() {
+        let event = serde_json::json!({
+            "id": "abc123",
+            "pubkey": "deadbeef",
+            "created_at": 1700000000u64,
+            "kind": 30040,
+            "content": "",
+            "tags": [
+                ["d", "book"],
+                ["a", "30040:other:original", "", "fork"],
+                ["a", "30041:deadbeef:preface"],
+                ["a", "30040:deadbeef:chapter-1"],
+                ["a", "30041:deadbeef:chapter-2"],
+                ["a", "30040:deadbeef:chapter-3"],
+                ["a", "30041:deadbeef:index"]
+            ]
+        });
+        let pub_ = Publication::from_event(&event, true).unwrap();
+        let order: Vec<(bool, String)> = pub_
+            .children()
+            .into_iter()
+            .map(|c| match c {
+                Child::Section(s) => (false, s.addr.d_tag.clone()),
+                Child::Nested(n) => (true, n.addr.d_tag.clone()),
+            })
+            .collect();
+        assert_eq!(
+            order,
+            vec![
+                (false, "preface".to_string()),
+                (true, "chapter-1".to_string()),
+                (false, "chapter-2".to_string()),
+                (true, "chapter-3".to_string()),
+                (false, "index".to_string()),
+            ],
+            "fork marker excluded, kinds interleaved in a-tag order"
+        );
+
+        // A stub with no recorded order falls back to sections-then-nested.
+        let mut stub = pub_.clone();
+        stub.order.clear();
+        let kinds: Vec<bool> = stub
+            .children()
+            .into_iter()
+            .map(|c| matches!(c, Child::Nested(_)))
+            .collect();
+        assert_eq!(kinds, vec![false, false, false, true, true]);
     }
 
     #[test]

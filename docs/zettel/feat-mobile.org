@@ -228,6 +228,10 @@ the hardware-back event, and later plugins (share intents, deep links).
     Secrets pasted into the npub field are rejected loudly.
   - [ ] engine signer (ncryptsec decrypt in-process — already
     supported; the right default for a single-user device app)
+  - [X] *Background narration* — shipped 2026-11-09 (v0.18.0): =media=
+    Tauri plugin = mediaPlayback foreground service + MediaSession +
+    notification; the WebView stays the player
+    ([[file:decision-webview-stays-the-player.org][decision]]).
   - [X] *NIP-55 (Amber)* — shipped 2026-08-10, but NOT as an
     engine-side =Signer= impl: Amber registers as an *external signer*
     (kind ="nip55"=) over the existing SSE registry — the seam NIP-07

@@ -397,7 +397,7 @@ impl<'a> BookshelfEngine<'a> {
             FetchPolicy::LocalOnly => false,
         };
         if fetch {
-            let relays = self.engine.relays();
+            let relays = self.engine.relays_for_kinds(Some(&[30045]));
             let summary = crate::network::RequestSummary {
                 filters: vec![crate::network::nip_filter_from_json(&filter)],
                 composition: crate::network::CompositionShape {

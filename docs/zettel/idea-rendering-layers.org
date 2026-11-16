@@ -122,7 +122,8 @@ app); native tools detected, never installed.
   own chunk
 - [X] Style spans as a post-pass over =buildSegments= (=applyStyles=):
   text runs split at style boundaries, atoms/highlights untouched; sigils
-  dimmed via =.ly-mark=, never hidden
+  dimmed via =.ly-mark=, never hidden (until the reader's *rendered*
+  view, 2026-11-12 — below)
 - [X] Reader: =src= / =md= toolbar chip; T → render row (source + enabled
   bases; two-step armed "always for <mimetype>" / "always for this book");
   =?highlight= forces source
@@ -146,6 +147,14 @@ app); native tools detected, never installed.
 - [X] Bases on by default; kind-defined formats (30023/30818); untagged
   fallback preference; =DocBuffer= decides + styles like the reader
   ([[file:decision-layers-default-on.org][decision]], 2026-11-02)
+- [X] Reader syntax view: Tools › markup › syntax = *rendered* | *show
+  markers* — the composer's Rendered view for reading
+  (=layers/hide-markers.ts=: sigils =display:none=, still in the DOM with
+  their offsets; =-= bullets drawn as •, numbers kept, table pipes and
+  multi-line marks kept). Per-device, =tendrl.layers.hideMarkers=;
+  default show markers (2026-11-12)
+- [X] Tables as a grid of source runs — scrollable, columns aligned,
+  capture intact ([[file:decision-table-grid.org][decision]], 2026-11-12)
 - [ ] Engine-side local-tool executor (=POST /api/v1/render=: dot /
   plantuml detection, content-hash cache, sandbox profile, timeout)
 - [ ] Remote render server (Kroki) behind Confirm mode
@@ -162,5 +171,6 @@ app); native tools detected, never installed.
 - [[file:decision-mimetype-tag.org][Decision: content format is the m tag]]
 - [[file:idea-composer-formatting.org][Composer formatting]]
 - [[file:feat-reader.org][Reader]] — where the picker lives
+- [[file:decision-table-grid.org][Tables render as a grid of source runs]]
 - [[file:feat-nostrdown.org][Nostrdown]] — the overlay that must survive every layer
 - [[file:feat-ui-patterns.org][UI patterns]] — armed buttons, toasts

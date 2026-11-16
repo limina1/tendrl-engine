@@ -18,6 +18,7 @@ import { browser } from '$app/environment';
 import { getAppState } from '$lib/state.svelte';
 import type { FetchEvent } from '$lib/types';
 import * as api from '$lib/api';
+import { emitIngested } from '$lib/network/ingest';
 
 type AppState = ReturnType<typeof getAppState>;
 type IntentEvent = Extract<FetchEvent, { type: 'intent' }>;
@@ -55,6 +56,15 @@ let pendingReplace = false;
 // operation_id → toast id, so progress/relay_status/completed update
 // the right toast.
 const opToasts = new Map<string, number>();
+// Determinate totals + op kind, for the progress bar and the completion line.
+const opTotals = new Map<string, number>();
+// Last progress label per op — a publish's final one says what's missing.
+const opLabels = new Map<string, string>();
+// Intents that went to the confirm modal instead of opening a toast. Once
+// approved, the op's first progress/relay/completion event opens its toast
+// from here — without this a confirmed operation reported nothing.
+const confirmedIntents = new Map<string, Extract<FetchEvent, { type: 'intent' | 'publish_intent' }>>();
+const opModes = new Map<string, 'fetch' | 'publish'>();
 
 /** Resolve the AppState lazily — it's created by +layout, which may run
  *  after this module is first evaluated. Returns null if not ready. */
@@ -93,6 +103,7 @@ function handleEvent(ev: FetchEvent) {
 	// `intent` → FetchConfirmModal, `publish_intent` → PublishConfirmModal
 	// (both keyed off `confirmState.intent`; +layout branches on type).
 	if ((ev.type === 'intent' || ev.type === 'publish_intent') && ev.needs_confirmation) {
+		confirmedIntents.set(ev.operation_id, ev);
 		if (pendingReplace) {
 			// A reissue is in flight — swap this re-composed intent into the
 			// open modal in place. No close/reopen.
@@ -106,21 +117,55 @@ function handleEvent(ev: FetchEvent) {
 		return;
 	}
 
+	// Not an operation event: fan it out to the views that show these
+	// kinds. Needs no AppState, so it runs before that check.
+	if (ev.type === 'ingested') {
+		emitIngested({ kinds: ev.kinds, count: ev.count, profiles: ev.profiles ?? [] });
+		return;
+	}
+
 	const app = appOrNull();
 	if (!app) return;
 
+	// An approved confirm-mode operation: open its activity toast on its
+	// first sign of life.
+	if (
+		(ev.type === 'progress' || ev.type === 'relay_status' || ev.type === 'completed' || ev.type === 'failed') &&
+		!opToasts.has(ev.operation_id)
+	) {
+		const intent = confirmedIntents.get(ev.operation_id);
+		if (intent) {
+			confirmedIntents.delete(ev.operation_id);
+			if (!(ev.type === 'failed' && ev.error === 'cancelled')) {
+				const mode = intent.type === 'publish_intent' ? 'publish' : 'fetch';
+				opModes.set(ev.operation_id, mode);
+				openActivityToast(app, ev.operation_id, intent.label, mode, intent);
+			}
+		}
+	}
+
 	switch (ev.type) {
 		case 'intent':
+			opModes.set(ev.operation_id, 'fetch');
 			openActivityToast(app, ev.operation_id, ev.label, 'fetch', ev);
 			break;
 		case 'publish_intent':
+			opModes.set(ev.operation_id, 'publish');
 			openActivityToast(app, ev.operation_id, ev.label, 'publish', ev);
 			break;
 		case 'progress': {
 			const id = opToasts.get(ev.operation_id);
 			if (id === undefined) break;
-			const suffix = ev.total != null ? ` ${ev.done}/${ev.total}` : '';
-			app.updateToast(id, { message: ev.label + suffix });
+			// Every sign of life keeps the toast up — a paced, rate-limited
+			// broadcast runs far longer than the toast's own lifetime.
+			opLabels.set(ev.operation_id, ev.label);
+			if (ev.total != null && ev.total > 0) {
+				// Determinate: a bar, the label carries its own counts.
+				opTotals.set(ev.operation_id, ev.total);
+				app.updateToast(id, { message: ev.label, progress: { done: ev.done, total: ev.total } }, 180_000);
+			} else {
+				app.updateToast(id, { message: ev.label }, 180_000);
+			}
 			break;
 		}
 		case 'relay_status': {
@@ -132,12 +177,33 @@ function handleEvent(ev: FetchEvent) {
 			const id = opToasts.get(ev.operation_id);
 			if (id !== undefined) {
 				const n = ev.event_count;
-				app.updateToast(
-					id,
-					{ message: `Done — ${n} relay${n === 1 ? '' : 's'} accepted`, kind: 'success' },
-					2500
-				);
+				const total = opTotals.get(ev.operation_id);
+				if (opModes.get(ev.operation_id) === 'publish' && total) {
+					// A verified publish: confirmed (event, relay) pairs of all.
+					const all = n === total;
+					const last = opLabels.get(ev.operation_id);
+					app.updateToast(
+						id,
+						{
+							message: all
+								? `Done — all ${total} confirmed on the relays`
+								: `Done — ${last ?? `${n}/${total} confirmed on the relays`}`,
+							kind: all ? 'success' : 'error',
+							progress: { done: n, total }
+						},
+						all ? 5000 : 60_000
+					);
+				} else {
+					app.updateToast(
+						id,
+						{ message: `Done — ${n} relay${n === 1 ? '' : 's'} accepted`, kind: 'success' },
+						2500
+					);
+				}
 				opToasts.delete(ev.operation_id);
+				opTotals.delete(ev.operation_id);
+				opModes.delete(ev.operation_id);
+				opLabels.delete(ev.operation_id);
 			}
 			break;
 		}

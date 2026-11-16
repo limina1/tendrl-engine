@@ -22,8 +22,10 @@ scripts/publish-release.sh               # tag v<version> if needed, push the ta
                                          # (CHANGELOG section = notes, portable tarball = asset; --dry-run to preview,
                                          #  --no-asset for notes-only, `publish-release.sh X.Y.Z --no-asset` to backfill an old tag)
 
-# Run
-cargo run -- -c config.toml         # run engine with config
+# Run (no config file needed — defaults + <data_dir>/config.toml, written by the UI)
+cargo run                           # engine on :3030 with defaults
+cargo run -- -c config.toml         # run engine with a preset config
+./target/debug/tendrl-engine --data-dir /tmp/tendrl-test --port 3131   # isolated test instance (first-run state); never reuse the live :3030
 ./start.sh                          # start all services (engine + web preview)
 ./start.sh --dev                    # use the Vite dev server (hot reload) for the web UI
 ./start.sh --build                  # rebuild web/build/ before starting preview
@@ -98,10 +100,49 @@ Engine-level `NetworkMode` toggle and a ring buffer of recent relay fetch activi
 - **`Auto`** — fetch from relays automatically (the former "Online").
 - **`Confirm`** — every user-initiated relay fetch emits an *intent* the UI must
   approve before the engine proceeds (the former "Offline").
+- **`Local`** — never connects to a relay: fetch operations don't open,
+  publish operations target no relay (signed + stored, the event stays
+  "local"), and `relay.rs` refuses every socket unless a `RelayPermit`
+  covers it (the NIP-46 signer transport is exempt). The way out is
+  **broadcast** (`src/broadcast.rs`) — re-sending already-signed events,
+  never signing: `GET /api/v1/broadcast/plan?coord=|id=` = the connected
+  set around a document or event, from the local store (tree + highlights,
+  comments, annotations, narrations, deletions…); `POST /broadcast/send
+  {ids, relays}` = send the pick under a permit, in any mode. Web: one
+  `BroadcastModal` (all/none + kind / author / provenance filters) opened
+  from the event menu (`b`), the reader's tools sheet and the feed's
+  "broadcast" pill; the modeline pill cycles auto → confirm → local.
+
+**Session relay overrides** (`SessionRelays`, in memory — the session is the
+engine process, i.e. one app launch on Android): a confirm decision is folded
+in whole — listed relays left unpicked go `off` (skipped by *every* later
+fetch, Auto and Confirm, background included, via the `tracked_fetch` funnel),
+relays picked but not listed go `on` (joined to every later user-initiated
+fetch). `begin_operation` applies them in Auto and lists them in Confirm
+(`Intent.session_off` = start unchecked). `POST /network/session/reset`
+clears them; `NetworkStatus.session` shows them. Durable config is relay
+management only — the modal never writes `relays.json`.
+
+**Local-first, reactive (the display rule)**: a view renders from its local
+query and re-reads when the engine announces `FetchEvent::Ingested { kinds,
+count, profiles }` on the fetch-events stream (emitted from
+`Engine::note_ingest_batch`, the single ingest funnel — relay fetches and local
+saves alike). Web: `$lib/network/ingest.ts` (`onIngested` / `onKindsIngested`,
+a leaf module). Relay-bound work that fires on its own must **not** hold its
+HTTP request open — a browser has ~6 connections per origin, two of them
+permanent SSE streams, and held requests queue every local read behind slow
+relays. `POST /profiles/fetch` without `force` detaches (returns at once);
+feed, timeline picker, bookshelf and the profile cache react to ingests.
+Still request-held (user-initiated): feed sync, bookshelf sync, discussions,
+wiki resolve, pull-user-data — convert them the same way when touched.
 
 Pending intents and live fetch activity are pushed to clients over an SSE
 `fetch-events` stream; the UI approves an intent via a confirm endpoint. The
 `FetchGuard` RAII type tracks active relay fetches for the activity log.
+One exception: the **provenance round** (`begin_operation_ungated`) — a
+fetch aimed only at relays a document was already served from — emits
+its intent with `needs_confirmation: false` and never blocks, in either
+mode; session-off relays still apply.
 
 ### Publication System (`src/publication.rs`)
 Implements NKBIP-01 structured documents:
@@ -259,6 +300,28 @@ sections and embeds new events on a 60-second interval when embeddings are enabl
   (ingest, optional broadcast, local-until-broadcast on the coordinate).
   Web: feed bookshelf mode, `EventViewModal` Shelve action, profile
   Bookshelves tab.
+- **`history.rs`**: reading / listening history — `<data_dir>/history.json`,
+  one entry per document coordinate (30040 with the last section shown,
+  30023, 30818; a 30041 only inside its publication), plus the narration
+  place (section, recording id, piece, position). Local state only, never
+  an event. API: `GET/POST /api/v1/history`, `POST /history/remove`
+  (`coord:"*"` clears). Web: `history.svelte.ts` (debounced reads,
+  throttled listens, optimistic mirror), reader resume, feed *history* tab.
+- **`attached.rs`**: what hangs off a document — NIP-22 comments, NIP-84
+  highlights, kind-32176 narration indexes and leaves, the containing
+  30040, an index's own sections in TOC order — bucketed per target
+  (`classify`, pure). `GET /api/v1/attached?
+  coord=|id=&policy=`: `local_first` runs the **provenance round**
+  (`Engine::provenance_for` = the index's + its sections' relay
+  provenance; `Engine::provenance_round` → `NetworkActivity::
+  begin_operation_ungated`, an intent with `needs_confirmation: false`
+  that never blocks — the relays a document came from already know the
+  reader has it); `fetch_always` is the gated widening round. Narration
+  discovery runs the same round first. Web: the event menu's publication
+  row + coloured chips, `NarrationStrip` under every chapter / article
+  with audio, `AudiobookBuffer` (`audiobook:<pk>:<d>`, a 32176 opened
+  when its document is not local), profile Narrations / Audio tabs.
+  Decision: `docs/zettel/decision-provenance-first-fetch.org`.
 - **`git.rs`**: NIP-34 git (`nips/34.md`) — kind-30617 repository
   announcements (name/description, multi-valued `web`/`clone`/`relays`/
   `maintainers`, `r … euc`, `u` fork pointer, `t`), kind-30618 state
@@ -300,6 +363,85 @@ sections and embeds new events on a 60-second interval when embeddings are enabl
   run-in-place, chevron unpacks PIPE stages and `in` chains), dual wand on
   the search panel (`+🪄` saves the typed query, `🪄` opens the form-driven
   spell builder incl. pipeline mode and chain-to-a-spell projections).
+- **`blossom.rs`**: Blossom blob storage, pure above the client — BUD-11
+  kind-24242 auth template + `Authorization: Nostr <b64>` header, BUD-02
+  `PUT /upload` / BUD-04 `PUT /mirror` / BUD-01 `HEAD`, blob descriptor,
+  BUD-03 kind-10063 server-list parse, `BlossomStore` at
+  `<data_dir>/blossom.json` (ordered: first = upload target, rest = mirror
+  targets; the user's 10063 is read as a *suggestion*, never auto-published).
+  The 24242 is signed as the **user** through the `SigningController`, like
+  NIP-42 AUTH: short-lived, scoped to the blob hash, never stored. The
+  `Authorization` header's JSON is pure ASCII (`ascii_json`): blossom.band
+  / nostr.build reject raw UTF-8 in `content` as a signature mismatch.
+- **`narration.rs`**: publications read aloud — kind **32176** NKBIP-07
+  "Blossom piece index" trees mirroring the 30040 tree: one leaf per section
+  (one `b` piece = the joined chapter MP3) under one root (`a` children in
+  TOC order). Binding to the narrated node is tendrl's proposed NKBIP-07
+  extension and needs all three letters: `A` (coordinate) + `K` (kind) span
+  every version by every narrator, `E` pins the exact event whose text was
+  spoken; `content` carries the spoken text (`transcript txt`, default on)
+  so another version's recording can be diffed against the current text.
+  Pure: `spoken_text` (markup + nostrdown → prose, by `m` mimetype),
+  `chunk_text` (sentence-boundary chunks ≤ the model's cap), `join_mp3`
+  (frame concat; strips ID3 + Xing), `rank` (exact → other version →
+  unpinned, newest replaceable wins). `NarrationEngine`: `plan` / `discover`
+  (`#A` per tree node, LocalFirst, relay round Confirm-gated) / `generate`
+  (ppq TTS via `ProviderRegistry::ppq_tts` → Blossom → sign+ingest per
+  section → root → optional broadcast; SSE `GenEvent`s; leaves carry
+  `T` = `<index-slug>-section-NN`, roots `<index-slug>-narration`; skips
+  sections already narrated for the same `E` + voice; the root always covers the
+  sections that have a recording by this narrator + voice, from any
+  run, and a later run replaces it under the same `d`) / `mirror`. API under
+  `/api/v1/narration/*` (`models`, `voices`, `servers`, `estimate`,
+  `generate` SSE, `for/:pubkey/:d_tag`, `node/:kind/:pubkey/:d_tag` —
+  one document on its own, `event/:pubkey/:d_tag` — a 32176 opened as
+  a book: chapters in `a` order, version pin, the local publication
+  listing the narrated section, `mirror`). ppq returns MP3 only
+  (`response_format` ignored, probed 2026-11-09). Web: `narration.svelte.ts`
+  store (one global player, recordings cache), `NarrationPlayer` strip,
+  `NarrateModal`, reader `NarrationDrawer` + per-section ▶, Settings ›
+  Narration. Design: `docs/zettel/idea-audiobook-blossom.org`.
+- **`transcript.rs`**: transcript review for narration, pure. `review(spoken,
+  title)` flags what a section should not read as-is — skip (footnote
+  sections / bodies, stray `[n]`, number-dense lists) or review (citations,
+  capitals, other scripts, variables / logic notation, URLs, leftover
+  markup, 150+ word run-ons) — with byte + UTF-16 offsets, a `suggest`ed
+  spoken form, and whole-section advice (Index, Contents, footnote leaves).
+  `TranscriptOverride` (`edits` against the engine's spoken text, or a
+  hand-edited `text`, pinned to the reviewed `event_id`) is resolved here
+  (`apply_edits`); `narration::apply_transcripts` applies it to a plan, so
+  `estimate` / `generate` (`transcripts`) narrate and store the reviewed
+  text, and a section changed since review is reported, never mis-spliced.
+  `POST /api/v1/narration/review` = apply + re-check. Web: the narrate
+  modal's step 2 (`TranscriptReview.svelte`, decisions as view state in
+  `narration-review.ts`).
+- **`publication/section_edit.rs`** + **`publication/merge_request.rs`**: edit
+  one 30041 (placed in its publication) or one 30023 / 30818 / 30817, pure.
+  `plan` picks the route — own → **Republish** (same `d`); someone else's
+  section in my index → **ForkIntoIndex**; otherwise → **ForkAndRequest**: a
+  fork under the editor's key (a 30041 gets a minted `d` + `E`/`p`; an atomic
+  kind keeps the `d` with NIP-54 `a`/`e` `fork` markers) plus a kind-818
+  merge request (`a` target, `e` base, `e … source`, `p` owner). Reference
+  tags are recomputed from the content; `SectionEdit.tags` (the composer's
+  tags panel) replace the base's own tags, never `ENGINE_TAGS`. Status of an
+  818 = the owner's newest kind-7 (`+` merged, `−` declined). API:
+  `POST /api/v1/section-edit/{preview,publish}`, `GET /api/v1/merge-requests`,
+  `…/destinations`, `…/react`, `…/:id/diff`, `…/:id/merge`, `…/:id/decline`
+  (destinations = owner's inbox ∪ found-on ∪ hints ∪ mine). Web: event-menu
+  Edit section / Edit publication / Edit → the composer (`app.composeEdit`),
+  Sign → `EditReviewModal`; `MergeRequestsModal` (M-x
+  `tendrl-merge-requests`, menu `Merge requests`). Compose tags travel as
+  `WireTag` — the legacy `[name, value]` pair or `{name, values}` (emitted
+  verbatim, `TagEntry.verbatim`).
+- **Composer v2** (`web/src/lib/components/ComposeView.svelte`,
+  `web/src/lib/editor/{wysiwyg,markup}.ts`): one CodeMirror editor over the
+  real source; the layer bases' style spans become decorations (Rendered
+  hides markup except on the cursor's line · Show markers · Source). Type
+  (Publication / Notes / Wiki / Spec / Blog / custom kind) + Style (the `m`
+  tag; a change re-reads, never converts). Headings in the style's own
+  syntax are the structure: H1 title, H2 section, H3 nests, H4+ text. Tags
+  live in the rail (name + values), not in the text. Locked sections are
+  read-only editor ranges (`lockedRanges`).
 - **`chat.rs`**: Pure state logic for LLM chat fragments, edit mode, context
   injection, message serialization (no IO)
 - **`llm.rs`**: Async `LLMProvider` trait — `NoopProvider` (testing) and
@@ -373,7 +515,9 @@ stored `whats-up` — no need to hand-normalize; quote values containing spaces.
 - `mobile/src-tauri/` — Tauri 2 Android host (app id `io.github.limina1.tendrl`):
   engine in-process on a token-gated loopback port (stable 41347 — the WebView
   origin keys the SPA's persisted storage), WebView at `?shell=mobile`, in-app
-  NIP-55 (Amber) Kotlin plugin. Independent crate, NOT in the root package;
+  NIP-55 (Amber) Kotlin plugin, and a `media` plugin (foreground service +
+  MediaSession so narration keeps playing with the screen off; the WebView
+  stays the player). Independent crate, NOT in the root package;
   build commands + Android toolchain env in `docs/commands.org` ("Android build").
   The engine crate stays platform-agnostic: mobile builds use
   `--no-default-features --features embed-assets` (features gate
@@ -394,9 +538,20 @@ stored `whats-up` — no need to hand-normalize; quote values containing spaces.
 
 - **Error handling**: `EngineError` (thiserror) with variants for Database, Relay,
   NotFound, etc. `Result<T>` is aliased to `Result<T, EngineError>`.
+- **Relay selection (one rule)**: a fetch for kinds K goes to the **read relays ∪
+  the search relays serving K** (`Engine::relays_for_kinds` / `relays_for_filters`
+  / `plan_resolve_fetch`), plus relay hints (local `e`/`a` tag hints, an
+  `nevent`/`naddr`'s own relay TLVs via `search::entity_relay_hints` or the
+  `relays=` query param), then session overrides. A relay is one row with five
+  flags — auth, read, write, search, broadcast. **Search kinds**
+  (`search_kinds`, formerly `resolve_kinds`) narrow the search flag: none
+  listed = any kind; a kindless filter reaches only unrestricted search relays.
+  There is no indexer class, no default/fallback tier, no `exclusive` flag —
+  a profile relay is a search relay with `relay_store::INDEXER_KINDS`
+  (generation-2 migration in `RelaySets::apply_default_upgrades`).
 - **Relay sets**: The TOML config carries only `initial_relays` (a bootstrap seed
   list used **once** on first boot). The live working sets — `general` / `fetch` /
-  `publish` / `broadcast` / `auth` (NIP-42 opt-in) — live in `<data_dir>/relays.json`, mutated by `engine.add_relay` /
+  `publish` / `broadcast` / `auth` (NIP-42 opt-in) / `search` — live in `<data_dir>/relays.json`, mutated by `engine.add_relay` /
   `engine.remove_relay` and the `POST /api/v1/config/update` handler. The state
   file is **never** broadcast as a Nostr event (no auto-publishing kind 10002 /
   30002 from UI edits — see `project_publishing_philosophy`).
@@ -418,4 +573,5 @@ stored `whats-up` — no need to hand-normalize; quote values containing spaces.
   10007 (NIP-51/65 lists), 30002 (relay sets), 30023 (long-form), 30040 (publication
   index), 30041 (publication section), 30045 (bookshelf), 30817/30818 (wiki),
   9802 (highlight), 30617/30618 (git repository + state), 1621 (git issue),
-  1630–1633 (git status).
+  1630–1633 (git status), 32176 (NKBIP-07 narration / Blossom piece index),
+  24242 (Blossom auth, never stored), 10063 (Blossom server list, read only).

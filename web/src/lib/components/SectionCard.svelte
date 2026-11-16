@@ -9,6 +9,7 @@
 	import RichContent from './RichContent.svelte';
 	import EventLinks from './EventLinks.svelte';
 	import { decideFor, ensureLoaded, spansFor, type LayerPick } from '$lib/layers/use.svelte';
+	import NarrationStrip from './NarrationStrip.svelte';
 
 	const app = getAppState();
 
@@ -26,7 +27,9 @@
 		resolution = undefined,
 		onopenlocal = undefined,
 		layerPick = undefined,
-		forceSource = false
+		forceSource = false,
+		pubTitle = null,
+		onopenrecordings = undefined
 	}: {
 		section: LazySection;
 		truncate?: boolean;
@@ -57,9 +60,19 @@
 		/** Rendering layer picked for the enclosing buffer (see ContinuousView). */
 		layerPick?: LayerPick;
 		forceSource?: boolean;
+		/** Containing publication's title — the player strip's subtitle. */
+		pubTitle?: string | null;
+		/** Open the recordings drawer for this section's audio. */
+		onopenrecordings?: (() => void) | undefined;
 	} = $props();
 
 	const status: SectionStatus = $derived(section.status ?? 'loaded');
+
+	// Narration: a slim player strip under the title when a recording is
+	// bound to this section (engine-ranked, cached in narration.svelte.ts).
+	const sectionCoord = $derived(
+		section.addr ? `${section.addr.kind}:${section.addr.pubkey}:${section.addr.d_tag}` : null
+	);
 
 	// Rendering layer for this card: decided from the section's declared
 	// format + the user's bindings; the chunk loads lazily on first need.
@@ -223,6 +236,15 @@
 			>⋮</button>
 		{/if}
 	</h3>
+	{#if sectionCoord && !preview && status === 'loaded'}
+		<NarrationStrip
+			coord={sectionCoord}
+			title={section.title ?? `Section ${(section.position ?? 0) + 1}`}
+			{pubTitle}
+			{publicationAtag}
+			{onopenrecordings}
+		/>
+	{/if}
 	{#if status === 'loaded' && displayContent}
 		<RichContent
 			content={displayContent}

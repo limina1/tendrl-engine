@@ -1,0 +1,255 @@
+#+TITLE: Fix Index: Walkthrough & Onboarding
+#+TYPE: meta
+#+STATUS: in-progress
+#+DATE: 2026-11-06
+
+The issue map for the contextual walkthrough (the "W" coachmark system)
+and the first-run popups around it. Grew from a code review on
+2026-11-06 prompted by users getting lost in the tutorial. Problems are
+numbered by area (W = workflow, P = popups, T = terminology, E =
+explainability); the fix sets at the end reference them. Tick a fix set
+when it ships, note commit/date, and update
+[[file:feat-appearance.org][Appearance]] (the owning feature note).
+
+Surfaces under review:
+- =web/src/lib/wm/discovery.svelte.ts= — tip registry (=TIPS=), queue,
+  seen/enabled persistence, chaining
+- =web/src/lib/components/DiscoveryTip.svelte= — the coachmark card +
+  spotlight ring
+- =web/src/lib/components/NetworkModeChoiceModal.svelte= — first-run
+  mode choice, carries the "Run walkthrough" toggle
+- =web/src/lib/components/FetchConfirmModal.svelte= — the first surface
+  the walk points at
+- trigger sites: =routes/+layout.svelte:42-47=, =routes/+page.svelte=
+  (=1281-1292=, =187-201=, =1845-1895=), =FeedBuffer.svelte:189-213=,
+  =SettingsBuffer.svelte:262-266=, =EventViewModal.svelte:42=
+- =web/src/lib/wm/tours.ts= — per-buffer tour lists; W menus in
+  =+page.svelte= (logo =:1518=, pane heads =:1930=, mode-line =:1807=)
+
+* W — workflow breaks (the walk dies silently)
+
+** W1. The first card tells the user to cancel their first fetch
+"Feed sync" (=discovery.svelte.ts:111-121=) ends: "close this (=Esc=) —
+let's sign in." The fetch modal maps Esc to cancel
+(=FetchConfirmModal.svelte:285=). A new user's first act is aborting the
+broad pull: the feed stays empty, no kind-0 profile arrives, and the
+later "no name yet" card (=:155-167=) explains a problem the walk caused.
+
+** W2. Any click on the app dismisses the tip and marks it seen
+=DiscoveryTip.svelte:103-113= listens for =pointerdown= outside the card
+and calls =dismissActive()= (=discovery.svelte.ts:713-721=), which pushes
+the key to =seen= and persists. Cards that say "open Details", "open
+Settings here", "Try it" are killed by the action they ask for, counted
+as done forever. Because =dismissActive= also chains =next=, "Sign in"
+(=:122-138=) pops immediately while the fetch modal is still open,
+pointing at a Settings button under the modal scrim (modal z 250,
+=FetchConfirmModal.svelte:551=; ring/card z 290/291,
+=DiscoveryTip.svelte:240,251=) — a target that cannot be clicked.
+
+** W3. "Skip the rest" does not stick
+=endWalkthrough()= (=discovery.svelte.ts:725-727=) empties the queue but
+marks nothing seen. Every onboarding beat is re-triggered by its own
+surface (each confirm modal → =+layout.svelte:42-47=; Settings mount →
+=SettingsBuffer.svelte:266=; sign-in → =+page.svelte:1289=; feed →
+=FeedBuffer.svelte:189-213=), so a user who skipped gets the same cards
+back one at a time. Only the Settings toggle really silences them.
+
+** W4. Auto mode gets no walkthrough at all
+Every first-run beat hangs off the Confirm modal: "Feed sync" fires from
+it, "Sign in" chains from its dismiss, "General feed" (=:180-186=) fires
+from a scoped intent, and the feed cards (=FeedBuffer.svelte:198=) are
+gated on =general-feed= having been seen. The mode modal still offers
+"Run walkthrough" checked for Auto (=NetworkModeChoiceModal.svelte:28=,
+=:104-114=); the user opts in and nothing ever appears.
+
+** W5. A beat skipped outside the store drops its =next=
+"Signed in — no name yet" is guarded in =+page.svelte:1281-1292= on
+"no display name resolved". When the profile is already known the tip is
+never triggered, and its =next= ("Back to the feed", =:168-179=) goes
+with it: the user is left in Settings with no further beat. Contrast
+=trigger()='s own =relevantWhen= skip (=:702-705=), which does chain.
+Same shape: "Three ways in" (=:139-154=) is both an onboarding beat and
+the Settings panel's own tour (=tours.ts:53=), so a signed-in user who
+taps W in Settings gets a sign-in lesson.
+
+** W7. "Signed in" was inferred from the query, not the user
+Found while verifying F2: =+layout.svelte= chose between the "approve
+the first fetch" card and the "general feed — now optional" card by
+whether the intent's filters carried =authors=. The engine also scopes
+the feed by config =authors= and by the *assistant's* key (restored from
+the keyring at boot), so a logged-out first run got the signed-in card.
+Fixed in F2: the gate is the user's own pubkey, and the walkthrough's
+world =hasIdentity= is "has a pubkey" (a watch-only npub counts — the
+feed is scoped to it and there is nothing to teach about signing in).
+
+** W6. "Then sync it again" has no target, and the walk has no end
+"Back to the feed" anchors to the logo, not to whatever re-runs the
+fetch; the app never calls it "sync". If the feed repaints from the
+local pool without raising a scoped intent, "General feed", both feed
+cards and "You're all set" (=:206-217=) never fire. There is no visible
+completion for these users and no way to tell "finished" from "broken".
+
+* P — popups & intrusiveness
+
+** P1. Three dimming layers can stack on first run
+Mode-choice scrim (z 300) over fetch-confirm scrim (z 250), and the
+coachmark ring paints its own 9999px spotlight mask
+(=DiscoveryTip.svelte:245=, =--spotlight-mask= 32% in =tokens.css:94=).
+The mask is pointer-transparent but reads as a third modal.
+
+** P2. Six dismiss paths, two semantics
+X, Next, Got it, Esc, click-outside and "Try it" all mark seen; "Skip
+the rest" leaves unseen (W3). Esc is also consumed by whichever modal is
+open (=DiscoveryTip.svelte:147-149= vs =FetchConfirmModal.svelte:285=),
+so one keypress can drop a tip *and* cancel a fetch.
+
+** P3. Five entry points, three meanings
+Logo W "First-run walkthrough" (=+page.svelte:187-201=, forced replay),
+mode-line W (=:1807=), M-x =tendrl-run-walkthrough= (=commands.ts:87=),
+Settings "Walkthrough" toggle (=SettingsBuffer.svelte:1439-1446=: turning
+it *on* runs =rearmDiscovery()=, which wipes all seen state), "Reset
+first-run setup" (=:1453=, also clears the engine's network-mode flag —
+=state.svelte.ts:3994=), "Reset feature tours" (=:1464=). A user cannot
+predict which re-shows what.
+
+** P4. Bright W chips everywhere
+Logo, mode-line, chat/research pane heads, search, composer, event menu.
+An unrun tour renders at full white (=tokens.css:1582=), brighter than
+most chrome — several attention magnets while the user is still trying
+to read a feed.
+
+** P5. No progress indication
+The dots render only when the queue holds more than one tip
+(=DiscoveryTip.svelte:213=), but chained walks keep the queue at length
+one (=hasMore=, =:50=), so the user sees an endless "Next", never "3 of
+9".
+
+* T — terminology
+
+** T1. One system, six names
+"Walkthrough" (toggle, logo menu title =+page.svelte:1518=), "guides"
+(pane heads, =:1930=), "Tour" (tooltips, "Reset feature tours"), "tips"
+(Settings hint =:1478=), "first-run setup", and the bare glyph "W",
+which nothing explains until the final card of a walk the user may never
+finish.
+
+** T2. "Three ways in" does not match the control it points at
+The Source radio (=SettingsBuffer.svelte:924-955=) reads =engine= /
+=nip07= / =bunker (nip46)=. The tip (=discovery.svelte.ts:139-154=)
+describes npub watch-only, Engine, NIP-07; omits bunker; and the
+watch-only field (=:1035=) lives further down, only under the engine
+source (=:1015=). "Engine" is an internal architecture name used as a
+sign-in method.
+
+** T3. Jargon on first contact
+Onboarding cards use kind 0, kind-30040, 30041, NIP-07, ncryptsec,
+naddr, =by:me=, pool, provenance, slot-class, SPC leader, me-chip,
+mode-line. The mode modal promises Confirm will build "an understanding
+of how Nostr works" (=NetworkModeChoiceModal.svelte:86=); the tips name
+concepts rather than explain them.
+
+** T4. "Sync" was never anchored to the Sync button
+Correction (2026-11-06, while building F2): the feed header *does* have
+a =Sync= button (=FeedBuffer.svelte= =.sync= → =app.handleFeedSync=)
+and the modal is titled "Feed sync — list publications", so the verb is
+real. The walk just never pointed at the control: "sync it again" was
+anchored to the logo. Fixed by F2 (=feed-resync= / =feed-fetch= anchor
+=feed-sync-button=).
+
+** T5. The mode modal copy is a wall of highlighted spans
+Two dense paragraphs with a dozen inline keyword chips each for a
+two-option choice.
+
+* E — explainability
+
+** E1. Cards are long for a coachmark
+"Three ways in" is ~90 words with a three-step numbered procedure, in a
+340px mono card at the smallest text size. One instruction per card is
+the ceiling.
+
+** E2. =?= references exist only for mode-line, composer, event menu
+Feed, Settings, reader and relays — where first-run users actually are —
+have none, so the detail squeezed out of the cards has nowhere to go.
+
+** E3. The shape of the walk is never stated
+Event-gating is the right design, but the user is never told "sign in →
+fetch → open a publication", so a beat that does not fire is
+indistinguishable from completion (W6).
+
+** E4. Tips point at concepts, not at the control to use next
+"Back to the feed" → the logo; "Sign in" → the Settings button, under a
+scrim (W2). Anchors are resolved by presence in the DOM, not by being
+topmost and clickable.
+
+* Proposed fix sets
+
+Ordered by leverage; F1–F3 are small, contained changes that stop the
+walk dying, F4–F7 are copy and layout work.
+
+- [X] *F1. Fix the dismiss model* (W2, W3, P2) — click-outside never
+  dismisses; Esc dismisses only when no modal is open; "Skip the rest"
+  marks the whole =ONBOARDING_TIPS= set seen; only X / Next / Got it /
+  Try it count as seen. An anchor that never mounts drops the beat
+  *unseen* and never chains (=skipTip=); a surface the user reaches on
+  request completes its card (=completeTip= — Settings, the logo, Sync,
+  approving the fetch). A dismissed card's =next= takes the slot it
+  vacated, never the back of the queue, and the overlay shows the first
+  *clickable* queued card rather than the head — so when Sync opens the
+  modal over the "Sync again" card, the general-feed tip shows inside
+  the modal and the closing card returns when it closes (found while
+  writing the tester worksheet). (shipped 2026-11-06 on
+  =fix/walkthrough-ux=)
+- [X] *F2. Reorder the first-run walk and make it mode-agnostic* (W1,
+  W4, W5, W6, W7) — the shape is now: [Confirm] approve the first pull →
+  the feed populates → publication → provenance → sign in (skipped
+  straight to the closing card when a pubkey is already present) →
+  Settings → ways in → signed in → back to the feed → *Sync* again →
+  "You're all set"; =general-feed= is a standalone one-time tip. Replay
+  bumps =discovery.epoch= so the feed beat re-fires with fresh vars;
+  an empty pool replays from the Sync button (=feed-fetch=). Verified
+  end to end on an isolated instance in both modes, plus Skip,
+  already-signed-in, replay, and the mobile shell (2026-11-06).
+- [X] *F3. Anchor only to actionable targets* (W2, P1, E4) — the overlay
+  shows a card only when its anchor's centre is topmost
+  (=elementFromPoint=; a modal that does not contain the anchor hides
+  it) and polls so a modal closing reveals the waiting card; no
+  spotlight mask while a modal is open (2026-11-06).
+- [ ] *F4. One instruction per card, with a counter* (P5, E1, E2, E3) —
+  onboarding bodies ≤ 40 words; "step n of N"; detail moves to =?=
+  references, with new references for feed and Settings; the first card
+  states the shape of the walk.
+- [ ] *F5. One name* (T1, P3, P4) — "tour" everywhere; the chip reads
+  =tour= not =W=; logo entry "Getting started"; Settings collapses to
+  Tours on/off · Restart getting started · Reset all tours; the
+  network-mode reset is separated from the tour reset; unrun chips do
+  not outshine chrome.
+- [ ] *F6. Sign-in wording matches the controls* (T2) — rename the
+  =engine= source (e.g. "local key"); bring watch-only npub into the
+  same source group; the tip lists exactly the options shown, bunker
+  included.
+- [ ] *F7. Soften the mode modal* (T3, T5, W4) — two one-line
+  descriptions; the toggle reads "Show me around"; hidden or reworded
+  for Auto until F2 lands.
+
+* Verification notes (2026-11-06)
+
+Driven headless (CDP) against an isolated engine on =:3131= with a fresh
+data dir and browser profile. Two gotchas that cost an hour, now in the
+=verify= skill: a surviving headless Chromium keeps the *first* bundle
+alive across "resets" (kill it by its =--user-data-dir=), and a debug
+=cargo build= does not always re-embed =web/build= (touch
+=src/static_assets.rs= first). The relays used for the feed pull take
+~45 s to all answer; the feed list stays empty (syncing) until then.
+
+* Related
+
+- [[file:fix-index.org][Fix index]] · [[file:index.org][Index]]
+- [[file:feat-appearance.org][Appearance]] — owns the walkthrough system
+- [[file:feat-ui-patterns.org][UI patterns]] — the W dropdowns are
+  entry 3 of the popover divergence ledger; data-tour anchor rule
+- [[file:feat-network.org][Network modes]] — the Confirm modal the walk
+  is built around
+- [[file:feat-identity.org][Identity & signing]] — the sign-in sources
+  the "Three ways in" card misnames
+- [[file:feat-shell.org][WM shell]] · [[file:feat-mobile.org][Mobile]] —
+  the mobile anchor overrides ride the same registry

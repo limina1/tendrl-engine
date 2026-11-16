@@ -257,6 +257,7 @@ function spans(text: string): StyleSpan[] {
 			if (TABLE_RULE.test(t)) {
 				push(out, line.start, line.end, 'mark');
 			} else {
+				push(out, line.start, line.end, 'tr');
 				if (tableStart < 0) {
 					tableStart = n;
 					if (n + 1 < lines.length && TABLE_RULE.test(lines[n + 1].text)) {

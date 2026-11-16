@@ -205,6 +205,274 @@ pub fn group_threads_by_address(
 // This is the single engine-side source of truth; the web only slices the
 // text by the returned spans and renders marks.
 
+/// A highlight's style — tendrl's `["highlighter", <label>, <#rrggbb>]` tag
+/// on a 9802 (docs/zettel/idea-highlighters.org). The style lives on the
+/// highlight itself; the set of highlighters a reader offers is discovered
+/// from existing 9802s (`highlighter_pairs`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Highlighter {
+    pub label: String,
+    /// Lower-case `#rrggbb` — the ink every mark is drawn in.
+    pub color: String,
+    /// How the passage is marked, combinable, in canonical order
+    /// (`HIGHLIGHT_MARKS`). Empty on the wire = `fill` (every highlight made
+    /// before marks existed); never empty after `Highlighter::new`.
+    #[serde(default)]
+    pub marks: Vec<String>,
+}
+
+/// The marks a highlighter can draw, in canonical order: a tinted
+/// background, coloured letters, an underline, bold or italic letters —
+/// all in its colour.
+pub const HIGHLIGHT_MARKS: [&str; 5] = ["fill", "color", "underline", "bold", "italic"];
+
+/// Tag name carrying a highlight's style.
+pub const HIGHLIGHTER_TAG: &str = "highlighter";
+/// Tag naming the 9802 a recoloured highlight replaces. A dedicated tag, not
+/// an `e` marker: in a 9802 every `e` is the highlighted *source* (NIP-84).
+pub const SUPERSEDES_TAG: &str = "supersedes";
+/// Longest label accepted (chars).
+pub const HIGHLIGHTER_LABEL_MAX: usize = 64;
+
+impl Highlighter {
+    /// Validate + normalize: label trimmed, ≤ 64 chars, may be empty (an
+    /// unlabelled style); colour
+    /// `#rgb` / `#rrggbb` (the `#` optional, any case) → lower-case `#rrggbb`.
+    pub fn new(label: &str, color: &str) -> Result<Self, String> {
+        Self::with_marks(label, color, &[] as &[&str])
+    }
+
+    /// `new` + marks: unknown marks are an error, duplicates collapse, order
+    /// is canonical, none = `fill`.
+    pub fn with_marks<S: AsRef<str>>(label: &str, color: &str, marks: &[S]) -> Result<Self, String> {
+        let mut want: Vec<&str> = Vec::new();
+        for m in marks {
+            let m = m.as_ref().trim();
+            if m.is_empty() {
+                continue;
+            }
+            let Some(known) = HIGHLIGHT_MARKS.iter().find(|k| k.eq_ignore_ascii_case(m)) else {
+                return Err(format!("unknown highlight mark {m:?} (fill, color, underline, bold, italic)"));
+            };
+            want.push(known);
+        }
+        let mut marks: Vec<String> = HIGHLIGHT_MARKS
+            .iter()
+            .filter(|k| want.contains(k))
+            .map(|k| k.to_string())
+            .collect();
+        if marks.is_empty() {
+            marks.push("fill".to_string());
+        }
+        // The label is a class with a purpose ("vocabulary"); a style
+        // needs none — empty = just a look (colour + marks), unclassed.
+        let label = label.trim();
+        if label.chars().count() > HIGHLIGHTER_LABEL_MAX {
+            return Err(format!("highlighter label is over {HIGHLIGHTER_LABEL_MAX} characters"));
+        }
+        let hex = color.trim().trim_start_matches('#').to_ascii_lowercase();
+        if !hex.chars().all(|c| c.is_ascii_hexdigit()) {
+            return Err(format!("highlighter colour {color:?} is not hex"));
+        }
+        let hex = match hex.len() {
+            6 => hex,
+            3 => hex.chars().flat_map(|c| [c, c]).collect(),
+            _ => return Err(format!("highlighter colour {color:?} is not #rgb or #rrggbb")),
+        };
+        Ok(Self {
+            label: label.to_string(),
+            color: format!("#{hex}"),
+            marks,
+        })
+    }
+
+    /// The event tag.
+    /// The event tag; a fill-only highlighter omits the marks (the
+    /// pre-marks shape, which every reader already understands).
+    pub fn to_tag(&self) -> Vec<String> {
+        let mut t = vec![
+            HIGHLIGHTER_TAG.to_string(),
+            self.label.clone(),
+            self.color.clone(),
+        ];
+        if self.marks != ["fill"] {
+            t.extend(self.marks.iter().cloned());
+        }
+        t
+    }
+}
+
+/// The first well-formed `highlighter` tag of a tag list (a second is ignored).
+pub fn highlighter_from_tags(tags: &[Value]) -> Option<Highlighter> {
+    tags.iter().find_map(|t| {
+        let arr = t.as_array()?;
+        if arr.first()?.as_str()? != HIGHLIGHTER_TAG {
+            return None;
+        }
+        // Unknown marks are skipped on read (a newer client's mark must not
+        // make the whole style unreadable).
+        let marks: Vec<&str> = arr
+            .iter()
+            .skip(3)
+            .filter_map(Value::as_str)
+            .filter(|m| HIGHLIGHT_MARKS.iter().any(|k| k.eq_ignore_ascii_case(m.trim())))
+            .collect();
+        Highlighter::with_marks(arr.get(1)?.as_str()?, arr.get(2)?.as_str()?, &marks).ok()
+    })
+}
+
+/// Ids of 9802s replaced by a recolour: named in a `supersedes` tag of
+/// another 9802 *by the same author* within `events`. Pure; callers drop
+/// these before rendering or counting.
+pub fn superseded_ids(events: &[Value]) -> HashSet<String> {
+    let author_of: std::collections::HashMap<&str, &str> = events
+        .iter()
+        .filter(|e| e.get("kind").and_then(Value::as_u64) == Some(9802))
+        .filter_map(|e| {
+            Some((
+                e.get("id")?.as_str()?,
+                e.get("pubkey").and_then(Value::as_str).unwrap_or(""),
+            ))
+        })
+        .collect();
+    let mut out = HashSet::new();
+    for e in events {
+        if e.get("kind").and_then(Value::as_u64) != Some(9802) {
+            continue;
+        }
+        let pk = e.get("pubkey").and_then(Value::as_str).unwrap_or("");
+        let Some(tags) = e.get("tags").and_then(Value::as_array) else {
+            continue;
+        };
+        for t in tags {
+            let Some(arr) = t.as_array() else { continue };
+            if arr.first().and_then(Value::as_str) != Some(SUPERSEDES_TAG) {
+                continue;
+            }
+            if let Some(old) = arr.get(1).and_then(Value::as_str) {
+                if author_of.get(old) == Some(&pk) {
+                    out.insert(old.to_string());
+                }
+            }
+        }
+    }
+    out
+}
+
+/// The ids a 9802 replaced, transitively — its `supersedes` chain, followed
+/// through `lookup` (a local by-id read), same author only, cycle-safe and
+/// capped. Deleting a recoloured highlight deletes the whole chain, or the
+/// old versions would surface again (here once the newest is tombstoned,
+/// and in every client that never knew about `supersedes`).
+pub fn supersedes_chain(ev: &Value, lookup: impl Fn(&str) -> Option<Value>) -> Vec<String> {
+    let author = ev.get("pubkey").and_then(Value::as_str).unwrap_or("").to_string();
+    let mut out: Vec<String> = Vec::new();
+    let mut frontier = vec![ev.clone()];
+    while let Some(cur) = frontier.pop() {
+        if out.len() >= 64 {
+            break;
+        }
+        let olds: Vec<String> = cur
+            .get("tags")
+            .and_then(Value::as_array)
+            .map(|tags| {
+                tags.iter()
+                    .filter_map(|t| {
+                        let arr = t.as_array()?;
+                        (arr.first()?.as_str()? == SUPERSEDES_TAG)
+                            .then(|| arr.get(1)?.as_str().map(str::to_string))?
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        for old in olds {
+            if out.contains(&old) {
+                continue;
+            }
+            let Some(prev) = lookup(&old) else { continue };
+            if prev.get("kind").and_then(Value::as_u64) != Some(9802)
+                || prev.get("pubkey").and_then(Value::as_str) != Some(author.as_str())
+            {
+                continue;
+            }
+            out.push(old);
+            frontier.push(prev);
+        }
+    }
+    out
+}
+
+/// Drop superseded 9802s from an event list in place (see `superseded_ids`).
+pub fn drop_superseded(events: &mut Vec<Value>) {
+    let gone = superseded_ids(events);
+    if !gone.is_empty() {
+        events.retain(|e| {
+            e.get("id")
+                .and_then(Value::as_str)
+                .map(|id| !gone.contains(id))
+                .unwrap_or(true)
+        });
+    }
+}
+
+/// One label → colour pair found on an author's highlights.
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct HighlighterPair {
+    pub label: String,
+    pub color: String,
+    /// The newest highlight's marks.
+    pub marks: Vec<String>,
+    /// Highlights carrying this label (any colour).
+    pub count: usize,
+    /// `created_at` of the newest one — whose colour this pair carries.
+    pub last_used: i64,
+}
+
+/// The highlighters found on `events` (one author's 9802s): distinct labels,
+/// each with the newest highlight's colour, superseded highlights ignored.
+/// Sorted by count desc, then label.
+pub fn highlighter_pairs(events: &[Value]) -> Vec<HighlighterPair> {
+    let gone = superseded_ids(events);
+    let mut by_label: std::collections::HashMap<String, HighlighterPair> =
+        std::collections::HashMap::new();
+    for e in events {
+        if e.get("kind").and_then(Value::as_u64) != Some(9802) {
+            continue;
+        }
+        if e.get("id").and_then(Value::as_str).is_some_and(|id| gone.contains(id)) {
+            continue;
+        }
+        let Some(h) = e
+            .get("tags")
+            .and_then(Value::as_array)
+            .and_then(|t| highlighter_from_tags(t))
+        else {
+            continue;
+        };
+        let at = e.get("created_at").and_then(Value::as_i64).unwrap_or(0);
+        // Chips are classes: an unlabelled style is a look, not one to name.
+        if h.label.is_empty() {
+            continue;
+        }
+        let entry = by_label.entry(h.label.clone()).or_insert(HighlighterPair {
+            label: h.label.clone(),
+            color: h.color.clone(),
+            marks: h.marks.clone(),
+            count: 0,
+            last_used: i64::MIN,
+        });
+        entry.count += 1;
+        if at >= entry.last_used {
+            entry.last_used = at;
+            entry.color = h.color;
+            entry.marks = h.marks;
+        }
+    }
+    let mut out: Vec<HighlighterPair> = by_label.into_values().collect();
+    out.sort_by(|a, b| b.count.cmp(&a.count).then_with(|| a.label.cmp(&b.label)));
+    out
+}
+
 /// One NIP-84 highlight to place in a section's text.
 #[derive(Debug, Clone, Deserialize)]
 pub struct Highlight {
@@ -222,6 +490,9 @@ pub struct Highlight {
     /// occurrence when the highlighted phrase repeats.
     #[serde(default)]
     pub context: Option<String>,
+    /// The event's `highlighter` tag — label + colour, carried onto the span.
+    #[serde(default)]
+    pub highlighter: Option<Highlighter>,
 }
 
 /// Extract a resolver input from a raw kind-9802 event. Returns `None` for
@@ -258,12 +529,17 @@ pub fn highlight_from_event(ev: &Value) -> Option<Highlight> {
             }
         }
     }
+    let highlighter = ev
+        .get("tags")
+        .and_then(|v| v.as_array())
+        .and_then(|t| highlighter_from_tags(t));
     Some(Highlight {
         id,
         content,
         pubkey,
         offset,
         context,
+        highlighter,
     })
 }
 
@@ -277,6 +553,8 @@ pub struct HighlightSpan {
     pub end: usize,
     pub id: String,
     pub pubkey: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub highlighter: Option<Highlighter>,
 }
 
 /// First index ≥ `from` at which `needle` occurs in `hay` (UTF-16 slices), or
@@ -304,15 +582,13 @@ fn all_occurrences_u16(hay: &[u16], needle: &[u16]) -> Vec<usize> {
     out
 }
 
-/// Resolve where each highlight sits in `content`, returning non-overlapping
-/// spans sorted by `start`.
+/// Resolve where each highlight sits in `content`, returning spans sorted by
+/// `start` (longer first on a tie). Spans **may overlap**: two readers'
+/// highlights over the same words both render, blended by the web
+/// (docs/highlighters-contract.org).
 ///
-/// Verified offsets place first (an exact pin must never lose its spot to a
-/// fuzzy match); substring-resolved highlights follow, longer text winning
-/// overlap arbitration (ties broken by id), each preferring the occurrence
-/// inside its `context` window. A highlight that would overlap an
-/// already-claimed span takes its next occurrence or is dropped — avoiding
-/// nested `<mark>`s without losing the longer, more informative match.
+/// Each highlight is placed once: a verified offset pin, else the occurrence
+/// inside its `context` window, else the first occurrence.
 pub fn resolve_highlight_spans(content: &str, highlights: &[Highlight]) -> Vec<HighlightSpan> {
     if content.is_empty() || highlights.is_empty() {
         return Vec::new();
@@ -322,10 +598,6 @@ pub fn resolve_highlight_spans(content: &str, highlights: &[Highlight]) -> Vec<H
     let hay_lower: Vec<u16> = content.to_lowercase().encode_utf16().collect();
     // Original (un-lowercased) units for offset verification.
     let content_units: Vec<u16> = content.encode_utf16().collect();
-
-    let overlap_free = |spans: &[HighlightSpan], start: usize, end: usize| {
-        !spans.iter().any(|s| s.start < end && start < s.end)
-    };
 
     let by_length_then_id = |a: &&Highlight, b: &&Highlight| {
         b.content
@@ -351,15 +623,14 @@ pub fn resolve_highlight_spans(content: &str, highlights: &[Highlight]) -> Vec<H
         if slice.trim().to_lowercase() != hl.content.trim().to_lowercase() {
             continue; // stale pin — substring pass takes over
         }
-        if overlap_free(&spans, start, end) {
-            spans.push(HighlightSpan {
-                start,
-                end,
-                id: hl.id.clone(),
-                pubkey: hl.pubkey.clone(),
-            });
-            placed.insert(hl.id.as_str());
-        }
+        spans.push(HighlightSpan {
+            start,
+            end,
+            id: hl.id.clone(),
+            pubkey: hl.pubkey.clone(),
+            highlighter: hl.highlighter.clone(),
+        });
+        placed.insert(hl.id.as_str());
     }
 
     // Pass 2 — substring resolution for everything not pinned. Longer text
@@ -406,28 +677,18 @@ pub fn resolve_highlight_spans(content: &str, highlights: &[Highlight]) -> Vec<H
             None
         };
 
-        // Try the context-preferred occurrence first, then the rest in order.
-        let candidates = preferred.into_iter().chain(
-            occurrences
-                .iter()
-                .copied()
-                .filter(|i| Some(*i) != preferred),
-        );
-        for idx in candidates {
-            let end = idx + needle_len;
-            if overlap_free(&spans, idx, end) {
-                spans.push(HighlightSpan {
-                    start: idx,
-                    end,
-                    id: hl.id.clone(),
-                    pubkey: hl.pubkey.clone(),
-                });
-                break;
-            }
-        }
+        // The context-preferred occurrence, else the first.
+        let idx = preferred.unwrap_or(occurrences[0]);
+        spans.push(HighlightSpan {
+            start: idx,
+            end: idx + needle_len,
+            id: hl.id.clone(),
+            pubkey: hl.pubkey.clone(),
+            highlighter: hl.highlighter.clone(),
+        });
     }
 
-    spans.sort_by_key(|s| s.start);
+    spans.sort_by(|a, b| a.start.cmp(&b.start).then(b.end.cmp(&a.end)).then_with(|| a.id.cmp(&b.id)));
     spans
 }
 
@@ -815,6 +1076,183 @@ pub fn build_highlight_template(
     })
 }
 
+/// Recolour a highlight: a new 9802 with the old one's content and tags, its
+/// `highlighter` replaced (`None` = a plain highlight) and a
+/// `["supersedes", <old-id>]` tag, so readers drop the old one
+/// (`superseded_ids`). The caller checks the old event is the signer's own.
+/// The `client` tag is left to the signing chokepoint.
+pub fn build_restyle_template(
+    old: &Value,
+    highlighter: Option<&Highlighter>,
+    created_at: i64,
+) -> Result<EventTemplate, String> {
+    if old.get("kind").and_then(Value::as_u64) != Some(9802) {
+        return Err("only a kind-9802 highlight can be restyled".into());
+    }
+    let old_id = old
+        .get("id")
+        .and_then(Value::as_str)
+        .ok_or("the highlight has no id")?;
+    let mut tags: Vec<Vec<String>> = old
+        .get("tags")
+        .and_then(Value::as_array)
+        .map(|tags| {
+            tags.iter()
+                .filter_map(|t| {
+                    let arr: Vec<String> = t
+                        .as_array()?
+                        .iter()
+                        .map(|v| v.as_str().map(str::to_string))
+                        .collect::<Option<_>>()?;
+                    let name = arr.first()?.as_str();
+                    (!matches!(name, HIGHLIGHTER_TAG | SUPERSEDES_TAG | "client")).then_some(arr)
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    if let Some(h) = highlighter {
+        tags.push(h.to_tag());
+    }
+    tags.push(vec![SUPERSEDES_TAG.to_string(), old_id.to_string()]);
+    Ok(EventTemplate {
+        kind: 9802,
+        created_at,
+        tags,
+        content: old
+            .get("content")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_string(),
+        pubkey: None,
+    })
+}
+
+// ----------------------------------------------------------------------------
+// Highlight annotations — the highlighter's own "why", for knowledge-base
+// clients. An NKBIP-01 *annotation* (nips/NKBIP-01-insertions.org on the
+// annotations chain: a kind-30041 with NIP-22 anchors, no `insert` tag) one
+// grain finer than a section annotation: root scope `A`/`K`/`P` = the
+// publication (so `#A` discovery and the annotations table find it), parent
+// `e`/`k`/`p` = the 9802 itself. Comments on a highlight stay social
+// kind-1111s rooted at the 9802 (`build_comment_template`).
+// ----------------------------------------------------------------------------
+
+pub const ANNOTATION_KIND: u32 = 30041;
+
+/// The annotation template for `highlight` (a 9802) under `root` — the
+/// publication coordinate (`30040:pk:d`) the reader is in, else the
+/// highlight's own `a` source (its section / article). `d_tag` reuses the
+/// author's existing annotation (a new version, not a second note). The
+/// caller checks the signer wrote the highlight.
+pub fn build_highlight_annotation_template(
+    highlight: &Value,
+    root: Option<&str>,
+    content: &str,
+    d_tag: Option<&str>,
+    relay_hint: &str,
+    created_at: i64,
+) -> Result<EventTemplate, String> {
+    if highlight.get("kind").and_then(Value::as_u64) != Some(9802) {
+        return Err("only a kind-9802 highlight can be annotated".into());
+    }
+    let content = content.trim();
+    if content.is_empty() {
+        return Err("an annotation needs some text".into());
+    }
+    let id = highlight.get("id").and_then(Value::as_str).ok_or("the highlight has no id")?;
+    let hl_pubkey = highlight.get("pubkey").and_then(Value::as_str).unwrap_or("");
+    let own_source = highlight.get("tags").and_then(Value::as_array).and_then(|tags| {
+        tags.iter().find_map(|t| {
+            let arr = t.as_array()?;
+            (arr.first()?.as_str()? == "a").then(|| arr.get(1)?.as_str().map(str::to_string))?
+        })
+    });
+    let root = root
+        .map(str::trim)
+        .filter(|r| !r.is_empty())
+        .map(str::to_string)
+        .or(own_source)
+        .ok_or("the highlight is not on an addressable source — no root to anchor the annotation to")?;
+    let mut parts = root.splitn(3, ':');
+    let (Some(root_kind), Some(root_pk), Some(_)) = (parts.next(), parts.next(), parts.next()) else {
+        return Err(format!("root {root:?} is not a kind:pubkey:d coordinate"));
+    };
+    let with_relay = |name: &str, value: &str| -> Vec<String> {
+        if relay_hint.is_empty() {
+            vec![name.to_string(), value.to_string()]
+        } else {
+            vec![name.to_string(), value.to_string(), relay_hint.to_string()]
+        }
+    };
+    let quoted: String = highlight
+        .get("content")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
+    let short: String = quoted.chars().take(60).collect();
+    let title = if quoted.chars().count() > 60 {
+        format!("On “{}…”", short.trim_end())
+    } else {
+        format!("On “{short}”")
+    };
+    let d = d_tag
+        .map(str::trim)
+        .filter(|d| !d.is_empty())
+        .map(str::to_string)
+        .unwrap_or_else(crate::publication::mint_d_tag);
+    let tags = vec![
+        vec!["d".to_string(), d],
+        vec!["title".to_string(), title.clone()],
+        vec![
+            "T".to_string(),
+            crate::publication::compose::ComposeState::generate_d_tag(&title),
+        ],
+        with_relay("A", &root),
+        vec!["K".to_string(), root_kind.to_string()],
+        with_relay("P", root_pk),
+        vec!["e".to_string(), id.to_string(), relay_hint.to_string(), hl_pubkey.to_string()],
+        vec!["k".to_string(), "9802".to_string()],
+        with_relay("p", hl_pubkey),
+        vec!["m".to_string(), "text/markdown".to_string()],
+    ];
+    Ok(EventTemplate {
+        kind: ANNOTATION_KIND,
+        created_at,
+        tags,
+        content: content.to_string(),
+        pubkey: None,
+    })
+}
+
+/// First value of tag `name` (lower-cased — ids).
+fn first_tag_lower(ev: &Value, name: &str) -> Option<String> {
+    ev.get("tags")?.as_array()?.iter().find_map(|t| {
+        let arr = t.as_array()?;
+        (arr.first()?.as_str()? == name).then(|| arr.get(1)?.as_str().map(str::to_ascii_lowercase))?
+    })
+}
+
+/// Root highlight id a comment names in its `E` tag.
+pub fn root_event_id(ev: &Value) -> Option<String> {
+    first_tag_lower(ev, "E")
+}
+
+/// The annotation of `highlight_id` by `author` in `events`: the newest
+/// kind-30041 by that author whose parent `e` (with `k` 9802) is the
+/// highlight.
+pub fn annotation_for<'a>(highlight_id: &str, author: &str, events: &'a [Value]) -> Option<&'a Value> {
+    let want = highlight_id.to_ascii_lowercase();
+    events
+        .iter()
+        .filter(|e| e.get("kind").and_then(Value::as_u64) == Some(ANNOTATION_KIND as u64))
+        .filter(|e| e.get("pubkey").and_then(Value::as_str) == Some(author))
+        .filter(|e| first_tag_lower(e, "k").as_deref() == Some("9802"))
+        .filter(|e| first_tag_lower(e, "e").as_deref() == Some(want.as_str()))
+        .max_by_key(|e| e.get("created_at").and_then(Value::as_i64).unwrap_or(0))
+}
+
 /// Build a kind-5 deletion request (NIP-09) for one event.
 pub fn build_deletion_template(
     event_id: &str,
@@ -823,7 +1261,22 @@ pub fn build_deletion_template(
     reason: &str,
     created_at: i64,
 ) -> EventTemplate {
-    let mut tags = vec![vec!["e".to_string(), event_id.to_string()]];
+    build_deletion_template_many(&[event_id.to_string()], event_kind, address, reason, created_at)
+}
+
+/// One kind-5 naming several events of the same kind (NIP-09 allows many
+/// `e` tags) — a recoloured highlight and the versions it superseded.
+pub fn build_deletion_template_many(
+    event_ids: &[String],
+    event_kind: u32,
+    address: Option<&str>,
+    reason: &str,
+    created_at: i64,
+) -> EventTemplate {
+    let mut tags: Vec<Vec<String>> = event_ids
+        .iter()
+        .map(|id| vec!["e".to_string(), id.clone()])
+        .collect();
     if let Some(addr) = address {
         tags.push(vec!["a".to_string(), addr.to_string()]);
     }
@@ -1054,6 +1507,7 @@ mod tests {
             pubkey: "aa".to_string(),
             offset: None,
             context: None,
+            highlighter: None,
         }
     }
 
@@ -1102,16 +1556,16 @@ mod tests {
 
     #[test]
     fn verified_offset_claims_before_longer_substring() {
-        // A verified pin must never lose its spot to a longer fuzzy match:
-        // the pinned "cd" takes 2..4, the substring-resolved "abcdef" then
-        // overlaps everywhere and is dropped.
+        // A verified pin keeps its spot; the substring-resolved "abcdef"
+        // overlaps it and both render.
         let content = "abcdef";
         let spans = resolve_highlight_spans(
             content,
             &[hl("long", "abcdef"), hl_pinned("pin", "cd", (2, 4))],
         );
-        assert_eq!(spans.len(), 1);
-        assert_eq!(spans[0].id, "pin");
+        assert_eq!(spans.len(), 2);
+        let pin = spans.iter().find(|s| s.id == "pin").unwrap();
+        assert_eq!((pin.start, pin.end), (2, 4));
     }
 
     #[test]
@@ -1174,14 +1628,21 @@ mod tests {
     }
 
     #[test]
-    fn longer_highlight_wins_overlap_shorter_dropped() {
+    fn overlapping_highlights_both_kept() {
         let content = "the quick brown fox jumps";
-        // "quick brown" overlaps "brown"; the longer one wins, "brown" dropped.
+        // "quick brown" overlaps "brown"; both render (the web blends them).
         let spans =
             resolve_highlight_spans(content, &[hl("short", "brown"), hl("long", "quick brown")]);
-        assert_eq!(spans.len(), 1);
+        assert_eq!(spans.len(), 2);
         assert_eq!(spans[0].id, "long");
         assert_eq!(&content[spans[0].start..spans[0].end], "quick brown");
+        assert_eq!(&content[spans[1].start..spans[1].end], "brown");
+    }
+
+    #[test]
+    fn same_start_longer_first() {
+        let spans = resolve_highlight_spans("abcdef", &[hl("s", "ab"), hl("l", "abcd")]);
+        assert_eq!(spans.iter().map(|s| s.id.as_str()).collect::<Vec<_>>(), vec!["l", "s"]);
     }
 
     #[test]
@@ -1202,14 +1663,174 @@ mod tests {
     }
 
     #[test]
-    fn second_occurrence_used_when_first_overlaps() {
-        // "ab" appears at 0 and 5. "abc" claims [0,3). "ab" at 0 overlaps, so it
-        // takes its second occurrence at 5.
+    fn overlap_no_longer_pushes_to_next_occurrence() {
+        // "ab" appears at 0 and 5; "abc" covers [0,3). Overlap is allowed, so
+        // "ab" stays on its first occurrence (context / offset pick others).
         let content = "abcxxabxx";
         let spans = resolve_highlight_spans(content, &[hl("long", "abc"), hl("ab", "ab")]);
         assert_eq!(spans.len(), 2);
         let ab = spans.iter().find(|s| s.id == "ab").unwrap();
-        assert_eq!((ab.start, ab.end), (5, 7));
+        assert_eq!((ab.start, ab.end), (0, 2));
+    }
+
+    // === highlighters ===
+
+    #[test]
+    fn highlighter_validates_and_normalizes() {
+        let h = Highlighter::new("  against ", "#F49AC2").unwrap();
+        assert_eq!(
+            h,
+            Highlighter { label: "against".into(), color: "#f49ac2".into(), marks: vec!["fill".into()] }
+        );
+        assert_eq!(Highlighter::new("x", "abc").unwrap().color, "#aabbcc");
+        // No label = an unlabelled style, still a real one.
+        let bare = Highlighter::with_marks(" ", "#ffffff", &["bold"]).unwrap();
+        assert_eq!(bare.label, "");
+        assert_eq!(bare.to_tag(), vec!["highlighter", "", "#ffffff", "bold"]);
+        assert_eq!(highlighter_from_tags(&[json!(bare.to_tag())]), Some(bare.clone()));
+        assert!(highlighter_pairs(&[json!({"id": "a", "kind": 9802, "created_at": 1, "tags": [bare.to_tag()]})]).is_empty());
+        assert!(Highlighter::new("x", "#ggg").is_err());
+        assert!(Highlighter::new("x", "#12345").is_err());
+        assert!(Highlighter::new(&"y".repeat(65), "#ffffff").is_err());
+        assert_eq!(h.to_tag(), vec!["highlighter", "against", "#f49ac2"]);
+    }
+
+    #[test]
+    fn marks_canonical_roundtrip_and_backcompat() {
+        let h = Highlighter::with_marks("for", "#8fd694", &["Bold", "underline", "bold"]).unwrap();
+        assert_eq!(h.marks, vec!["underline", "bold"]);
+        assert_eq!(h.to_tag(), vec!["highlighter", "for", "#8fd694", "underline", "bold"]);
+        // `color` = ink on the letters; canonical order puts it after fill.
+        let c = Highlighter::with_marks("", "#8fd694", &["italic", "color", "fill"]).unwrap();
+        assert_eq!(c.marks, vec!["fill", "color", "italic"]);
+        assert!(Highlighter::with_marks("x", "#ffffff", &["sparkle"]).is_err());
+        // Fill-only keeps the 3-element tag; a 3-element tag reads as fill.
+        assert_eq!(Highlighter::new("x", "#ffffff").unwrap().to_tag().len(), 3);
+        let read = highlighter_from_tags(&[json!(["highlighter", "x", "#ffffff"])]).unwrap();
+        assert_eq!(read.marks, vec!["fill"]);
+        // Unknown marks on the wire are skipped, not fatal.
+        let read = highlighter_from_tags(&[json!(["highlighter", "x", "#ffffff", "italic", "glow"])]).unwrap();
+        assert_eq!(read.marks, vec!["italic"]);
+    }
+
+    #[test]
+    fn highlight_from_event_reads_first_valid_highlighter() {
+        let ev = json!({
+            "id": "abc", "kind": 9802, "pubkey": "pk", "content": "t",
+            "tags": [["highlighter", "x", "nothex"], ["highlighter", "for", "#8FD694"], ["highlighter", "against", "#f49ac2"]],
+        });
+        let h = highlight_from_event(&ev).unwrap().highlighter.unwrap();
+        assert_eq!((h.label.as_str(), h.color.as_str()), ("for", "#8fd694"));
+        let spans = resolve_highlight_spans("t", &[highlight_from_event(&ev).unwrap()]);
+        assert_eq!(spans[0].highlighter.as_ref().unwrap().label, "for");
+    }
+
+    fn h9802(id: &str, pk: &str, at: i64, tags: Value) -> Value {
+        json!({"id": id, "kind": 9802, "pubkey": pk, "created_at": at, "content": "c", "tags": tags})
+    }
+
+    #[test]
+    fn superseded_only_by_same_author() {
+        let evs = vec![
+            h9802("old", "me", 1, json!([])),
+            h9802("new", "me", 2, json!([["supersedes", "old"]])),
+            h9802("theirs", "you", 1, json!([])),
+            h9802("hijack", "me", 3, json!([["supersedes", "theirs"]])),
+        ];
+        let gone = superseded_ids(&evs);
+        assert!(gone.contains("old"));
+        assert!(!gone.contains("theirs"));
+        let mut kept = evs.clone();
+        drop_superseded(&mut kept);
+        assert_eq!(kept.len(), 3);
+    }
+
+    #[test]
+    fn pairs_newest_colour_wins_and_superseded_ignored() {
+        let evs = vec![
+            h9802("a", "me", 1, json!([["highlighter", "for", "#8fd694"]])),
+            h9802("b", "me", 5, json!([["highlighter", "for", "#00ff00"]])),
+            h9802("c", "me", 3, json!([["highlighter", "against", "#f49ac2"]])),
+            h9802("d", "me", 9, json!([["highlighter", "against", "#ff0000"], ["supersedes", "c"]])),
+            h9802("e", "me", 4, json!([])),
+        ];
+        let pairs = highlighter_pairs(&evs);
+        assert_eq!(pairs.len(), 2);
+        assert_eq!((pairs[0].label.as_str(), pairs[0].color.as_str(), pairs[0].count), ("for", "#00ff00", 2));
+        assert_eq!((pairs[1].label.as_str(), pairs[1].color.as_str(), pairs[1].count, pairs[1].last_used), ("against", "#ff0000", 1, 9));
+    }
+
+    #[test]
+    fn supersedes_chain_follows_same_author_only() {
+        let evs = vec![
+            h9802("v1", "me", 1, json!([])),
+            h9802("v2", "me", 2, json!([["supersedes", "v1"]])),
+            h9802("v3", "me", 3, json!([["supersedes", "v2"], ["supersedes", "theirs"]])),
+            h9802("theirs", "you", 1, json!([])),
+        ];
+        let lookup = |id: &str| evs.iter().find(|e| e["id"] == id).cloned();
+        let mut chain = supersedes_chain(&evs[2], lookup);
+        chain.sort();
+        assert_eq!(chain, vec!["v1", "v2"]);
+        let tpl = build_deletion_template_many(&["v3".into(), "v2".into(), "v1".into()], 9802, None, "", 5);
+        assert_eq!(tpl.tags.iter().filter(|t| t[0] == "e").count(), 3);
+        assert_eq!(tpl.tags.last().unwrap(), &vec!["k".to_string(), "9802".to_string()]);
+    }
+
+    #[test]
+    fn annotation_is_an_insertion_annotation_parented_on_the_highlight() {
+        let pk = "b".repeat(64);
+        let hl = json!({"id": "a".repeat(64), "kind": 9802, "pubkey": pk, "created_at": 1,
+            "content": "both owned and findable", "tags": [["a", "30041:cc:sec"]]});
+        let root = format!("30040:{}:book", "d".repeat(64));
+        let tpl = build_highlight_annotation_template(&hl, Some(&root), " because it answers convenience ", None, "wss://r", 9).unwrap();
+        assert_eq!(tpl.kind, 30041);
+        assert_eq!(tpl.content, "because it answers convenience");
+        let get = |n: &str| tpl.tags.iter().find(|t| t[0] == n).cloned().unwrap();
+        assert_eq!(get("A")[1], root);
+        assert_eq!(get("K")[1], "30040");
+        assert_eq!(get("P")[1], "d".repeat(64));
+        assert_eq!(get("e")[1], "a".repeat(64));
+        assert_eq!(get("k")[1], "9802");
+        assert_eq!(get("p")[1], pk);
+        assert!(!tpl.tags.iter().any(|t| t[0] == "insert" || t[0] == "a"));
+        assert_eq!(get("title")[1], "On “both owned and findable”");
+        // No root given → the highlight's own source.
+        let own = build_highlight_annotation_template(&hl, None, "x", Some("keep-d"), "", 9).unwrap();
+        assert_eq!(own.tags[0], vec!["d", "keep-d"]);
+        assert!(own.tags.iter().any(|t| t[0] == "A" && t[1] == "30041:cc:sec"));
+        assert!(build_highlight_annotation_template(&hl, None, "  ", None, "", 9).is_err());
+
+        let ann = |id: &str, who: &str, at: i64| json!({"id": id, "kind": 30041, "pubkey": who, "created_at": at,
+            "tags": [["e", "a".repeat(64)], ["k", "9802"]], "content": id});
+        let evs = vec![ann("old", &pk, 1), ann("new", &pk, 5), ann("other", &"c".repeat(64), 9)];
+        assert_eq!(annotation_for(&"a".repeat(64), &pk, &evs).unwrap()["id"], "new");
+    }
+
+    #[test]
+    fn restyle_copies_tags_and_supersedes() {
+        let old = h9802(
+            "old1",
+            "me",
+            1,
+            json!([["a", "30041:pk:d", "wss://r"], ["highlighter", "for", "#8fd694"], ["client", "tendrl"], ["context", "ctx"], ["supersedes", "older"]]),
+        );
+        let h = Highlighter::new("against", "#f49ac2").unwrap();
+        let tpl = build_restyle_template(&old, Some(&h), 10).unwrap();
+        assert_eq!(tpl.kind, 9802);
+        assert_eq!(tpl.content, "c");
+        assert_eq!(
+            tpl.tags,
+            vec![
+                vec!["a".to_string(), "30041:pk:d".into(), "wss://r".into()],
+                vec!["context".to_string(), "ctx".into()],
+                vec!["highlighter".to_string(), "against".into(), "#f49ac2".into()],
+                vec!["supersedes".to_string(), "old1".into()],
+            ]
+        );
+        let plain = build_restyle_template(&old, None, 10).unwrap();
+        assert!(!plain.tags.iter().any(|t| t[0] == "highlighter"));
+        assert!(build_restyle_template(&json!({"id": "x", "kind": 1}), None, 1).is_err());
     }
 
     #[test]

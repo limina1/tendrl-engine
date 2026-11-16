@@ -7,7 +7,7 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::{HashMap, VecDeque};
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicU8, Ordering};
 use std::sync::Mutex;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tokio::sync::{broadcast, oneshot};
@@ -52,11 +52,16 @@ pub fn current_fetch_reason() -> Option<String> {
 /// - `Confirm` — every user-initiated relay fetch emits an intent the
 ///   UI must approve before the engine proceeds (the former "offline",
 ///   reframed: instead of silently suppressing, the engine asks).
+/// - `Local` — the engine never connects to a relay: fetches read the
+///   local store only, publishing signs and stores locally (the event stays
+///   "local" until broadcast). The way out is an explicit broadcast
+///   (`broadcast.rs`), which permits exactly the relays the user picked.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum NetworkMode {
     Auto,
     Confirm,
+    Local,
 }
 
 impl std::str::FromStr for NetworkMode {
@@ -67,7 +72,8 @@ impl std::str::FromStr for NetworkMode {
             // clients written before the rename keep working.
             "auto" | "online" => Ok(NetworkMode::Auto),
             "confirm" | "offline" => Ok(NetworkMode::Confirm),
-            _ => Err(format!("Unknown network mode: {s}. Valid: auto, confirm")),
+            "local" => Ok(NetworkMode::Local),
+            _ => Err(format!("Unknown network mode: {s}. Valid: auto, confirm, local")),
         }
     }
 }
@@ -77,6 +83,7 @@ impl std::fmt::Display for NetworkMode {
         match self {
             NetworkMode::Auto => write!(f, "auto"),
             NetworkMode::Confirm => write!(f, "confirm"),
+            NetworkMode::Local => write!(f, "local"),
         }
     }
 }
@@ -154,6 +161,9 @@ pub struct NetworkStatus {
     /// via POST /network/fetch-kill.
     pub active: Vec<ActiveFetchInfo>,
     pub recent: Vec<FetchRecord>,
+    /// This session's relay overrides (confirm-modal choices that stick
+    /// until the engine restarts or the user resets them).
+    pub session: SessionRelays,
 }
 
 // ---------------------------------------------------------------------------
@@ -161,7 +171,7 @@ pub struct NetworkStatus {
 // ---------------------------------------------------------------------------
 
 pub struct NetworkActivity {
-    mode: AtomicBool, // true = auto
+    mode: AtomicU8, // see `mode_code`
     /// Whether the user has made an explicit first-run mode choice. Seeded
     /// from `[network] mode_chosen` in config.toml; flipped true (and
     /// persisted) the first time the mode is set through the UI.
@@ -178,13 +188,16 @@ pub struct NetworkActivity {
     events: broadcast::Sender<FetchEvent>,
     /// Operations awaiting a confirm decision, keyed by operation_id.
     pending: tokio::sync::Mutex<HashMap<String, oneshot::Sender<ConfirmDecision>>>,
+    /// Relay overrides for this session (this engine process) — see
+    /// [`SessionRelays`].
+    session: Mutex<SessionRelays>,
 }
 
 impl NetworkActivity {
     pub fn new(initial_mode: NetworkMode) -> Self {
         let (events, _) = broadcast::channel(FETCH_EVENT_CAP);
         Self {
-            mode: AtomicBool::new(matches!(initial_mode, NetworkMode::Auto)),
+            mode: AtomicU8::new(mode_code(initial_mode)),
             mode_chosen: AtomicBool::new(false),
             log: Mutex::new(VecDeque::with_capacity(MAX_LOG_ENTRIES)),
             active_fetches: AtomicU64::new(0),
@@ -194,24 +207,71 @@ impl NetworkActivity {
             last_fetch_timestamp: AtomicU64::new(0),
             events,
             pending: tokio::sync::Mutex::new(HashMap::new()),
+            session: Mutex::new(SessionRelays::default()),
         }
     }
 
+    /// Announce a batch of events that just entered the local store.
+    pub fn notify_ingested(&self, kinds: Vec<u64>, count: usize, profiles: Vec<String>) {
+        if count > 0 {
+            self.emit(FetchEvent::Ingested {
+                kinds,
+                count,
+                profiles,
+            });
+        }
+    }
+
+    /// This session's relay overrides (owned clone).
+    pub fn session_relays(&self) -> SessionRelays {
+        self.session.lock().unwrap().clone()
+    }
+
+    /// Forget this session's relay overrides. Returns whether there
+    /// were any.
+    pub fn reset_session_relays(&self) -> bool {
+        let mut s = self.session.lock().unwrap();
+        let had = !s.is_empty();
+        *s = SessionRelays::default();
+        had
+    }
+
+    /// True when the user turned `relay` off for this session.
+    pub fn session_excludes(&self, relay: &str) -> bool {
+        self.session.lock().unwrap().off.iter().any(|u| u == relay)
+    }
+
+    /// Layer the session overrides on a relay set the engine composed.
+    pub fn apply_session(&self, relays: Vec<String>) -> Vec<String> {
+        self.session.lock().unwrap().apply(relays)
+    }
+
+    /// Fold a confirm-modal decision into the session.
+    fn record_session_choice(&self, listed: &[String], picked: &[String]) {
+        self.session.lock().unwrap().record(listed, picked);
+    }
+
     pub fn is_auto(&self) -> bool {
-        self.mode.load(Ordering::Relaxed)
+        self.mode() == NetworkMode::Auto
+    }
+
+    /// Local mode: no relay is contacted (see [`NetworkMode::Local`]).
+    pub fn is_local(&self) -> bool {
+        self.mode() == NetworkMode::Local
     }
 
     pub fn mode(&self) -> NetworkMode {
-        if self.is_auto() {
-            NetworkMode::Auto
-        } else {
-            NetworkMode::Confirm
+        match self.mode.load(Ordering::Relaxed) {
+            1 => NetworkMode::Auto,
+            2 => NetworkMode::Local,
+            _ => NetworkMode::Confirm,
         }
     }
 
     pub fn set_mode(&self, mode: NetworkMode) {
-        self.mode
-            .store(matches!(mode, NetworkMode::Auto), Ordering::Relaxed);
+        self.mode.store(mode_code(mode), Ordering::Relaxed);
+        // The socket-level floor follows the mode.
+        crate::relay::set_local_only(mode == NetworkMode::Local);
     }
 
     /// Whether the user has made an explicit first-run mode choice.
@@ -343,6 +403,7 @@ impl NetworkActivity {
             last_fetch_timestamp: self.last_fetch_timestamp.load(Ordering::Relaxed),
             active: self.active_fetch_list(),
             recent,
+            session: self.session_relays(),
         }
     }
 
@@ -396,14 +457,39 @@ impl NetworkActivity {
         relays: Vec<String>,
         summary: Option<RequestSummary>,
     ) -> std::result::Result<FetchOperation, FetchCancelled> {
+        // Local mode: no fetch operation opens — callers fall back to what
+        // is local, exactly as when a Confirm intent is declined, but with
+        // no intent shown (there is nothing to decide).
+        if self.is_local() {
+            return Err(FetchCancelled);
+        }
         let operation_id = next_operation_id();
         let needs_confirmation = !self.is_auto();
+        // Session overrides ride on top of whatever set the caller
+        // composed. Auto mode has no modal, so they simply apply; in
+        // Confirm mode the modal lists everything — session-added relays
+        // included, session-off relays unchecked — and the decision that
+        // comes back becomes the new session state.
+        let session = self.session_relays();
+        let effective = session.apply(relays.clone());
+        let (listed, session_off) = if needs_confirmation {
+            let listed = session.listed(relays);
+            let off: Vec<String> = listed
+                .iter()
+                .filter(|u| session.off.contains(u))
+                .cloned()
+                .collect();
+            (listed, off)
+        } else {
+            (effective.clone(), Vec::new())
+        };
         self.emit(FetchEvent::Intent {
             operation_id: operation_id.clone(),
             pattern,
             label,
             steps,
-            relays: relays.clone(),
+            relays: listed.clone(),
+            session_off,
             needs_confirmation,
             summary,
         });
@@ -415,7 +501,18 @@ impl NetworkActivity {
                 rx
             };
             match tokio::time::timeout(CONFIRM_TIMEOUT, rx).await {
-                Ok(Ok(d)) if d.approved => d.relays.unwrap_or(relays),
+                Ok(Ok(d)) if d.approved => match d.relays {
+                    Some(picked) => {
+                        let picked: Vec<String> = picked
+                            .iter()
+                            .map(|u| crate::relay_url::normalize_relay_url(u))
+                            .filter(|u| !u.is_empty())
+                            .collect();
+                        self.record_session_choice(&listed, &picked);
+                        picked
+                    }
+                    None => effective,
+                },
                 _ => {
                     self.pending.lock().await.remove(&operation_id);
                     self.emit(FetchEvent::Failed {
@@ -426,7 +523,7 @@ impl NetworkActivity {
                 }
             }
         } else {
-            relays
+            effective
         };
 
         Ok(FetchOperation {
@@ -434,6 +531,51 @@ impl NetworkActivity {
             operation_id,
             relays: chosen,
         })
+    }
+
+    /// Open a fetch operation that is **never gated**, in either mode: the
+    /// provenance round. The relays passed are ones the target document was
+    /// already served from (nostrdb provenance), so asking them for what is
+    /// attached to it discloses nothing new — Confirm mode's promise is that
+    /// no relay learns of an interest it was not told about, and these
+    /// already know. The intent is still emitted (with
+    /// `needs_confirmation: false`) so the activity log shows the round.
+    pub fn begin_operation_ungated(
+        self: &std::sync::Arc<Self>,
+        pattern: FetchPattern,
+        label: String,
+        steps: Vec<String>,
+        relays: Vec<String>,
+        summary: Option<RequestSummary>,
+    ) -> FetchOperation {
+        let operation_id = next_operation_id();
+        if self.is_local() {
+            // No round in local mode: an op over no relays, nothing emitted.
+            return FetchOperation {
+                activity: std::sync::Arc::clone(self),
+                operation_id,
+                relays: Vec::new(),
+            };
+        }
+        // A relay switched off for this session stays off here too; the
+        // session's added relays do not join — the round is provenance only.
+        let off = self.session_relays().off;
+        let relays: Vec<String> = relays.into_iter().filter(|u| !off.contains(u)).collect();
+        self.emit(FetchEvent::Intent {
+            operation_id: operation_id.clone(),
+            pattern,
+            label,
+            steps,
+            relays: relays.clone(),
+            session_off: Vec::new(),
+            needs_confirmation: false,
+            summary,
+        });
+        FetchOperation {
+            activity: std::sync::Arc::clone(self),
+            operation_id,
+            relays,
+        }
     }
 
     /// Open a publish operation. Mirrors `begin_operation` but emits a
@@ -449,6 +591,25 @@ impl NetworkActivity {
         manifest: Option<PublishManifest>,
     ) -> std::result::Result<PublishOperation, FetchCancelled> {
         let operation_id = next_operation_id();
+        if self.is_local() {
+            // Local mode publishes locally: the caller already stored the
+            // signed event; the broadcast goes to no relay. The intent still
+            // shows, so the user sees the event was kept local.
+            self.emit(FetchEvent::PublishIntent {
+                operation_id: operation_id.clone(),
+                label: format!("Kept local (local mode) — {label}"),
+                relays: Vec::new(),
+                event_ids,
+                needs_confirmation: false,
+                summary,
+                manifest,
+            });
+            return Ok(PublishOperation {
+                activity: std::sync::Arc::clone(self),
+                operation_id,
+                relays: Vec::new(),
+            });
+        }
         let needs_confirmation = !self.is_auto();
         self.emit(FetchEvent::PublishIntent {
             operation_id: operation_id.clone(),
@@ -486,6 +647,45 @@ impl NetworkActivity {
             operation_id,
             relays: chosen,
         })
+    }
+}
+
+impl NetworkActivity {
+    /// Open a publish operation the user already approved in a dedicated
+    /// picker (the broadcast modal): never gated, in any mode — the
+    /// picker *is* the confirmation. The caller holds a
+    /// [`crate::relay::RelayPermit`] for `relays` while it publishes.
+    pub fn begin_publish_operation_approved(
+        self: &std::sync::Arc<Self>,
+        label: String,
+        relays: Vec<String>,
+        event_ids: Vec<String>,
+        summary: Option<RequestSummary>,
+        manifest: Option<PublishManifest>,
+    ) -> PublishOperation {
+        let operation_id = next_operation_id();
+        self.emit(FetchEvent::PublishIntent {
+            operation_id: operation_id.clone(),
+            label,
+            relays: relays.clone(),
+            event_ids,
+            needs_confirmation: false,
+            summary,
+            manifest,
+        });
+        PublishOperation {
+            activity: std::sync::Arc::clone(self),
+            operation_id,
+            relays,
+        }
+    }
+}
+
+fn mode_code(mode: NetworkMode) -> u8 {
+    match mode {
+        NetworkMode::Confirm => 0,
+        NetworkMode::Auto => 1,
+        NetworkMode::Local => 2,
     }
 }
 
@@ -650,18 +850,15 @@ pub enum FetchPattern {
 
 /// Which class of relay a fetch/publish member targets — used as the
 /// `phase` tag on `RelayStatus` events so the UI can group per-relay
-/// status under the right execution stage. Includes the dot-notation
-/// values from the DSL surface (`indexer.default`, `search.fallback`).
+/// status under the right execution stage. `Search` marks the search
+/// relays that joined a fetch because they serve its kinds.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Phase {
     #[serde(rename = "read")] Read,
     #[serde(rename = "write")] Write,
     #[serde(rename = "publish")] Publish,
     #[serde(rename = "broadcast")] Broadcast,
-    #[serde(rename = "search.default")] SearchDefault,
-    #[serde(rename = "search.fallback")] SearchFallback,
-    #[serde(rename = "indexer.default")] IndexerDefault,
-    #[serde(rename = "indexer.fallback")] IndexerFallback,
+    #[serde(rename = "search")] Search,
 }
 
 impl Phase {
@@ -671,10 +868,7 @@ impl Phase {
             Phase::Write => "write",
             Phase::Publish => "publish",
             Phase::Broadcast => "broadcast",
-            Phase::SearchDefault => "search.default",
-            Phase::SearchFallback => "search.fallback",
-            Phase::IndexerDefault => "indexer.default",
-            Phase::IndexerFallback => "indexer.fallback",
+            Phase::Search => "search",
         }
     }
 }
@@ -986,10 +1180,7 @@ fn parse_phase(s: &str) -> Option<Phase> {
         "write" => Some(Phase::Write),
         "publish" => Some(Phase::Publish),
         "broadcast" => Some(Phase::Broadcast),
-        "search.default" => Some(Phase::SearchDefault),
-        "search.fallback" => Some(Phase::SearchFallback),
-        "indexer.default" => Some(Phase::IndexerDefault),
-        "indexer.fallback" => Some(Phase::IndexerFallback),
+        "search" => Some(Phase::Search),
         _ => None,
     }
 }
@@ -1326,6 +1517,11 @@ pub enum FetchEvent {
         label: String,
         steps: Vec<String>,
         relays: Vec<String>,
+        /// The subset of `relays` the user turned off earlier this
+        /// session — the confirm modal lists them unchecked. Always
+        /// empty in Auto mode, where they are simply left out.
+        #[serde(skip_serializing_if = "Vec::is_empty")]
+        session_off: Vec<String>,
         /// True in Confirm mode — the UI must POST a decision before the
         /// engine proceeds. False in Auto mode — informational only.
         needs_confirmation: bool,
@@ -1372,6 +1568,18 @@ pub enum FetchEvent {
         operation_id: String,
         event_count: usize,
     },
+    /// Events landed in the local store — from a relay fetch or a local
+    /// save. Not tied to an operation: this is the signal views react
+    /// to, re-reading their **local** query when a kind they show
+    /// changed, so no request ever has to wait on a relay to learn the
+    /// result. `profiles` lists the authors of the kind-0 events in the
+    /// batch (capped), so profile caches refresh exactly those.
+    Ingested {
+        kinds: Vec<u64>,
+        count: usize,
+        #[serde(skip_serializing_if = "Vec::is_empty")]
+        profiles: Vec<String>,
+    },
     Failed {
         operation_id: String,
         error: String,
@@ -1388,6 +1596,76 @@ pub struct ConfirmDecision {
     /// overrides the relays the engine proposed.
     #[serde(default)]
     pub relays: Option<Vec<String>>,
+}
+
+/// The fetch-relay choices the user made this **session** — the lifetime
+/// of the engine process (one app launch on Android). Nothing here is
+/// persisted: durable relay configuration lives in `relays.json` via
+/// relay management.
+///
+/// - `off`: relays unchecked in a confirm modal. Left out of every later
+///   fetch (Auto and Confirm, user-initiated and background) until
+///   re-checked or the session is reset.
+/// - `on`: relays the engine did not propose that the user added in a
+///   confirm modal. They join every later user-initiated fetch.
+///
+/// A decision is folded in whole: every relay the modal listed ends up
+/// either picked (cleared from `off`) or not (added to `off`), so the
+/// state always mirrors the user's last word on each relay.
+#[derive(Debug, Clone, Default, Serialize, PartialEq, Eq)]
+pub struct SessionRelays {
+    pub off: Vec<String>,
+    pub on: Vec<String>,
+}
+
+impl SessionRelays {
+    pub fn is_empty(&self) -> bool {
+        self.off.is_empty() && self.on.is_empty()
+    }
+
+    /// What a confirm modal lists: the proposed relays plus the
+    /// session-added ones (`off` relays stay listed, to be unchecked).
+    pub fn listed(&self, proposed: Vec<String>) -> Vec<String> {
+        let mut out = proposed;
+        for u in &self.on {
+            if !out.contains(u) {
+                out.push(u.clone());
+            }
+        }
+        out
+    }
+
+    /// The relays actually used when nobody is asked: proposed, plus
+    /// `on`, minus `off`.
+    pub fn apply(&self, proposed: Vec<String>) -> Vec<String> {
+        let mut out = self.listed(proposed);
+        out.retain(|u| !self.off.contains(u));
+        out
+    }
+
+    /// Fold in a confirm decision: `listed` is what the modal showed,
+    /// `picked` what the user approved (which may include relays that
+    /// were never listed — typed in, or a parked relay opted in).
+    pub fn record(&mut self, listed: &[String], picked: &[String]) {
+        for u in listed {
+            if picked.contains(u) {
+                self.off.retain(|o| o != u);
+            } else {
+                if !self.off.contains(u) {
+                    self.off.push(u.clone());
+                }
+                self.on.retain(|o| o != u);
+            }
+        }
+        for u in picked {
+            if !listed.contains(u) {
+                self.off.retain(|o| o != u);
+                if !self.on.contains(u) {
+                    self.on.push(u.clone());
+                }
+            }
+        }
+    }
 }
 
 /// Returned by `begin_operation` when the user declined the fetch (or
@@ -1628,20 +1906,20 @@ mod tests {
             composition: CompositionShape {
                 phases: vec![
                     stage("primary", vec![(Phase::Read, vec![])], 0),
-                    stage("fallback", vec![(Phase::IndexerDefault, vec![])], 0),
+                    stage("fallback", vec![(Phase::Search, vec![])], 0),
                 ],
             },
             dsl: String::new(),
         };
         assert_eq!(
             summary.to_dsl(),
-            "k:0 by:dc4cd086 via:read then:indexer.default"
+            "k:0 by:dc4cd086 via:read then:search"
         );
     }
 
     #[test]
     fn from_dsl_parses_basic_profile_lookup() {
-        let parsed = RequestSummary::from_dsl("k:0 by:dc4cd086 via:read then:indexer.default");
+        let parsed = RequestSummary::from_dsl("k:0 by:dc4cd086 via:read then:search");
         assert_eq!(
             parsed.filters[0].kinds,
             Some(vec![0])
@@ -1656,13 +1934,13 @@ mod tests {
         assert_eq!(parsed.composition.phases[1].label, "fallback");
         assert_eq!(
             parsed.composition.phases[1].members[0].0,
-            Phase::IndexerDefault
+            Phase::Search
         );
     }
 
     #[test]
     fn dsl_round_trip_preserves_filter_and_composition() {
-        let original = "k:30040,30041 by:dc4cd086 limit:50 via:read,indexer.default then:indexer.fallback";
+        let original = "k:30040,30041 by:dc4cd086 limit:50 via:read,search then:search";
         let parsed = RequestSummary::from_dsl(original);
         // Re-render — should match the input verbatim (modulo
         // whitespace normalization).
@@ -1675,7 +1953,7 @@ mod tests {
         assert_eq!(parsed.composition.phases[0].members[0].0, Phase::Read);
         assert_eq!(
             parsed.composition.phases[0].members[1].0,
-            Phase::IndexerDefault
+            Phase::Search
         );
     }
 
@@ -1683,9 +1961,9 @@ mod tests {
     fn dsl_parses_search_with_delayed_fallback() {
         // `also:` lays the overlap stage, and the next `Δ500` token
         // attaches the delay onto it. Together they describe
-        // "search.default; 500ms later, also fan out to fallback".
+        // "read; 500ms later, also fan out to search".
         let parsed = RequestSummary::from_dsl(
-            "~:\"local first\" via:search.default also:search.fallback Δ500",
+            "~:\"local first\" via:read also:search Δ500",
         );
         assert_eq!(parsed.filters[0].search.as_deref(), Some("local first"));
         assert_eq!(parsed.composition.phases.len(), 2);
@@ -1695,7 +1973,7 @@ mod tests {
 
     #[test]
     fn dsl_round_trip_for_delayed_fallback() {
-        let original = "~:\"local first\" via:search.default also:search.fallback Δ500";
+        let original = "~:\"local first\" via:read also:search Δ500";
         let parsed = RequestSummary::from_dsl(original);
         assert_eq!(parsed.to_dsl(), original);
     }
@@ -1751,9 +2029,163 @@ mod tests {
     #[test]
     fn parse_phase_accepts_dotted_class_names() {
         assert_eq!(parse_phase("read"), Some(Phase::Read));
-        assert_eq!(parse_phase("indexer.default"), Some(Phase::IndexerDefault));
-        assert_eq!(parse_phase("search.fallback"), Some(Phase::SearchFallback));
+        assert_eq!(parse_phase("search"), Some(Phase::Search));
+        assert_eq!(parse_phase("search"), Some(Phase::Search));
         assert_eq!(parse_phase("nonsense"), None);
         assert_eq!(parse_phase(""), None);
+    }
+
+    fn urls(v: &[&str]) -> Vec<String> {
+        v.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn session_records_a_decision_and_applies_it() {
+        let mut s = SessionRelays::default();
+        let listed = urls(&["wss://a", "wss://b", "wss://c"]);
+        // Unchecked b, typed in d.
+        s.record(&listed, &urls(&["wss://a", "wss://c", "wss://d"]));
+        assert_eq!(s.off, urls(&["wss://b"]));
+        assert_eq!(s.on, urls(&["wss://d"]));
+
+        // Auto: proposed + on − off.
+        assert_eq!(
+            s.apply(urls(&["wss://a", "wss://b"])),
+            urls(&["wss://a", "wss://d"])
+        );
+        // Confirm lists everything; b stays visible to be re-checked.
+        assert_eq!(
+            s.listed(urls(&["wss://a", "wss://b"])),
+            urls(&["wss://a", "wss://b", "wss://d"])
+        );
+
+        // Re-checking b clears it; unchecking the session-added d drops
+        // it from `on` and turns it off.
+        let listed = s.listed(urls(&["wss://a", "wss://b"]));
+        s.record(&listed, &urls(&["wss://a", "wss://b"]));
+        assert_eq!(s.off, urls(&["wss://d"]));
+        assert!(s.on.is_empty());
+        // A relay the modal never listed is left alone.
+        assert_eq!(s.apply(urls(&["wss://z"])), urls(&["wss://z"]));
+    }
+
+    #[tokio::test]
+    async fn auto_mode_applies_session_overrides_to_an_operation() {
+        let net = std::sync::Arc::new(NetworkActivity::new(NetworkMode::Auto));
+        net.record_session_choice(
+            &urls(&["wss://a", "wss://b"]),
+            &urls(&["wss://a", "wss://extra"]),
+        );
+        let op = net
+            .begin_operation(
+                FetchPattern::Event,
+                "t".into(),
+                vec![],
+                urls(&["wss://a", "wss://b", "wss://c"]),
+            )
+            .await
+            .unwrap();
+        assert_eq!(op.relays(), &urls(&["wss://a", "wss://c", "wss://extra"])[..]);
+        assert!(net.session_excludes("wss://b"));
+        assert!(net.reset_session_relays());
+        assert!(!net.session_excludes("wss://b"));
+    }
+
+    #[tokio::test]
+    async fn local_mode_opens_no_fetch_and_publishes_to_no_relay() {
+        // `new` leaves the process-wide socket gate alone (only `set_mode`
+        // flips it), so this can't disturb the relay tests running beside it.
+        let net = std::sync::Arc::new(NetworkActivity::new(NetworkMode::Local));
+        assert!(net.is_local() && !net.is_auto());
+        assert_eq!(net.mode(), NetworkMode::Local);
+        let mut rx = net.subscribe_fetch_events();
+        let r = net
+            .begin_operation(FetchPattern::Event, "x".into(), vec![], vec!["wss://a".into()])
+            .await;
+        assert!(r.is_err(), "no fetch operation in local mode");
+        assert!(rx.try_recv().is_err(), "and no intent to decide on");
+        let ungated = net.begin_operation_ungated(
+            FetchPattern::Event,
+            "x".into(),
+            vec![],
+            vec!["wss://a".into()],
+            None,
+        );
+        assert!(ungated.relays().is_empty());
+        let op = net
+            .begin_publish_operation("pub".into(), vec!["wss://a".into()], vec!["id".into()], None, None)
+            .await
+            .expect("publishing locally is not a cancel");
+        assert!(op.relays().is_empty());
+        match rx.try_recv() {
+            Ok(FetchEvent::PublishIntent { label, relays, needs_confirmation, .. }) => {
+                assert!(label.starts_with("Kept local"));
+                assert!(relays.is_empty() && !needs_confirmation);
+            }
+            other => panic!("expected a kept-local intent, got {other:?}"),
+        }
+        // The broadcast modal's approved publish goes through in local mode.
+        let op = net.begin_publish_operation_approved(
+            "backup".into(),
+            vec!["wss://a".into()],
+            vec!["id".into()],
+            None,
+            None,
+        );
+        assert_eq!(op.relays(), ["wss://a".to_string()]);
+    }
+
+    #[test]
+    fn local_mode_parses_and_prints() {
+        assert_eq!("local".parse::<NetworkMode>().unwrap(), NetworkMode::Local);
+        assert_eq!(NetworkMode::Local.to_string(), "local");
+        assert_eq!(serde_json::to_value(NetworkMode::Local).unwrap(), "local");
+    }
+
+    #[tokio::test]
+    async fn confirm_mode_lists_session_state_and_learns_from_the_decision() {
+        let net = std::sync::Arc::new(NetworkActivity::new(NetworkMode::Confirm));
+        net.record_session_choice(&urls(&["wss://b"]), &urls(&["wss://extra"]));
+        let mut rx = net.subscribe_fetch_events();
+        let task = {
+            let net = std::sync::Arc::clone(&net);
+            tokio::spawn(async move {
+                net.begin_operation(
+                    FetchPattern::Event,
+                    "t".into(),
+                    vec![],
+                    urls(&["wss://a", "wss://b"]),
+                )
+                .await
+            })
+        };
+        let (operation_id, relays, session_off) = loop {
+            if let FetchEvent::Intent {
+                operation_id,
+                relays,
+                session_off,
+                ..
+            } = rx.recv().await.unwrap()
+            {
+                break (operation_id, relays, session_off);
+            }
+        };
+        assert_eq!(relays, urls(&["wss://a", "wss://b", "wss://extra"]));
+        assert_eq!(session_off, urls(&["wss://b"]));
+        // The user re-checks b and drops a. Wait for the waiter to
+        // register before answering.
+        let decision = ConfirmDecision {
+            operation_id,
+            approved: true,
+            relays: Some(urls(&["wss://b", "wss://extra"])),
+        };
+        while !net.resolve_confirm(decision.clone()).await {
+            tokio::task::yield_now().await;
+        }
+        let op = task.await.unwrap().unwrap();
+        assert_eq!(op.relays(), &urls(&["wss://b", "wss://extra"])[..]);
+        let s = net.session_relays();
+        assert_eq!(s.off, urls(&["wss://a"]));
+        assert_eq!(s.on, urls(&["wss://extra"]));
     }
 }

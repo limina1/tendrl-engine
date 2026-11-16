@@ -16,6 +16,12 @@ fn main() {
                     "nip44_decrypt",
                 ])
                 .default_permission(tauri_build::DefaultPermissionRule::AllowAllCommands),
+        )
+        .plugin(
+            "media",
+            tauri_build::InlinedPlugin::new()
+                .commands(&["set_state", "stop"])
+                .default_permission(tauri_build::DefaultPermissionRule::AllowAllCommands),
         ),
     )
     .expect("failed to run tauri-build");

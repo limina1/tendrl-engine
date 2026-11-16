@@ -1412,7 +1412,7 @@ blind" warning instead.
 =Engine::reset_relays_to_defaults= behind =reset_relays= on
 =/api/v1/config/update=: first-boot seed (general/fetch/publish from
 =initial_relays=), broadcast cleared, discovery built-ins restored,
-exclusive flags off, named sets PRESERVED. Local-only.
+search relays + search kinds re-seeded, named sets PRESERVED. Local-only.
 
 #+begin_src bash
 cargo test --lib test_reset_relays   # in-memory + disk + named-set survival
@@ -1420,7 +1420,7 @@ cargo test --lib test_reset_relays   # in-memory + disk + named-set survival
 # Endpoint smoke (scratch engine): drift the sets, then
 curl -s -X POST localhost:3031/api/v1/config/update \
   -H 'Content-Type: application/json' -d '{"reset_relays":true}'
-curl -s localhost:3031/api/v1/relays | jq '{publish:.publish.urls, broadcast:.broadcast.urls, indexer:.indexer.default, named:[.named_sets[].d_tag]}'
+curl -s localhost:3031/api/v1/relays | jq '{publish:.publish.urls, broadcast:.broadcast.urls, search:.search.urls, search_kinds:.search_kinds, named:[.named_sets[].d_tag]}'
 # publish/broadcast back to seed/empty, indexer.default = purplepag.es +
 # user.kindpag.es, named sets still listed.
 #+end_src
@@ -2909,3 +2909,370 @@ new id with the same =d= and the edited title.
 Type a bad url + date → red borders with the engine's messages, footer
 "N to fix"; fix them → "ready · Ctrl-Enter", "event json" shows the
 template, Publish → toast, modal closes, draft cleared.
+
+* Walkthrough verify — isolated engine + headless CDP (2026-11-06)
+
+Recipe used for the first-run walk (fix/walkthrough-ux). Never touches
+:3030. Fresh data dir, fresh browser profile, scratch config (the engine
+writes =mode_chosen= back into it, so rewrite it every reset).
+
+#+begin_src bash
+S=/tmp/tendrl-verify; mkdir -p $S
+pnpm -C web build && touch src/static_assets.rs && cargo build   # touch: cargo does not always re-embed web/build
+pkill -f "^\./target/debug/tendrl-engine"; pkill -f "user-data-dir=$S/profile"   # kill chromium BY PROFILE DIR, never a bare pattern
+rm -rf $S/data $S/profile
+printf 'timeout_ms = 8000\ninitial_relays = ["wss://theforest.nostr1.com"]\n[embedding]\nenabled = false\n[database]\ndata_dir = "%s/data"\n' $S > $S/config.toml
+./target/debug/tendrl-engine -c $S/config.toml --port 3131 &
+chromium --headless=new --remote-debugging-port=9333 --user-data-dir=$S/profile --window-size=1280,800 --no-first-run --disable-gpu http://localhost:3131/ &
+pgrep -c -f "user-data-dir=$S/profile"      # must be > 0; if 0 the old browser still holds :9333 and you are driving a STALE bundle
+#+end_src
+
+Drive with a ~80-line CDP script (node ≥22 has WebSocket): =Runtime.evaluate= for
+state (=.dt-title= is the active card, =localStorage['tendrl.walkthrough.seen']=
+the persisted progress), =Input.dispatchMouseEvent= for clicks on Svelte
+handlers, =Page.captureScreenshot= to look. The feed pull from the default
+relays takes ~45 s to settle; nothing renders until then. Mobile shell:
+=--window-size=390,844= and =?shell=mobile=.
+
+* Narration — TTS → Blossom → kind 32176 (branch =feat/audiobook-blossom=)
+
+Engine-only smoke test on an isolated instance (never :3030). Spends real
+ppq credit (≈ $0.016 per 1000 chars on =deepgram_aura_2=) and uploads to
+blossom.band as the logged-in identity (20 MiB per free upload, 100 MiB
+paid; a longer section becomes several =b= pieces). Relay: theforest only.
+
+#+begin_src bash
+S=/tmp/tendrl-narr; mkdir -p $S/data; B=http://127.0.0.1:3131/api/v1
+cp ~/.local/share/nostr-engine/nostrdb/providers.json $S/data/   # the funded ppq account (0600)
+printf 'timeout_ms = 8000\ninitial_relays = ["wss://theforest.nostr1.com"]\n[embedding]\nenabled = false\n[database]\ndata_dir = "%s/data"\n' $S > $S/config.toml
+./target/debug/tendrl-engine -c $S/config.toml --port 3131 &
+# log a throwaway identity in (engine source) — see "Identity" recipes; then:
+curl -s $B/narration/models | jq '.models[].id'           # live ppq prices merged over the built-in caps
+curl -s $B/narration/servers                               # {"servers":["https://blossom.band"],"suggested":[]}
+curl -s -X POST $B/narration/estimate -d '{"pubkey":"'$PK'","d_tag":"'$D'","model":"deepgram_aura_2"}' | jq '{sections,total_chars,total_chunks,estimate_usd,balance_usd}'
+curl -s -X POST $B/narration/sample -H 'content-type: application/json' -d '{"model":"deepgram_aura_2","voice":"aura-2-thalia-en","text":"A few sentences of my own prose."}' -o sample.mp3 -w '%{http_code} %{content_type}\n'   # TTS only, ≈ $0.001, nothing stored
+curl -sN -X POST $B/narration/generate -H 'content-type: application/json' \
+  -d '{"pubkey":"'$PK'","d_tag":"'$D'","model":"deepgram_aura_2","voice":"aura-2-thalia-en","broadcast":false}'
+#   SSE: plan → section_start → chunk… → uploaded {sha256,url} → signed {narration} → done {leaves,spent_usd}
+curl -s "$B/narration/for/$PK/$D?policy=local_only" | jq '.nodes[] | {title, n: (.recordings|length), m: .recordings[0].version_match}'
+curl -sI "$(curl -s "$B/narration/for/$PK/$D" | jq -r '.nodes[1].recordings[0].urls[0]')" | head -3   # 200 audio/mpeg from blossom.band
+curl -s -X POST $B/narration/mirror -d '{"url":"https://blossom.band/<sha>.mp3","server":"https://other.server"}'
+#+end_src
+
+Check the events: =k:32176= in the search panel; a leaf has =A= (section
+coordinate), =E= (exact section event id), =K 30041=, one =b=, =blossom=,
+=voice=/=model=, =transcript txt= + the spoken text as content. The root has
+=A=/=E=/=K= → the 30040 and =a= children in TOC order. Re-running skips
+sections already narrated for the same =E= + voice (=force= re-does them).
+
+GUI: open the publication → tools (=T=) → *narrate* opens the modal
+(model, voice with ▶ = the provider's free sample clip and *hear my text*
+= a paid ≈$0.001 sample of the first ticked section, per-section ticks,
+cost + expected size vs. balance); *recordings N* → drawer (ranked
+recordings, ⋮ event viewer, sources with HEAD check, mirror, narrate §);
+▶ on a section title plays it (player strip bottom-left). Settings ›
+Narration holds the Blossom server list.
+
+** Reading / listening history (=feat/listening-history=)
+
+#+begin_src bash
+B=http://127.0.0.1:3131/api/v1
+curl -s $B/history | jq '.entries[] | {coord, title, section: .section.title, audio: [.audio.title, .audio.position_secs]}'
+curl -s -X POST $B/history -H 'content-type: application/json' \
+  -d '{"coord":"30040:<pk>:<d>","title":"Book","author":"<pk>","section":{"coord":"30041:<pk>:<s>","title":"Two"}}'
+curl -s -X POST $B/history -H 'content-type: application/json' -d '{"coord":"30040:<pk>:<d>","clear_audio":true}'
+curl -s -X POST $B/history/remove -H 'content-type: application/json' -d '{"coord":"30040:<pk>:<d>"}'   # "*" clears all
+#+end_src
+
+GUI (headless check as in "Narration"): open a publication → Next → the
+entry's =section= follows within ~2 s; *▶ listen* → =audio= follows every
+5 s and on pause/×; reload → the reader opens at the remembered section
+and *▶ listen* resumes at the position (same recording re-chosen); feed
+→ *history* tab lists 📖 / 🎧 with *▶ listen* / *×* / *Clear history*;
+a 30023/30818 opened in the reader lists as ARTICLE / WIKI; a 30041
+opened on its own adds nothing. Rate: pick 1.5× → next section still
+1.5× → reload → still 1.5× (=localStorage tendrl.narration.rate=).
+
+** Android background playback (=media= plugin, v0.17.1)
+
+The WebView's =<audio>= stays the player; =MediaPlugin.kt= /
+=MediaService.kt= / =MediaBridge.kt= (beside =Nip55Plugin.kt=) add a
+=mediaPlayback= foreground service + MediaSession + notification, and
+=MainActivity.onPause()= re-resumes the WebView while a playlist is loaded
+(wry's generated =WryActivity.onPause()= pauses it; that file is rewritten
+by wry's build.rs on every build, so it is not patched). The SPA mirrors
+state through =plugin:media|set_state= / =stop= (=web/src/lib/media-android.ts=,
+wired in =NarrationPlayer.svelte=); system buttons come back as a
+=tendrl:media= CustomEvent. No emulator on this machine — verify on the
+tablet:
+
+#+begin_src bash
+scripts/build-android.sh && adb install -r target/android/tendrl-<ver>-arm64.apk
+adb logcat -c; adb logcat -s tendrl ActivityManager:I AndroidRuntime:E | grep -i 'media\|tendrl' &
+# in the app: open a narrated publication → ▶ on a section
+adb shell dumpsys activity services io.github.limina1.tendrl | grep -A3 MediaService   # running, foregroundServiceType=mediaPlayback
+adb shell dumpsys media_session | grep -A6 'tendrl-narration'                            # state=PLAYING, active
+adb shell dumpsys power | grep 'tendrl:narration'                                        # PARTIAL_WAKE_LOCK held while playing
+adb shell input keyevent KEYCODE_SLEEP; sleep 20; adb shell dumpsys media_session | grep -A6 tendrl-narration   # still PLAYING
+adb shell input keyevent KEYCODE_MEDIA_PAUSE; adb shell input keyevent KEYCODE_MEDIA_PLAY  # buttons reach the page
+adb shell input keyevent KEYCODE_WAKEUP
+#+end_src
+
+Android 13+ asks for notification permission the first time ▶ is pressed;
+declined, the audio still runs in the background but there is no
+lock-screen card. =×= on the player strip stops the service.
+
+** Attached events, provenance round, audio view (=feat/attached-events=)
+
+Engine on an isolated instance (never :3030); the narration fixture above
+(=PK= / =narr-book=) has 2 roots + 3 leaves.
+
+#+begin_src bash
+B=http://127.0.0.1:3131/api/v1
+curl -s "$B/attached?coord=30040:$PK:narr-book&policy=local_only" | jq '{comments:(.comments|length), highlights:(.highlights|length), narration_index:(.narration_index|length), narration_leaves:(.narration_leaves|length), index:(.index|length), sections:[.sections[].tags[]|select(.[0]=="title")|.[1]], publication:.publication.id[:8]}'
+curl -s "$B/attached?coord=30041:$PK:narr-s2&policy=local_only" | jq '.publication.tags[]|select(.[0]=="title")'   # the containing index = the menu's publication row
+curl -s "$B/attached?id=<comment or highlight id>&policy=local_only" | jq '.publication.id, (.index|length)'
+curl -s "$B/narration/node/30023/$PK/<d>?policy=local_only" | jq '.nodes[0] | {title, n:(.recordings|length)}'   # one document on its own
+curl -s -X POST $B/query -H 'content-type: application/json' -d '{"filters":[{"kinds":[32176],"authors":["'$PK'"],"#T":["the-keeper-narration-test-section-01"]}],"policy":"local_only"}' | jq '.events[].tags[]|select(.[0]=="T" or .[0]=="voice")'   # T = <index-slug>-section-NN on leaves, <index-slug>-narration on roots
+ROOT=$(curl -s "$B/narration/for/$PK/narr-book?policy=local_only" | jq -r '.nodes[0].recordings[0].d_tag')
+curl -s "$B/narration/event/$PK/$ROOT?policy=local_only" | jq '{is_root, about, about_kind, about_local, about_publication, missing, chapters:[.chapters[]|{title, about_local, m:.recording.version_match}]}'
+# provenance round: a publication fetched FROM a relay carries it; local_first asks that relay only, no intent, even in Confirm mode
+curl -s -X POST $B/network/mode -H 'content-type: application/json' -d '{"mode":"auto"}'
+curl -s -X POST $B/search -H 'content-type: application/json' -d '{"query":"k:30040 limit:3","limit":3,"policy":"fetch_always","relays":["wss://theforest.nostr1.com"]}' | jq '.results[0].addr'
+curl -s -X POST $B/network/mode -H 'content-type: application/json' -d '{"mode":"confirm"}'
+time curl -s "$B/attached?coord=30040:<pk>:<d>&policy=local_first" | jq '{provenance, fetched_from}'   # ["wss://theforest.nostr1.com"] twice, < 1 s, no modal
+#+end_src
+
+Partial narration → root (the old rule needed every section): with a
+voice that already has a leaf on one section, =generate= with =only= =
+the other section → =signed= leaf, =signed= root listing BOTH, =done
+{leaves:1}=; rerun with =only= = the first → =skipped … root already
+covers these 2 section(s)=, =leaves:0=, spent 0.
+
+A 32176 root narrating a publication that is NOT local (the audio view):
+sign one with a throwaway key whose =a= children are existing leaves —
+=nak event -k 32176 -d ghost-root -t "A=30040:<pk>:ghost-book" -t K=30040 -t "a=32176:<pk>:<leaf d>;;Chapter one" … --sec <hex> < /dev/null=
+— and =POST $B/ingest= it (x-ndjson).
+
+GUI (headless as in "Narration"; the browser caches the bundle — reload
+with a query string after =pnpm -C web build=): open the publication →
+each chapter shows the strip (▶ · you · voice · 0:18 · *recordings*);
+*▶ listen* → the transport appears right above *Prev / Next*
+(=.reader-player .npc=) and the fixed dock hides (=.nar-player--hidden=);
+switch to the feed → the dock is back; *§* → every narrated row of the
+TOC ends in 🔈; capture console with =node cdp.mjs watch 14= — zero
+=effect_update_depth_exceeded=;
+*§ menu* → PUBLICATION INDEX row + publisher/date + chips *comments 0 ·
+highlights 0 · narration index 2 · 30040 index 1 · audio 1*; the
+publication's own menu (toolbar *M*) shows *sections 2* (teal, TOC
+order) instead of the blue index chip; *audio* →
+the leaf's menu (breadcrumb ‹); *narration index* → a two-row list → a
+root's menu. Me-chip → profile → *Narrations (n)* / *Audio (n)* tabs; a
+root whose publication is local → the reader; the ghost root → the AUDIO
+buffer (chapters, *▶ play all*, *open §*, *text*). An article with a
+leaf bound to it (=A=30023:…=) shows the strip in the doc view and
+*audio 1* in its menu. Headless Chromium refuses autoplay: the player
+strip loads the blob URL but stays paused — that is the browser, not
+the store.
+
+* Relay model: five flags, search kinds, session overrides (feat/relay-simplify)
+
+One flat relay list (auth / read / write / search / broadcast), no indexer
+class, no tiers, no exclusive flag. A fetch for kinds K asks the read relays
+plus the search relays serving K. Confirm-modal choices stick for the session
+(the engine process) and apply in Auto mode too.
+
+** Unit tests
+
+#+begin_src bash
+cargo test --lib -- relay_store network:: test_plan_resolve test_search_kinds test_parse_nevent --test-threads=4
+pnpm -C web check && pnpm -C web test
+#+end_src
+
+** Migration of an old relays.json (isolated instance, never :3030)
+
+#+begin_src bash
+D=/tmp/tendrl-relay-test; rm -rf $D; mkdir -p $D
+cat > $D/relays.json <<'JSON'
+{"general":[],"fetch":["wss://theforest.nostr1.com"],"publish":[],
+ "search":{"default":["wss://s1.example"],"fallback":["wss://s2.example"]},
+ "indexer":{"default":["wss://idx.example"],"fallback":[]},
+ "exclusive":{"search":false,"indexer":true},
+ "resolve_kinds":{"wss://docs.example":[30818]},
+ "inactive":{"wss://parked.example":["fetch","indexer.default"]},
+ "seed_version":1}
+JSON
+./target/debug/tendrl-engine --data-dir $D --port 3141 &
+curl -s localhost:3141/api/v1/relays | jq '{search:.search.urls, search_kinds, inactive}'
+# search = s1, s2, idx, docs; idx + parked get kinds 0,3,10002,10007,10088,30002;
+# parked roles = fetch, search; no indexer / exclusive / resolve_kinds keys left.
+#+end_src
+
+** Search kinds union + hints + session (same instance, Confirm mode)
+
+#+begin_src bash
+PK=0000000000000000000000000000000000000000000000000000000000000001
+curl -sN localhost:3141/api/v1/network/fetch-events > /tmp/sse.log &
+# kind 30818 → forest + s1 + s2 + docs (+ the hint), NOT idx:
+curl -s "localhost:3141/api/v1/addressable/30818/$PK/x?policy=fetch_always&confirm=true&relays=wss://hint.example" &
+grep -o '"relays":\[[^]]*\]' /tmp/sse.log | tail -1
+# approve with a subset + one typed relay → session.off / session.on:
+OP=$(grep -o 'op-[a-z0-9-]*' /tmp/sse.log | tail -1)
+curl -s -X POST localhost:3141/api/v1/network/fetch-confirm -H 'content-type: application/json' \
+  -d "{\"operation_id\":\"$OP\",\"approved\":true,\"relays\":[\"wss://theforest.nostr1.com\",\"wss://typed.example\"]}"
+curl -s localhost:3141/api/v1/network/status | jq .session
+# kind 0 → idx joins; the next intent carries session_off and lists typed.example.
+# Auto mode: the intent's relays are already the applied set (off removed, on added):
+curl -s -X POST localhost:3141/api/v1/network/mode -H 'content-type: application/json' -d '{"mode":"auto"}'
+curl -s -X POST localhost:3141/api/v1/network/session/reset
+#+end_src
+
+GUI: the fetch modal shows *invert*, the session note, *reset session* once
+anything is off, and tags (=search=, =not in your relays=); the relays screen
+has no Discovery section and parked relays sit under *Inactive*.
+
+** Local-first, reactive display (same branch)
+
+#+begin_src bash
+cargo test --lib -- test_ingest_announces
+# isolated engine in Auto mode, then:
+curl -sN localhost:3142/api/v1/network/fetch-events > /tmp/sse.log &
+PK=<a pubkey the store does not hold>
+curl -s -o /dev/null -w "%{time_total}s\n" localhost:3142/api/v1/profiles/fetch \
+  -H 'content-type: application/json' -d "{\"pubkeys\":[\"$PK\"]}"      # ~0.003s, not seconds
+sleep 6; grep -o '"type":"ingested"[^}]*' /tmp/sse.log                   # kinds [0], profiles [PK]
+curl -s localhost:3142/api/v1/profile/$PK | jq .found                    # true
+#+end_src
+
+In the browser: DevTools → Network → no =/api/= request should sit in
+"Stalled"; switching the feed's relay timeline keeps the rows up (dimmed) and
+never shows "Loading publications…" unless the list is empty.
+
+* Highlighters — label + colour on 9802s (branch =feat/highlighters=)
+
+Contract: =docs/highlighters-contract.org=. Engine tests:
+=cargo test --lib discussions= (highlighter parse, overlap, supersede,
+pairs, restyle); web: =pnpm -C web test= (=highlight-overlap.test.ts=).
+
+Isolated verify — throwaway key signed through an in-memory NIP-07 bridge
+(never =identity/login=: the keyring's =last_identity_*= entries are
+global). Trim =<data_dir>/relays.json= to theforest BEFORE anything
+publishes — a fresh engine seeds damus/noswhere/citadel into
+general/publish.
+
+#+begin_src sh
+S=/tmp/tendrl-hl; mkdir -p $S
+printf 'initial_relays=["wss://theforest.nostr1.com"]\ntimeout_ms=8000\n[embedding]\nenabled=false\n[database]\ndata_dir="%s/data"\n' $S > $S/config.toml
+./target/debug/tendrl-engine -c $S/config.toml --data-dir $S/data --port 3131 &   # once, then stop it and:
+jq '.general=["wss://theforest.nostr1.com"]|.fetch=.general|.publish=.general|.broadcast=[]|.search=[]|.search_kinds={}' $S/data/relays.json > $S/r && mv $S/r $S/data/relays.json
+./target/debug/tendrl-engine -c $S/config.toml --data-dir $S/data --port 3131 &
+B=http://127.0.0.1:3131/api/v1; J='content-type: application/json'
+nak key generate </dev/null > $S/me.sk; nak key generate </dev/null > $S/other.sk
+python3 -I scripts/nip07-test-signer.py $B $(cat $S/me.sk) &
+OPK=$(nak key public $(cat $S/other.sk) </dev/null); A="30041:$OPK:hl-s1"
+nak event -q --sec $(cat $S/other.sk) -k 30041 -t d=hl-s1 -t m=text/plain -c 'a signed note is both owned and findable' </dev/null > $S/sec.json
+curl -s -X POST $B/ingest -H 'content-type: application/x-ndjson' --data-binary @$S/sec.json
+curl -s -X POST $B/discussions/highlight -H "$J" -d "{\"target\":{\"address\":\"$A\"},\"content\":\"a signed note is both owned and findable\",\"highlighter\":{\"label\":\"against\",\"color\":\"#F49AC2\"},\"relays\":[]}" | jq -r .event.id > $S/h1
+curl -s -X POST $B/discussions/highlight -H "$J" -d "{\"target\":{\"address\":\"$A\"},\"content\":\"both owned and findable\",\"highlighter\":{\"label\":\"for\",\"color\":\"8fd694\"},\"relays\":[]}" >/dev/null
+curl -s $B/highlighters | jq -c .highlighters                      # against #f49ac2, for #8fd694
+curl -s -X POST $B/discussions/highlight/restyle -H "$J" -d "{\"event_id\":\"$(cat $S/h1)\",\"highlighter\":{\"label\":\"against\",\"color\":\"#ff0000\"},\"relays\":[]}" | jq -c '[.event.tags[]|select(.[0]=="highlighter" or .[0]=="supersedes")]'
+curl -s -X POST $B/discussions/list -H "$J" -d "{\"addresses\":[\"$A\"],\"policy\":\"local_only\",\"kinds\":[9802]}" | jq '.events|length'   # 2 — the superseded one is gone
+#+end_src
+
+Expected: a bad colour → 400; restyling someone else's 9802 → 400 "only
+your own highlights…"; =/highlighters?pubkey=<npub>= lists another
+author's pairs. GUI (headless CDP, see Walkthrough verify): overlapping
+marks blend; clicking a mark opens the drawer on it (flash); filter chips
+filter list + paint; Republish recolours; "Highlight with this style"
+pre-fills the next capture. Watch the console for
+=effect_update_depth_exceeded= — a state write inside an =$effect= in the
+drawer froze the whole reader (2026-11-11); focusing is imperative now.
+
+* Edit section + merge requests + Composer v2 (branch =feat/edit-section=)
+
+Engine: =src/publication/section_edit.rs=, =src/publication/merge_request.rs=,
+=src/api/{section_edit,merge_requests}.rs=. Web: composer
+(=ComposeView=, =editor/wysiwyg.ts=, =editor/markup.ts=), =EditReviewModal=,
+=MergeRequestsModal=. Live-verified 2026-11-10 on an isolated :3131 with two
+throwaway keys — no keyring, nothing broadcast.
+
+#+begin_src bash
+cargo test --lib section_edit merge_request wire_tags   # planner, 818 core, WireTag
+pnpm -C web test                                        # incl. editor/markup.test.ts
+
+# Two throwaway identities (no keyring): "me" signs through a NIP-07-style
+# external signer answered by nak; "mara" only authors fixtures.
+ME=$(nak key generate </dev/null); MARA=$(nak key generate </dev/null)
+MPK=$(nak key public $MARA </dev/null)
+# fixtures: mara's 30040 + three 30041 (m text/markdown), a 30818 — sign with
+#   echo '{"kind":…,"content":…,"tags":[…],"created_at":…}' | nak event --sec $MARA
+# then: curl -X POST localhost:3131/api/v1/ingest -H 'Content-Type: application/x-ndjson' --data-binary @fx.jsonl
+
+# external signer: register + use (pubkey!) + answer sign_request over SSE
+SID=$(curl -s -X POST localhost:3131/api/v1/identity/signer-register -H 'Content-Type: application/json' \
+  -d "{\"kind\":\"nip07\",\"pubkey\":\"$(nak key public $ME </dev/null)\"}" | jq -r .signer_id)
+curl -s -X POST localhost:3131/api/v1/identity/use -H 'Content-Type: application/json' \
+  -d "{\"source\":\"nip07\",\"signer_id\":\"$SID\",\"pubkey\":\"$(nak key public $ME </dev/null)\"}"
+#   (a node loop on /identity/signer-channel?token=… pipes each template through
+#    `nak event --sec $ME` and POSTs /identity/sign-response {signer_id, req_id, signed_event})
+
+# preview an edit of mara's section, placed in her publication
+curl -s -X POST localhost:3131/api/v1/section-edit/preview -H 'Content-Type: application/json' \
+  -d "{\"section\":\"<30041 id>\",\"index\":\"30040:$MPK:<d>\",\"content\":\"…\",\"title\":\"…\"}"
+#   → route fork_and_request, the fork (minted d, E, p), the 818, destinations
+curl -s 'localhost:3131/api/v1/merge-requests?role=owner&status=all'   # as mara
+curl -s localhost:3131/api/v1/merge-requests/<818 id>/diff
+curl -s -X POST localhost:3131/api/v1/merge-requests/<818 id>/decline -H 'Content-Type: application/json' -d '{"reason":"…"}'
+#+end_src
+
+GUI (headless CDP): reader § menu → =Edit section= → composer placed in the
+publication, siblings dimmed + uneditable → edit → =Fork + request merge…= →
+review (diff, 818 message, destination chips) → armed sign → toast; feed
+menu on an own 30040 → =Edit publication= (all unlocked) → =Republish…=;
+search a 30023 / 30818 → menu → =Edit=. As the owner: menu → =Merge
+requests= (a publication's list includes its sections) → diff → Merge
+(armed) / Decline…. Gotchas: the merge-request routes need axum 0.7 =:id=
+syntax (={id}= silently falls through to the SPA); =pkill -f= on a pattern
+your own command line contains kills the shell — select PIDs with a
+=[t]endrl= bracket pattern.
+
+
+* Local mode + broadcast (branch =feat/local-mode=)
+Local mode: no relay socket opens (=relay.rs= gate; the NIP-46 signer is
+exempt); publishing stores locally. The reader's tools sheet → /⇡ back up
+to relays/ → now /⇡ broadcast/ (also event menu =b=, feed pill) lists the
+connected set and re-sends a pick under a permit — nothing is signed.
+
+#+begin_src sh
+# isolated engine, test relay only (theforest refuses unknown keys — a
+# rejection with an empty message there still proves the socket opened)
+./target/debug/tendrl-engine -c /tmp/lm/config.toml --data-dir /tmp/lm/data --port 3131 &
+curl -s -XPOST localhost:3131/api/v1/network/mode -H 'content-type: application/json' -d '{"mode":"local"}'
+
+# fixture: throwaway keys A (publication) + B (highlights, comment, annotation, deletion)
+A=$(nak key generate); B=$(nak key generate); PA=$(nak key public $A)
+ev(){ nak event "$@" < /dev/null; }      # stdin closed or nak blocks
+s1=$(ev --sec $A -k 30041 -d s1 -t title=One -t m=text/markdown -c "Hello world, this is the first section.")
+s2=$(ev --sec $A -k 30041 -d s2 -t title=Two -t m=text/markdown -c "Second section text.")
+idx=$(ev --sec $A -k 30040 -d book -t title="Test Book" -t a="30041:$PA:s1" -t a="30041:$PA:s2")
+h1=$(ev --sec $B -k 9802 -t a="30041:$PA:s1" -c "first section"); H1=$(echo "$h1" | jq -r .id)
+h2=$(ev --sec $B -k 9802 -t a="30041:$PA:s2" -c "Second");        H2=$(echo "$h2" | jq -r .id)
+del=$(ev --sec $B -k 5 -e $H2)
+cm=$(ev --sec $B -k 1111 -t A="30040:$PA:book" -t K=30040 -t a="30040:$PA:book" -t k=30040 -c "Nice book")
+an=$(ev --sec $B -k 30041 -d note1 -t e=$H1 -t m=text/markdown -c "why I highlighted this")
+printf '%s\n' "$s1" "$s2" "$idx" "$h1" "$h2" "$del" "$cm" "$an" > /tmp/lm/fixture.jsonl
+curl -s -XPOST localhost:3131/api/v1/ingest -H 'content-type: application/x-ndjson' --data-binary @/tmp/lm/fixture.jsonl
+
+# plan: 8 rows, the h2 highlight deleted:true, nothing on a relay
+curl -s "localhost:3131/api/v1/broadcast/plan?coord=30040:$PA:book" | jq -c '[.rows[]|{role,deleted,relays}]'
+curl -s "localhost:3131/api/v1/broadcast/plan?id=<comment id>" | jq '.rows|length'   # any event works
+# local mode holds: no relay fetch recorded, a plain broadcast is "Kept local"
+curl -s localhost:3131/api/v1/network/status | jq '.recent|length'      # 0
+# broadcast to the test relay
+IDS=$(curl -s "localhost:3131/api/v1/broadcast/plan?coord=30040:$PA:book" | jq -c '[.rows[]|select(.deleted|not)|.id]')
+curl -s -XPOST localhost:3131/api/v1/broadcast/send -H 'content-type: application/json' \
+  -d "{\"ids\":$IDS,\"relays\":[\"wss://theforest.nostr1.com\"]}" | jq -c .
+
+# GUI (chromium --headless=new --remote-debugging-port=9333 --user-data-dir=/tmp/lm/prof about:blank)
+node scripts/verify/broadcast-modal.mjs --port 3131  # 11 checks
+#+end_src

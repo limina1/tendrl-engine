@@ -10,6 +10,7 @@
 </script>
 
 <script lang="ts">
+	import RefreshIcon from '$lib/components/RefreshIcon.svelte';
 	import { tick, untrack } from 'svelte';
 	import * as api from '$lib/api';
 	import { getAppState } from '$lib/state.svelte';
@@ -25,7 +26,8 @@
 	import { getActiveStore, type NavAction } from '../buffer-store.svelte';
 	import { onStoreEvent, concernsRoot, type StoreEvent } from '$lib/store-events.svelte';
 	import { shell } from '../shell.svelte';
-	import { layers, bindMimetype, bindPublication } from '$lib/layers/store.svelte';
+	import { DEFAULT_TREE_DEPTH, rememberDepth, rememberedDepth } from '$lib/reader-depth';
+	import { layers, bindMimetype, bindPublication, setHideMarkers } from '$lib/layers/store.svelte';
 	import { LAYERS, SOURCE_ID, layerById, formatLabel } from '$lib/layers/registry';
 	import { resolveLayer, type LayerPick } from '$lib/layers/resolve';
 	import { mobileNav } from '../mobile-nav.svelte';
@@ -42,13 +44,23 @@
 	import type { Buffer } from '../types';
 	import { sectionState, segmentSections } from '$lib/compose/state';
 	import { threadContainsId, type ThreadNode } from '$lib/discussions/thread';
-	import { highlightFromEvent, type Highlight } from '$lib/discussions/highlights';
+	import {
+		highlightFromEvent,
+		highlighterFromTags,
+		type Highlight,
+		type Highlighter
+	} from '$lib/discussions/highlights';
+	import { highlighterChoice } from '$lib/discussions/highlighter-choice.svelte';
 	import { identityCanSign } from '$lib/identity/signer';
 	import CommentThread from '$lib/components/CommentThread.svelte';
 	import ReplyBox from '$lib/components/ReplyBox.svelte';
 	import HighlightCapture from '$lib/components/HighlightCapture.svelte';
 	import ReadingControls from '$lib/components/ReadingControls.svelte';
 	import HighlightList from '$lib/components/HighlightList.svelte';
+	import NarrationDrawer from '$lib/components/NarrationDrawer.svelte';
+	import NarrationControls from '$lib/components/NarrationControls.svelte';
+	import * as nar from '$lib/narration.svelte';
+	import * as history from '$lib/history.svelte';
 	import HighlightsDrawer, {
 		type DrawerHighlight
 	} from '$lib/components/HighlightsDrawer.svelte';
@@ -90,6 +102,8 @@
 		 *  remount re-reads them from the local store (no relay pull). */
 		insertionsLoaded: boolean;
 		insertionsScope: 'mine' | 'anyone';
+		/** Which tools-sheet sections are expanded (actions by default). */
+		toolsSecs?: Record<string, boolean>;
 		/** Rendering-layer pick for this buffer: undefined = automatic (declared
 		 *  format + bindings), null = source, else a layer id. Un-promoted, so
 		 *  it lives with the other view state and dies with the buffer. */
@@ -125,6 +139,7 @@
 			toolsOpen,
 			insertionsLoaded,
 			insertionsScope,
+			toolsSecs: { ...toolsSecs },
 			layerPick,
 			scroll: { ...scrollTops }
 		} satisfies ReaderViewState);
@@ -168,7 +183,16 @@
 	// `max_depth` counts the deepest fully-loaded level). Minimum 1: level 0
 	// (the focused index itself) is always loaded.
 	const MAX_DEPTH = 6;
-	let treeDepth = $state(savedView?.treeDepth ?? 2);
+	// The buffer's own view state first, else the depth last chosen for this
+	// publication on this device (reader-depth.ts), else the default.
+	// svelte-ignore state_referenced_locally
+	const depthCoord = (() => {
+		const a = parseBufferId(buffer.id);
+		return a && a.kind === 30040 ? `30040:${a.pubkey}:${a.dTag}` : null;
+	})();
+	let treeDepth = $state(
+		savedView?.treeDepth ?? (depthCoord ? rememberedDepth(depthCoord) : undefined) ?? DEFAULT_TREE_DEPTH
+	);
 	// Depth the current focus's tree has actually been streamed to. Lowering
 	// `treeDepth` at or below this is a no-op — the deeper tree stays loaded
 	// and ready, so no re-stream and no counter reset.
@@ -317,6 +341,9 @@
 				for (const m of matched) byAddr[m].push(ev);
 			}
 			discussionEvents = byAddr;
+			void loadHighlightAttached(
+				resp.events.filter((ev) => ev.kind === 9802).map((ev) => ev.id)
+			);
 			// Per-section thread forests, built engine-side (threaded: true).
 			threadsBySection = resp.threads_by_address ?? {};
 			discussionCounts = resp.counts;
@@ -575,6 +602,107 @@
 		}
 	}
 	$effect(() => onStoreEvent(onLiveStoreEvent));
+	// Highlighters (docs/highlighters-contract.org): the drawer's label filter
+	// also filters what the reader paints; a mark clicked in the text opens
+	// the drawer on it (`focusHighlight`, imperative).
+	let hlLabelFilter = $state<string | null>(null);
+	let drawerRef = $state<{ focusHighlight: (id: string) => void } | undefined>();
+	function passesLabelFilter(ev: { tags: string[][] }): boolean {
+		return hlLabelFilter === null || (highlighterFromTags(ev.tags)?.label ?? '') === hlLabelFilter;
+	}
+	function onReaderClick(e: MouseEvent) {
+		const mark = (e.target as HTMLElement | null)?.closest<HTMLElement>('mark.hl-overlay');
+		if (!mark) return;
+		if ((e.target as HTMLElement).closest('a, button')) return; // a link under a highlight
+		const sel = window.getSelection();
+		if (sel && !sel.isCollapsed) return; // selecting, not clicking
+		const ids = (mark.dataset.hlIds ?? '').split(' ').filter(Boolean);
+		const id = ids[ids.length - 1];
+		if (!id) return;
+		drawerOpen = true;
+		drawerRef?.focusHighlight(id);
+	}
+	async function restyleHighlight(id: string, highlighter: Highlighter | null) {
+		try {
+			const resp = await api.restyleHighlight({ event_id: id, highlighter });
+			const { successful, total } = resp.broadcast;
+			app.pushToast(
+				total === 0
+					? 'Recoloured locally (no publish relays)'
+					: `Recoloured — new highlight published (${successful}/${total} relays)`,
+				successful === 0 && total > 0 ? 'error' : 'success'
+			);
+			refreshDiscussionsLocal();
+		} catch (e) {
+			app.pushToast(api.errorMessage(e, 'Recolour failed'), 'error', 5000);
+		}
+	}
+	async function deleteHighlight(id: string) {
+		try {
+			const resp = await api.deleteDiscussion({ event_id: id, reason: 'deleted by author' });
+			const { successful, total } = resp.broadcast;
+			app.pushToast(
+				total === 0
+					? 'Highlight deleted locally (no publish relays)'
+					: `Highlight deleted — deletion request sent (${successful}/${total} relays)`,
+				successful === 0 && total > 0 ? 'error' : 'success'
+			);
+			refreshDiscussionsLocal();
+		} catch (e) {
+			app.pushToast(api.errorMessage(e, 'Delete failed'), 'error', 5000);
+		}
+	}
+	// Per-highlight annotation + comments for the drawer, loaded after each
+	// discussions load (not from an effect — see the drawer's focus note).
+	let hlAttached = $state<Record<string, api.HighlightAttached>>({});
+	async function loadHighlightAttached(ids: string[]) {
+		if (ids.length === 0) return;
+		try {
+			hlAttached = (await api.highlightsAttached(ids)).items;
+		} catch (e) {
+			console.warn('[ReaderBuffer] highlight annotations/comments failed', e);
+		}
+	}
+	async function commentOnHighlight(id: string, text: string) {
+		const ev = drawerHighlights.find((h) => h.id === id);
+		try {
+			const resp = await api.publishComment({
+				root: { event_id: id, kind: 9802, pubkey: ev?.pubkey },
+				content: text
+			});
+			const { successful, total } = resp.broadcast;
+			app.pushToast(
+				total === 0 ? 'Comment saved locally (no publish relays)' : `Comment published (${successful}/${total} relays)`,
+				successful === 0 && total > 0 ? 'error' : 'success'
+			);
+			refreshDiscussionsLocal();
+		} catch (e) {
+			app.pushToast(api.errorMessage(e, 'Comment failed'), 'error', 5000);
+			throw e;
+		}
+	}
+	async function annotateHighlight(id: string, text: string) {
+		try {
+			const resp = await api.annotateHighlight({
+				highlight_id: id,
+				content: text,
+				root: publication ? addrKey(publication.addr) : undefined
+			});
+			const { successful, total } = resp.broadcast;
+			app.pushToast(
+				total === 0 ? 'Annotation saved locally (no publish relays)' : `Annotation published (${successful}/${total} relays)`,
+				successful === 0 && total > 0 ? 'error' : 'success'
+			);
+			refreshDiscussionsLocal();
+		} catch (e) {
+			app.pushToast(api.errorMessage(e, 'Annotation failed'), 'error', 5000);
+			throw e;
+		}
+	}
+	function adoptHighlighter(h: Highlighter) {
+		highlighterChoice.set(h);
+		app.pushToast(`Style picked${h.label ? `: ${h.label}` : ""} — your next highlight uses it`, 'info');
+	}
 
 	const canSignNow = $derived(identityCanSign(app.identityStatus));
 
@@ -726,7 +854,7 @@
 		const out: Highlight[] = [];
 		const seen = new Set<string>();
 		const push = (ev: api.DiscussionEvent) => {
-			if (seen.has(ev.id) || ev.kind !== 9802) return;
+			if (seen.has(ev.id) || ev.kind !== 9802 || !passesLabelFilter(ev)) return;
 			seen.add(ev.id);
 			// Carry offset/context tags through so the engine resolver can pin
 			// exact positions instead of substring-guessing.
@@ -890,6 +1018,65 @@
 	// that's what makes click-to-scroll work for publication-level
 	// highlights that don't carry a section addr themselves.
 	let drawerOpen = $state(false);
+	// Recordings drawer (kind-32176 narrations bound to this tree).
+	let narrationOpen = $state(false);
+	// The player's controls sit right above the pager (or the top of the
+	// scroll) while the loaded playlist is THIS publication's; the fixed
+	// dock (which owns the audio element) hides itself when the work pane
+	// shows this reader — it reads that off the buffer store, nothing is
+	// registered from here.
+	const readerCoord = $derived(parsedAddr?.kind === 30040 ? `30040:${parsedAddr.pubkey}:${parsedAddr.dTag}` : null);
+	const playerHere = $derived(!!readerCoord && nar.player.playlist.length > 0 && nar.player.pubCoord === readerCoord);
+	const narrationSummary = $derived(
+		parsedAddr?.kind === 30040 ? nar.summary(parsedAddr.pubkey, parsedAddr.dTag) : { sections: 0, narrated: 0, recordings: 0 }
+	);
+	function goToSectionCoord(coord: string) {
+		const idx = sectionIndexForAddr(coord);
+		if (idx < 0) return;
+		if (viewMode === 'continuous') {
+			continuousView?.scrollToSection(idx);
+		} else {
+			currentSection = idx;
+		}
+	}
+
+	// ── Reading history (persistent, engine-side) ───────────────────────
+	// The reading *place* above is per-buffer and dies with the session;
+	// the history is the one line per document that survives it. Tracked:
+	// publication indexes (30040) with the section last shown, and the
+	// atomic documents (30023 articles, 30818 wikis). A section is only
+	// ever recorded *inside* its publication — a 30041 opened on its own
+	// leaves no entry. For publications, recording waits until the resume
+	// check in `finish` has run (`placeReady`), so a fresh open never
+	// overwrites the saved place with section 0 before jumping to it.
+	const HISTORY_KINDS = new Set([30040, 30023, 30818]);
+	let placeReady = $state(!!savedView);
+	$effect(() => {
+		if (!publication || !parsedAddr || !HISTORY_KINDS.has(parsedAddr.kind)) return;
+		const coord = `${parsedAddr.kind}:${parsedAddr.pubkey}:${parsedAddr.dTag}`;
+		const meta = { title: publication.title, author: publication.author_pubkey };
+		if (parsedAddr.kind !== 30040) {
+			untrack(() => history.recordRead(coord, meta));
+			return;
+		}
+		if (!placeReady) return;
+		const sec = pristineSections[currentSection];
+		if (!sec || sec.addr.kind !== 30041) return;
+		const place = { coord: addrKey(sec.addr), title: sec.title };
+		untrack(() => history.recordRead(coord, meta, place));
+	});
+	function resumeFromHistory() {
+		if (placeReady || parsedAddr?.kind !== 30040) {
+			placeReady = true;
+			return;
+		}
+		const pubCoord = `30040:${parsedAddr.pubkey}:${parsedAddr.dTag}`;
+		void history.ensureLoaded().then(() => {
+			const h = history.entryFor(pubCoord);
+			if (h?.section && sectionIndexForAddr(h.section.coord) > 0) goToSectionCoord(h.section.coord);
+			placeReady = true;
+		});
+	}
 
 	// Summary drawer — a publication/article/wiki `summary` tag renders
 	// under the title, open by default, closable from the title-row chip.
@@ -902,6 +1089,10 @@
 	// typography). Both ride along in the saved reading place.
 	let treeOpen = $state(savedView?.treeOpen ?? false);
 	let toolsOpen = $state(savedView?.toolsOpen ?? false);
+	// The tools sheet grew long: each section folds behind its own ▸ head,
+	// only `actions` open by default, and the sheet is height-capped.
+	let toolsSecs = $state<Record<string, boolean>>(savedView?.toolsSecs ?? { actions: true });
+	const toggleToolsSec = (k: string) => (toolsSecs[k] = !toolsSecs[k]);
 	let tocOpen = $state(false);
 	// ContinuousView instance — its exported scrollToSection keeps a TOC
 	// jump in-place instead of flipping the view mode.
@@ -1007,11 +1198,25 @@
 				pubkey: ev.pubkey,
 				content: ev.content ?? '',
 				created_at: ev.created_at,
-				section_addr: sectionAddr
+				section_addr: sectionAddr,
+				highlighter: highlighterFromTags(ev.tags)
 			});
 		}
 		return out.sort((a, b) => b.created_at - a.created_at);
 	});
+
+	// The drawer follows the view: on a page it lists only that page's
+	// highlights (the section the pager shows); continuous lists them all.
+	const pageAddr = $derived.by<string | null>(() => {
+		if (viewMode !== 'paginated') return null;
+		const s = pristineSections[currentSection];
+		return s ? addrKey(s.addr) : null;
+	});
+	const drawerScoped = $derived(
+		pageAddr === null
+			? drawerHighlights
+			: drawerHighlights.filter((h) => h.section_addr === pageAddr)
+	);
 
 	function sectionIndexForAddr(addr: string): number {
 		return pristineSections.findIndex((s) => addrKey(s.addr) === addr);
@@ -1229,6 +1434,9 @@
 		// (paginated/continuous, highlights, comments) works uniformly.
 		if (parsedAddr.kind !== 30040) {
 			await loadAddressable(parsedAddr.kind, parsedAddr.pubkey, parsedAddr.dTag);
+			// A document on its own: one-node discovery feeds its player strip
+			// (the relays it came from are asked, ungated).
+			void nar.refreshNode(`${parsedAddr.kind}:${parsedAddr.pubkey}:${parsedAddr.dTag}`, 'local_first');
 			return;
 		}
 		// Seed the focus stack with the buffer's own publication on first
@@ -1445,6 +1653,11 @@
 					sections: pristineSections,
 					loadedDepth: treeDepth
 				});
+				// Recordings ride along with the book: local store only here;
+				// "fetch from relays" and the drawer's ⟳ reach relays.
+				if (parsedAddr?.kind === 30040) void nar.refresh(parsedAddr.pubkey, parsedAddr.dTag, 'local_only');
+				// Fresh open: continue at the last section the history remembers.
+				resumeFromHistory();
 			}
 		};
 
@@ -1686,6 +1899,7 @@
 		const clamped = Math.max(1, Math.min(MAX_DEPTH, d));
 		if (clamped === treeDepth) return;
 		treeDepth = clamped;
+		if (depthCoord) rememberDepth(depthCoord, clamped);
 		if (!parsedAddr || parsedAddr.kind !== 30040) return;
 		// Lowering the depth, or any target within what's already loaded, is
 		// a no-op: the deeper tree stays in place, ready if depth is raised
@@ -2093,6 +2307,8 @@
 		try {
 			const resp = await api.backfillPublication(parsedAddr.pubkey, parsedAddr.dTag);
 			if (resp.fetched > 0) runLoader();
+			// Pulling the book pulls its recordings (own Confirm intent).
+			void nar.refresh(parsedAddr.pubkey, parsedAddr.dTag, 'fetch_always');
 		} catch (e) {
 			console.warn('[ReaderBuffer] backfill failed', e);
 		} finally {
@@ -2514,7 +2730,13 @@
 
 <!-- Swipe is supplementary — the § toc button is the accessible path. -->
 <!-- svelte-ignore a11y_no_static_element_interactions -->
-<div class="reader-wrap" ontouchstart={onReaderTouchStart} ontouchend={onReaderTouchEnd}>
+<!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
+<div
+	class="reader-wrap"
+	ontouchstart={onReaderTouchStart}
+	ontouchend={onReaderTouchEnd}
+	onclick={onReaderClick}
+>
 	<div class="toolbar" data-tour="reader-toolbar" style:display={note ? 'none' : undefined}>
 		{#if showTocButton}
 			<button
@@ -2559,6 +2781,17 @@
 			</span>
 		{/if}
 		<span class="sp"></span>
+		{#if parsedAddr?.kind === 30040 && narrationSummary.narrated > 0}
+			<button
+				class="tb-icon"
+				class:active={narrationOpen}
+				onclick={() => {
+					if (parsedAddr && !nar.resumeOrPlay(parsedAddr.pubkey, parsedAddr.dTag, publication?.title ?? null)) narrationOpen = true;
+				}}
+				title="Listen — play this publication's narration ({narrationSummary.narrated} of {narrationSummary.sections} sections recorded)"
+				aria-label="Listen to the narration"
+			>▶ listen</button>
+		{/if}
 		{#if parsedAddr?.kind === 30040 && rootLoaded && hasGraph}
 			<!-- Only nested publications have a tree to tune; a single-level
 			     one loads in one shot and shows no button. -->
@@ -2639,10 +2872,16 @@
 		     for mid-read, so it lives behind `T`. -->
 		<div class="tools-sheet" role="region" aria-label="Reader tools">
 			<div class="tools-sheet__sec">
-				<div class="tools-sheet__head">
+				<button
+					class="tools-sheet__head"
+					onclick={() => toggleToolsSec('actions')}
+					aria-expanded={!!toolsSecs.actions}
+				>
+					<span class="chev" aria-hidden="true">{toolsSecs.actions ? '▾' : '▸'}</span>
 					<span class="cap">actions</span>
 					<span class="hint">change or refresh this publication</span>
-				</div>
+				</button>
+				{#if toolsSecs.actions}
 				<div class="tools-sheet__row">
 					<button
 						class="hl-mode-pill"
@@ -2716,6 +2955,25 @@
 							title="Hide the loaded annotations (they stay in the local store)"
 						>hide</button>
 					{/if}
+					{#if parsedAddr?.kind === 30040}
+						<button
+							class:active={narrationOpen}
+							onclick={() => (narrationOpen = !narrationOpen)}
+							aria-expanded={narrationOpen}
+							disabled={!publication}
+							title="Recordings — narrations of this publication (play, mirror, narrate)"
+						>recordings {narrationSummary.recordings}</button>
+						<button
+							class="narrate"
+							disabled={!publication || !canSignNow}
+							onclick={() =>
+								parsedAddr &&
+								(app.narrateModal = { pubkey: parsedAddr.pubkey, d_tag: parsedAddr.dTag, title: publication?.title ?? null })}
+							title={canSignNow
+								? 'Narrate — read this publication aloud with ppq.ai TTS, store the audio on Blossom, publish one kind-32176 recording per section'
+								: 'Sign in to narrate'}
+						>narrate</button>
+					{/if}
 					{#if publication?.summary}
 						<button
 							class:active={summaryOpen}
@@ -2759,11 +3017,10 @@
 					{#if publication?.addr.kind === 30040}
 						<button
 							class="title-fetch"
-							class:spin={backfillingAll}
 							onclick={backfillAll}
 							disabled={backfillingAll}
 							title="Fetch this publication's index + backfill all missing sections from relays, then pull its annotations ({insertionsScope}) and comments"
-						>⟳ fetch from relays</button>
+						><RefreshIcon spinning={backfillingAll} /> fetch from relays</button>
 					{/if}
 					<button
 						class="discussions-refresh"
@@ -2773,15 +3030,34 @@
 							? 'Pull new comments and highlights from relays'
 							: 'Confirm mode — pulling comments and highlights raises the fetch modal'}
 					>{discussionLoading ? '…' : 'refresh threads'}</button>
+					{#if publication}
+						<button
+							class="title-fetch"
+							onclick={() =>
+								publication &&
+								(app.broadcastModal = {
+									coord: `${publication.addr.kind}:${publication.addr.pubkey}:${publication.addr.d_tag}`,
+									title: publication.title ?? null
+								})}
+							title="Broadcast — re-send this publication's signed events (index, sections, highlights, comments, narrations…) to relays you pick. Nothing is re-signed. Works in local mode."
+						>⇡ broadcast</button>
+					{/if}
 				</div>
+				{/if}
 			</div>
 			{#if publication}
 				{@const pubAddr = publication.addr}
 				<div class="tools-sheet__sec">
-					<div class="tools-sheet__head">
+					<button
+						class="tools-sheet__head"
+						onclick={() => toggleToolsSec('pool')}
+						aria-expanded={!!toolsSecs.pool}
+					>
+						<span class="chev" aria-hidden="true">{toolsSecs.pool ? '▾' : '▸'}</span>
 						<span class="cap">pool</span>
 						<span class="hint">where this publication sits in your working set — and where it was found</span>
-					</div>
+					</button>
+					{#if toolsSecs.pool}
 					<div class="tools-sheet__row">
 						<PoolStateBadges
 							item={app.findPoolItemByAddr(pubAddr)}
@@ -2796,13 +3072,20 @@
 							orientation="horizontal"
 						/>
 					</div>
+					{/if}
 				</div>
 			{/if}
 			<div class="tools-sheet__sec">
-				<div class="tools-sheet__head">
+				<button
+					class="tools-sheet__head"
+					onclick={() => toggleToolsSec('markup')}
+					aria-expanded={!!toolsSecs.markup}
+				>
+					<span class="chev" aria-hidden="true">{toolsSecs.markup ? '▾' : '▸'}</span>
 					<span class="cap">markup</span>
 					<span class="hint">{layerHint}</span>
-				</div>
+				</button>
+				{#if toolsSecs.markup}
 				<div class="tools-sheet__row">
 					<button
 						class:active={layerDecision.layerId === null}
@@ -2828,6 +3111,23 @@
 						<span class="layer-none">all layers off — Settings → Layers</span>
 					{/if}
 				</div>
+				<div class="tools-sheet__row">
+					<!-- The composer's Rendered / Show markers, for reading:
+					     per-device, applies to every reader. -->
+					<span class="layer-none">syntax</span>
+					<button
+						class:active={layers.hideMarkers}
+						disabled={layerDecision.layerId === null}
+						onclick={() => setHideMarkers(true)}
+						title="Rendered — hide the markup characters (**, ##, [[ ]], …)"
+					>rendered</button>
+					<button
+						class:active={!layers.hideMarkers}
+						disabled={layerDecision.layerId === null}
+						onclick={() => setHideMarkers(false)}
+						title="Show markers — keep the markup characters, dimmed"
+					>show markers</button>
+				</div>
 				{#if layerPick !== undefined && !layerForce}
 					<div class="tools-sheet__row">
 						{#if layerProbe?.effective_format && layers.byMimetype[layerProbe.effective_format] !== (layerPick ?? SOURCE_ID)}
@@ -2846,15 +3146,21 @@
 						{/if}
 					</div>
 				{/if}
+				{/if}
 			</div>
 			<div class="tools-sheet__sec">
-				<div class="tools-sheet__head">
+				<button
+					class="tools-sheet__head"
+					onclick={() => toggleToolsSec('reading')}
+					aria-expanded={!!toolsSecs.reading}
+				>
+					<span class="chev" aria-hidden="true">{toolsSecs.reading ? '▾' : '▸'}</span>
 					<span class="cap">reading</span>
 					<span class="hint">faces &amp; measure — persists per device</span>
-				</div>
-				<div class="tools-sheet__row">
+				</button>
+				{#if toolsSecs.reading}
 				<ReadingControls compact />
-				</div>
+				{/if}
 			</div>
 		</div>
 	{/if}
@@ -3005,8 +3311,14 @@
 				{/if}
 			</div>
 		{/if}
+		{#if playerHere}
+			<div class="reader-player" role="region" aria-label="Narration player">
+				<NarrationControls variant="inline" />
+			</div>
+		{/if}
 		<div
 			class="content rd-content"
+			class:content--paged={viewMode !== 'continuous'}
 			bind:this={contentWrap}
 			onscroll={() => (scrollTops.content = contentWrap?.scrollTop ?? 0)}
 		>
@@ -3024,6 +3336,7 @@
 					publicationAtag={`${publication.addr.kind}:${publication.addr.pubkey}:${publication.addr.d_tag}`}
 					onload={isDraftMode ? undefined : handleLoadSection}
 					onviewjson={openSectionJsonBySection}
+					onopenrecordings={parsedAddr?.kind === 30040 ? () => (narrationOpen = true) : undefined}
 					highlightsFor={highlightsForSection}
 					focusedHighlightId={parsedHighlightId}
 					{layerPick}
@@ -3049,6 +3362,8 @@
 					onrefocus={refocus}
 					onload={isDraftMode ? undefined : handleLoadSection}
 					onsectionjson={openSectionJsonByIndex}
+					pubTitle={publication?.title ?? null}
+					onopenrecordings={parsedAddr?.kind === 30040 ? () => (narrationOpen = true) : undefined}
 					highlightsFor={highlightsForSection}
 					focusedHighlightId={parsedHighlightId}
 					{layerPick}
@@ -3102,16 +3417,40 @@
 						onclick={() => tocJump(i)}
 					>
 						<span class="rtoc__name">{section.title || 'Untitled section'}</span>
+						{#if nar.activeRecording(addrKey(section.addr))}
+							<span class="rtoc__speaker" title="Narrated — a recording is bound to this section" aria-label="narrated">🔈</span>
+						{/if}
 					</button>
 				{/if}
 			{/each}
 		</nav>
 	{/if}
+	{#if parsedAddr?.kind === 30040}
+		<NarrationDrawer
+			pubkey={parsedAddr.pubkey}
+			d_tag={parsedAddr.dTag}
+			pubTitle={publication?.title ?? null}
+			open={narrationOpen}
+			onclose={() => (narrationOpen = false)}
+			onnavigate={goToSectionCoord}
+		/>
+	{/if}
 	<HighlightsDrawer
-		highlights={drawerHighlights}
+		highlights={drawerScoped}
+		scope={pageAddr === null ? null : 'this page'}
 		open={drawerOpen}
 		onclose={() => (drawerOpen = false)}
 		onnavigate={scrollToHighlight}
+		mypubkey={app.identityStatus?.pubkey ?? null}
+		bind:this={drawerRef}
+		bind:labelFilter={hlLabelFilter}
+		onrestyle={canSignNow ? restyleHighlight : null}
+		onadopt={adoptHighlighter}
+		ondelete={canSignNow ? deleteHighlight : null}
+		attached={hlAttached}
+		canSign={canSignNow}
+		oncomment={commentOnHighlight}
+		onannotate={annotateHighlight}
 		onrefresh={async () => {
 			const authors = new Set<string>(drawerHighlights.map((h) => h.pubkey));
 			if (authors.size > 0) await refreshAuthors([...authors]);
@@ -3120,6 +3459,9 @@
 </div>
 
 <style>
+	.tools-sheet__row .narrate {
+		color: var(--id-yours);
+	}
 	.reader-wrap {
 		display: flex;
 		flex-direction: column;
@@ -3231,6 +3573,20 @@
 		overflow: hidden;
 		text-overflow: ellipsis;
 		white-space: nowrap;
+	}
+	.rtoc__speaker {
+		margin-left: auto;
+		padding-left: 6px;
+		font-size: var(--t-3xs);
+		opacity: 0.7;
+		flex-shrink: 0;
+	}
+	.reader-player {
+		margin: 0 8px 6px;
+		padding: 4px 8px;
+		border: 1px solid var(--panel-border, var(--border));
+		border-radius: var(--r-md);
+		background: var(--panel-bg, var(--bg-panel, var(--bg-surface)));
 	}
 	.toolbar button {
 		font-family: var(--font-mono);
@@ -3398,6 +3754,13 @@
 		white-space: pre-wrap;
 	}
 	.content { flex: 1; overflow: auto; min-height: 0; position: relative; }
+	/* Paged: the page scrolls inside PaginatedView, so its Prev/Next bar
+	   stays pinned instead of scrolling away with the text. */
+	.content.content--paged {
+		display: flex;
+		flex-direction: column;
+		overflow: hidden;
+	}
 	.empty {
 		flex: 1;
 		display: flex;
@@ -3414,9 +3777,8 @@
 		color: var(--base5);
 	}
 
-	/* Fetch-from-relays (radial arrow). Pairs with .spin for the loading
-	 * state — borrows the existing keyframe so a pending fetch reads
-	 * visually the same as a streaming tree node. */
+	/* Fetch-from-relays. The RefreshIcon inside spins while loading — the
+	 * button itself never rotates. */
 	.title-fetch {
 		background: none;
 		border: 1px solid var(--base3);
@@ -3430,6 +3792,10 @@
 		line-height: 20px;
 		cursor: pointer;
 		text-align: center;
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		gap: 5px;
 	}
 	.title-fetch {
 		margin-left: 6px;
@@ -3520,17 +3886,6 @@
 	.depth-knob__step:disabled { opacity: 0.4; cursor: not-allowed; }
 	.depth-knob__step:hover:not(:disabled) { border-color: var(--id-yours); }
 
-	/* Spinner for pending tree nodes while the loader is streaming. */
-	.spin {
-		display: inline-block;
-		animation: reader-spin 1s linear infinite;
-	}
-	@keyframes reader-spin {
-		to {
-			transform: rotate(360deg);
-		}
-	}
-
 	.hint {
 		padding: 12px;
 		font-size: var(--t-xs);
@@ -3609,8 +3964,11 @@
 		flex-direction: column;
 		border-bottom: 1px solid var(--panel-border);
 		background: var(--panel-bg);
-		max-height: 60vh;
+		/* Capped: the sheet scrolls inside itself so the page below keeps
+		   its room (and the pager its place). */
+		max-height: min(45vh, 420px);
 		overflow: auto;
+		overscroll-behavior: contain;
 		flex-shrink: 0;
 	}
 	.tools-sheet__sec {
@@ -3626,6 +3984,21 @@
 		align-items: baseline;
 		gap: 8px;
 		flex-wrap: wrap;
+		width: 100%;
+		padding: 2px 0;
+		background: transparent;
+		border: 0;
+		color: inherit;
+		text-align: left;
+		cursor: pointer;
+	}
+	.tools-sheet__head:hover .cap,
+	.tools-sheet__head:hover .chev { color: var(--fg); }
+	.tools-sheet__head .chev {
+		font-family: var(--font-mono);
+		font-size: var(--t-2xs);
+		min-width: 1ch;
+		color: var(--base5);
 	}
 	.tools-sheet__head .cap {
 		font-family: var(--font-mono);

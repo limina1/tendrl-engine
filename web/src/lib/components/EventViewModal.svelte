@@ -1,4 +1,11 @@
+<script lang="ts" module>
+	// Documents whose attached-events provenance round already ran this
+	// session: later opens read the local store only (⟳ widens on demand).
+	const attachedRound = new Set<string>();
+</script>
+
 <script lang="ts">
+	import RefreshIcon from '$lib/components/RefreshIcon.svelte';
 	import type { NostrEvent, SearchResult, EditorInsertMode } from '$lib/types';
 	import ProfileName from './ProfileName.svelte';
 	import ReplyBox from './ReplyBox.svelte';
@@ -195,6 +202,8 @@
 	const readLabel = $derived(
 		n.kind === 30040
 			? 'Read publication'
+			: n.kind === 32176
+				? 'Listen'
 			: n.kind === 30041
 				? 'Read section'
 				: n.kind === 30023
@@ -204,6 +213,103 @@
 						: 'Read event'
 	);
 	let containingIndexes: { id: string; pubkey: string; d_tag: string; title: string }[] = $state([]);
+
+	// ===== Attached =====
+	// What hangs off this event — the publication row (index this section /
+	// recording / comment belongs to, with publisher + date) and one chip
+	// per attached kind. Engine-bucketed (`GET /attached`); the first open
+	// per document runs the ungated provenance round (the relays the
+	// document came from), ⟳ runs the gated widening round. A chip with one
+	// event opens that event's menu in place (breadcrumb back); with
+	// several it unfolds a list.
+	type AttGroup = 'comments' | 'highlights' | 'narration_index' | 'index' | 'sections' | 'narration_leaves';
+	const ATT_CHIPS: { key: AttGroup; label: string; color: string; title: string }[] = [
+		{ key: 'comments', label: 'comments', color: '#e8872b', title: 'NIP-22 comments on this event' },
+		{ key: 'highlights', label: 'highlights', color: '#d4b400', title: 'NIP-84 highlights of this event' },
+		{ key: 'narration_index', label: 'narration index', color: '#3cab5a', title: 'Kind-32176 narration indexes (Blossom piece-index roots) bound to the publication' },
+		{ key: 'index', label: '30040 index', color: '#3b82f6', title: 'The publication index this event belongs to' },
+		{ key: 'sections', label: 'sections', color: '#2bb5a8', title: "This index's own sections and nested indexes, in reading order" },
+		{ key: 'narration_leaves', label: 'audio', color: '#9b5de5', title: 'Kind-32176 narration leaves — one Blossom audio blob each' }
+	];
+	const ATTACHED_KINDS = new Set([30040, 30041, 30023, 30818, 30817, 32176, 1111, 9802]);
+	let attached = $state<api.AttachedResponse | null>(null);
+	let attachedLoading = $state(false);
+	let attachedOpen = $state<AttGroup | null>(null);
+	const attIsSelf = $derived(
+		!!attached?.publication && attached.publication.id.toLowerCase() === n.id.toLowerCase()
+	);
+
+	$effect(() => {
+		const currentId = n.id.toLowerCase();
+		const coord = addrRef;
+		const kind = n.kind;
+		attached = null;
+		attachedOpen = null;
+		if (!ATTACHED_KINDS.has(kind)) return;
+		const key = coord ?? currentId;
+		const policy: 'local_only' | 'local_first' = attachedRound.has(key) ? 'local_only' : 'local_first';
+		attachedRound.add(key);
+		void loadAttached(currentId, coord, policy);
+	});
+
+	async function loadAttached(
+		currentId: string,
+		coord: string | null,
+		policy: 'local_only' | 'local_first' | 'fetch_always'
+	) {
+		attachedLoading = true;
+		try {
+			const r = await api.getAttached(coord ? { coord, policy } : { id: currentId, policy });
+			if (n.id.toLowerCase() !== currentId) return;
+			attached = r;
+		} catch (e) {
+			console.warn('attached lookup failed:', e);
+		} finally {
+			if (n.id.toLowerCase() === currentId) attachedLoading = false;
+		}
+	}
+
+	function refetchAttached() {
+		void loadAttached(n.id.toLowerCase(), addrRef, 'fetch_always');
+	}
+
+	function attNav(ev: api.AttachedEvent) {
+		pushBreadcrumb();
+		pendingNavTarget = ev.id.toLowerCase();
+		app.eventModalData = ev as NostrEvent;
+	}
+
+	function attClick(g: AttGroup) {
+		const list = attached?.[g] ?? [];
+		if (list.length === 1) attNav(list[0]);
+		else if (list.length > 1) attachedOpen = attachedOpen === g ? null : g;
+	}
+
+	function attTag(ev: api.AttachedEvent, name: string): string | null {
+		return ev.tags.find((t) => t[0] === name)?.[1] ?? null;
+	}
+
+	/** One-line label for an attached row, by kind. */
+	function attLabel(ev: api.AttachedEvent): string {
+		const clip = (t: string, len = 90) => {
+			const s = t.replace(/\s+/g, ' ').trim();
+			return s.length > len ? s.slice(0, len - 1) + '…' : s;
+		};
+		switch (ev.kind) {
+			case 1111:
+				return clip(ev.content) || '(empty comment)';
+			case 9802:
+				return `“${clip(ev.content)}”`;
+			case 32176: {
+				const children = ev.tags.filter((t) => t[0] === 'a').length;
+				const voice = attTag(ev, 'voice');
+				const base = attTag(ev, 'title') ?? attTag(ev, 'd') ?? 'narration';
+				return `${base}${voice ? ` · ${voice}` : ''}${children ? ` · ${children} section${children === 1 ? '' : 's'}` : ''}`;
+			}
+			default:
+				return attTag(ev, 'title') ?? attTag(ev, 'd') ?? shortHex(ev.id, 6, 4);
+		}
+	}
 
 	$effect(() => {
 		// Re-run when the event id changes. `event` is read inside the
@@ -252,7 +358,11 @@
 		const title = n.title;
 		const d = dTag;
 		onclose();
-		if (kind === 30040 && d) {
+		if (kind === 32176 && d) {
+			// A recording: the publication reader when the narrated document
+			// is local, else the audio view of the kind-32176 tree.
+			void app.openNarrationEvent(pubkey, d, title);
+		} else if (kind === 30040 && d) {
 			onspawnreader?.(pubkey, d, title);
 		} else {
 			onspawneventreader?.(id, title, kind);
@@ -292,67 +402,17 @@
 		onclose();
 	}
 
-	// Per-event broadcast. Explicit, user-initiated — pushes the signed
-	// event to the configured broadcast set (nostr.land etc.) without
-	// going through the auto-publish path. Aligns with [[project-
-	// publishing-philosophy]]: deliberate, per-event opt-in.
-	//
-	// SearchResults arrive with truncated `preview` and no `sig`, so we
-	// always re-fetch the full event by id before broadcasting.
-	let broadcasting = $state(false);
-	async function onBroadcastAction() {
-		if (broadcasting) return;
-		broadcasting = true;
-		try {
-			const [fullResp, cfg] = await Promise.all([
-				api.getEvent(n.id),
-				api.getRelayConfig()
-			]);
-			const fullEvent = fullResp.event;
-			if (!fullEvent || typeof fullEvent !== 'object') {
-				throw new Error('Engine returned no event JSON');
-			}
-			const targets = cfg.broadcast?.urls ?? [];
-			if (targets.length === 0) {
-				app.pushToast(
-					'No broadcast relays configured. Toggle some as "broadcast" in the relays buffer first.',
-					'error',
-					5000
-				);
-				return;
-			}
-			// A 30040 is a publication index: broadcast the *whole* structure
-			// — index + every signed 30041 section, recursing through nested
-			// indices — not the bare index event. The engine assembles the tree
-			// and raises a structure-aware intent. Sections/nested aren't
-			// addressable here, so the single-event path can't cover them.
-			if (n.kind === 30040 && dTag) {
-				const resp = await api.broadcastPublication(n.pubkey, dTag, targets);
-				app.pushToast(
-					`Broadcast ${resp.event_count} event${resp.event_count === 1 ? '' : 's'} — ${resp.successful}/${resp.total} relay ack${resp.total === 1 ? '' : 's'}`,
-					resp.successful > 0 ? 'success' : 'error',
-					4000
-				);
-				return;
-			}
-			const resp = await api.broadcastEvent({
-				event: fullEvent,
-				relays: targets
-			});
-			app.pushToast(
-				`Broadcast to ${resp.successful}/${resp.total} relay${resp.total === 1 ? '' : 's'}`,
-				resp.successful > 0 ? 'success' : 'error',
-				4000
-			);
-		} catch (e) {
-			app.pushToast(
-				`Broadcast failed: ${e instanceof Error ? e.message : String(e)}`,
-				'error',
-				5000
-			);
-		} finally {
-			broadcasting = false;
-		}
+	// Broadcast: re-send this already-signed event — and, if wanted, what is
+	// connected to it (a publication's tree, its highlights / comments / …) —
+	// to relays picked in the broadcast modal. Nothing is signed. Explicit,
+	// per-event opt-in ([[project-publishing-philosophy]]); works in local
+	// mode. The modal takes over, so the menu closes (one dialog at a time).
+	function onBroadcastAction() {
+		app.broadcastModal = {
+			...(dTag ? { coord: `${n.kind}:${n.pubkey}:${dTag}` } : { id: n.id }),
+			title: null
+		};
+		onclose();
 	}
 
 	// ===== Discussion actions: comment on / delete this event =====
@@ -449,10 +509,92 @@
 			(n.kind >= 10000 && n.kind < 20000) ||
 			(n.kind >= 30000 && n.kind < 40000)
 	);
-	const canEdit = $derived(isOwnEvent && isReplaceableKind && n.kind !== 30040 && n.kind !== 30041);
+	// Publications, sections and articles open in the composer instead —
+	// for anyone signed in: your own republish in place, someone else's
+	// become a fork + kind-818 merge request (Sign shows which).
+	const COMPOSER_KINDS = new Set([30040, 30041, 30023, 30818, 30817]);
+	const composerEdit = $derived(COMPOSER_KINDS.has(n.kind) && !!app.identityStatus?.pubkey);
+	const canEdit = $derived(
+		composerEdit || (isOwnEvent && isReplaceableKind && n.kind !== 30040 && n.kind !== 30041)
+	);
+	const editLabel = $derived(
+		n.kind === 30041 ? 'Edit section' : n.kind === 30040 ? 'Edit publication' : 'Edit'
+	);
+	const editTitle = $derived(
+		!composerEdit
+			? "Edit this replaceable event's tags and content in the composer and publish the replacement (yours only)"
+			: n.kind === 30041
+				? isOwnEvent
+					? 'Edit this section in place, in its publication — Sign republishes it'
+					: 'Edit this section in its publication — Sign publishes your copy and sends the author a merge request'
+				: n.kind === 30040
+					? 'Edit the whole publication, every section unlocked'
+					: isOwnEvent
+						? 'Edit in the composer — Sign republishes it (same d)'
+						: 'Edit in the composer — Sign publishes your copy (same d, NIP-54 fork) and sends the author a merge request'
+	);
 	let editLoading = $state(false);
+
+	async function fullEvent(id: string): Promise<api.AttachedEvent | null> {
+		try {
+			const ev = (await api.getEvent(id, { policy: 'local_only' })).event as api.AttachedEvent | null;
+			return ev && Array.isArray(ev.tags) && typeof ev.content === 'string' ? ev : null;
+		} catch {
+			return null;
+		}
+	}
+
+	async function onComposerEdit() {
+		editLoading = true;
+		try {
+			const ev = await fullEvent(n.id);
+			if (!ev) {
+				app.pushToast("This event isn't in your local store yet — fetch it first", 'info');
+				return;
+			}
+			if (ev.kind === 30041) {
+				let pub = attached?.publication && !attIsSelf ? attached.publication : null;
+				if (!pub) {
+					try {
+						pub = (await api.getAttached({ id: ev.id, policy: 'local_only' })).publication;
+					} catch {
+						pub = null;
+					}
+				}
+				const index = pub ? await fullEvent(pub.id) : null;
+				if (!index || index.kind !== 30040) {
+					app.pushToast(
+						"This section's publication isn't local — open the publication, then edit the section",
+						'info'
+					);
+					return;
+				}
+				onclose();
+				await app.editPublicationInComposer(index, { focus: ev });
+			} else if (ev.kind === 30040) {
+				onclose();
+				await app.editPublicationInComposer(ev);
+			} else {
+				onclose();
+				app.editAtomicInComposer(ev);
+			}
+		} finally {
+			editLoading = false;
+		}
+	}
+
+	function onMergeRequestsAction() {
+		const self = `${n.kind}:${n.pubkey}:${dTag}`;
+		// A publication's requests include the ones on its sections.
+		const children =
+			n.kind === 30040 ? n.tags.filter((t) => t[0] === 'a' && t[1]).map((t) => t[1]) : [];
+		onclose();
+		app.mergeRequests = { targets: [self, ...children] };
+	}
+
 	async function onEditAction() {
 		if (!canEdit || editLoading) return;
+		if (composerEdit) return onComposerEdit();
 		// Snapshot before closing (see the note above onReadAction). The
 		// menu may hold a search result whose `content` is the truncated
 		// preview, so the full event is fetched from the engine first.
@@ -616,6 +758,9 @@
 			} else if (k === 'e' && canEdit) {
 				e.preventDefault();
 				void onEditAction();
+			} else if (k === 'm' && isOwnEvent && COMPOSER_KINDS.has(n.kind) && dTag) {
+				e.preventDefault();
+				onMergeRequestsAction();
 			}
 			return;
 		}
@@ -709,8 +854,10 @@
 		30040: 'publication index',
 		30041: 'publication section',
 		9802: 'highlight',
-		30817: 'wiki',
-		30818: 'wiki page'
+		30817: 'spec',
+		30818: 'wiki page',
+		30045: 'bookshelf',
+		32176: 'narration'
 	};
 
 	function formatTime(ts: number): string {
@@ -981,6 +1128,68 @@
 			</nav>
 		{/if}
 
+		{#if attached || attachedLoading}
+			<section class="evm__section evm__att" data-tour="menu-attached">
+				{#if attached?.publication && !attIsSelf}
+					{@const pub = attached.publication}
+					<button
+						class="evm__att-pub"
+						onclick={() => attNav(pub)}
+						title="Open the {KIND_LABEL[pub.kind] ?? `kind ${pub.kind}`} this event belongs to"
+					>
+						<span class="evm__att-kind">{KIND_LABEL[pub.kind] ?? `kind ${pub.kind}`}</span>
+						<span class="evm__att-title">{attTag(pub, 'title') ?? attTag(pub, 'd') ?? '[Untitled]'}</span>
+					</button>
+					<div class="evm__att-meta">
+						<ProfileName pubkey={pub.pubkey} />
+						<span class="evm__att-dim">· published {formatTime(pub.created_at)}</span>
+					</div>
+				{/if}
+				<div class="evm__att-chips">
+					{#each ATT_CHIPS as c (c.key)}
+						{@const count = attached?.[c.key]?.length ?? 0}
+						{#if !(c.key === 'index' && (n.kind === 30040 || count === 0)) && !(c.key === 'sections' && n.kind !== 30040)}
+							<button
+								class="evm__att-chip"
+								class:evm__att-chip--open={attachedOpen === c.key}
+								class:evm__att-chip--empty={count === 0}
+								style="--att: {c.color}"
+								disabled={count === 0}
+								onclick={() => attClick(c.key)}
+								title={count === 0 ? `${c.title} — none locally` : c.title}
+							>
+								<span class="evm__att-dot" aria-hidden="true"></span>
+								{c.label}
+								<span class="evm__att-n">{count}</span>
+							</button>
+						{/if}
+					{/each}
+					<span class="evm__copy-spacer"></span>
+					{#if attached?.fetched_from?.length}
+						<span class="evm__att-dim" title={attached.fetched_from.join('\n')}>via {attached.fetched_from.length} relay{attached.fetched_from.length === 1 ? '' : 's'}</span>
+					{/if}
+					<button
+						class="evm__att-refresh"
+						onclick={refetchAttached}
+						disabled={attachedLoading}
+						title="Fetch attached events from relays — the relays this document came from, then your general set (Confirm mode asks for the second)"
+						aria-label="Fetch attached events"
+					><RefreshIcon spinning={attachedLoading} /></button>
+				</div>
+				{#if attachedOpen && attached}
+					<div class="evm__att-list">
+						{#each attached[attachedOpen] as ev (ev.id)}
+							<button class="evm__att-row" onclick={() => attNav(ev)} title="Open this event's menu">
+								<span class="evm__att-rowwho"><ProfileName pubkey={ev.pubkey} /></span>
+								<span class="evm__att-rowlabel">{attLabel(ev)}</span>
+								<span class="evm__att-dim">{formatTime(ev.created_at)}</span>
+							</button>
+						{/each}
+					</div>
+				{/if}
+			</section>
+		{/if}
+
 		<section class="evm__section" data-tour="menu-copy" class:evm__section--active={chordPrefix === 'c' || chordPrefix === 'i'}>
 			<h3 class="evm__heading">
 				<span class="evm__key evm__key--head" class:evm__key--active={chordPrefix === 'c'}>c</span>
@@ -1071,11 +1280,10 @@
 				<button
 					class="evm__action"
 					onclick={onBroadcastAction}
-					disabled={broadcasting}
-					title="Push this event to your configured broadcast relays (aggregators like nostr.land). Deliberate per-event push — never auto-fires."
+					title="Broadcast — re-send this signed event, and anything connected to it you tick, to relays you pick. Nothing is re-signed; works in local mode."
 				>
 					<span class="evm__key">b</span>
-					<span class="evm__action-label">{broadcasting ? 'Broadcasting…' : 'Broadcast'}</span>
+					<span class="evm__action-label">Broadcast…</span>
 				</button>
 				<button
 					class="evm__action"
@@ -1122,10 +1330,20 @@
 						class="evm__action"
 						onclick={onEditAction}
 						disabled={editLoading}
-						title="Edit this replaceable event's tags and content in the composer and publish the replacement (yours only)"
+						title={editTitle}
 					>
 						<span class="evm__key">e</span>
-						<span class="evm__action-label">{editLoading ? 'Loading…' : 'Edit'}</span>
+						<span class="evm__action-label">{editLoading ? 'Loading…' : editLabel}</span>
+					</button>
+				{/if}
+				{#if isOwnEvent && COMPOSER_KINDS.has(n.kind) && dTag}
+					<button
+						class="evm__action"
+						onclick={onMergeRequestsAction}
+						title="Merge requests (kind 818) proposed for this event — review, merge or decline"
+					>
+						<span class="evm__key">m</span>
+						<span class="evm__action-label">Merge requests</span>
 					</button>
 				{/if}
 				{#if isOwnEvent}
@@ -2020,5 +2238,155 @@
 		color: var(--fg-muted);
 		white-space: pre-wrap;
 		word-break: break-all;
+	}
+
+	/* ATTACHED — the publication row + one chip per attached kind. */
+	.evm__att {
+		display: flex;
+		flex-direction: column;
+		gap: 6px;
+	}
+	.evm__att-pub {
+		display: flex;
+		align-items: baseline;
+		gap: 10px;
+		min-width: 0;
+		background: none;
+		border: 1px solid var(--border);
+		border-radius: var(--r-sm);
+		padding: 5px 10px;
+		text-align: left;
+		cursor: pointer;
+		color: var(--fg);
+		font: inherit;
+	}
+	.evm__att-pub:hover {
+		background: color-mix(in srgb, #3b82f6 12%, transparent);
+		border-color: #3b82f6;
+	}
+	.evm__att-kind {
+		flex-shrink: 0;
+		font-size: var(--t-3xs);
+		text-transform: uppercase;
+		letter-spacing: 0.04em;
+		color: #3b82f6;
+	}
+	.evm__att-title {
+		flex: 1;
+		min-width: 0;
+		font-weight: 500;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+	.evm__att-meta {
+		display: flex;
+		align-items: center;
+		gap: 6px;
+		padding: 0 10px;
+		font-size: var(--t-xs);
+	}
+	.evm__att-dim {
+		color: var(--fg-muted);
+		font-size: var(--t-3xs);
+		white-space: nowrap;
+	}
+	.evm__att-chips {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: center;
+		gap: 6px;
+	}
+	.evm__att-chip {
+		display: inline-flex;
+		align-items: center;
+		gap: 6px;
+		background: color-mix(in srgb, var(--att) 10%, transparent);
+		border: 1px solid color-mix(in srgb, var(--att) 55%, var(--border));
+		border-radius: 999px;
+		padding: 2px 10px 2px 7px;
+		font-size: var(--t-xs);
+		color: var(--fg);
+		cursor: pointer;
+		font-family: inherit;
+	}
+	.evm__att-chip:hover:not(:disabled),
+	.evm__att-chip--open {
+		background: color-mix(in srgb, var(--att) 22%, transparent);
+		border-color: var(--att);
+	}
+	.evm__att-chip--empty {
+		opacity: 0.45;
+		cursor: default;
+	}
+	.evm__att-dot {
+		width: 8px;
+		height: 8px;
+		border-radius: 50%;
+		background: var(--att);
+		flex-shrink: 0;
+	}
+	.evm__att-n {
+		font-family: var(--font-mono);
+		font-size: var(--t-3xs);
+		color: var(--fg-muted);
+	}
+	.evm__att-refresh {
+		background: none;
+		border: 1px solid var(--border);
+		border-radius: var(--r-sm);
+		width: 24px;
+		height: 22px;
+		color: var(--fg-muted);
+		cursor: pointer;
+		font-size: var(--t-xs);
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		padding: 0;
+	}
+	.evm__att-refresh:hover:not(:disabled) {
+		color: var(--id-yours);
+		border-color: var(--id-yours);
+	}
+	.evm__att-list {
+		display: flex;
+		flex-direction: column;
+		gap: 3px;
+		max-height: 220px;
+		overflow: auto;
+	}
+	.evm__att-row {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+		min-width: 0;
+		background: none;
+		border: 1px solid var(--border);
+		border-radius: var(--r-sm);
+		padding: 4px 8px;
+		text-align: left;
+		cursor: pointer;
+		color: var(--fg);
+		font: inherit;
+		font-size: var(--t-xs);
+	}
+	.evm__att-row:hover {
+		background: color-mix(in srgb, var(--id-yours) 12%, transparent);
+		border-color: var(--id-yours);
+	}
+	.evm__att-rowwho {
+		flex-shrink: 0;
+		max-width: 10em;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+	.evm__att-rowlabel {
+		flex: 1;
+		min-width: 0;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
 	}
 </style>

@@ -878,10 +878,13 @@ impl<'a> GitEngine<'a> {
         Ok(Some((res?.events, chosen)))
     }
 
-    /// Relays worth asking about a repository: the engine's read set plus
+    /// Relays worth asking about a repository: the read relays, the search
+    /// relays serving the git kinds, plus
     /// whatever the announcement itself names.
     fn relays_for(&self, repo: Option<&Repository>) -> Vec<String> {
-        let mut relays = self.engine.relays();
+        let mut relays = self
+            .engine
+            .relays_for_kinds(Some(&[30617, 30618, 1621, 1630, 1631, 1632, 1633]));
         if let Some(r) = repo {
             for url in &r.relays {
                 push_unique(&mut relays, url.clone());

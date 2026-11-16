@@ -28,6 +28,7 @@
 		onopenaddr,
 		oncomment,
 		onopenrepo,
+		onopennarration,
 		onback
 	}: {
 		pubkey: string;
@@ -47,11 +48,14 @@
 		oncomment?: (event: NostrEvent) => void;
 		/** Open a NIP-34 repository (kind 30617) in its own buffer. */
 		onopenrepo?: (repo: api.GitRepository) => void;
+		/** Open a kind-32176 narration (index or leaf): the publication when
+		 *  it is local, else the audio view. */
+		onopennarration?: (event: NostrEvent) => void;
 		onback: () => void;
 	} = $props();
 
-	type Tab = 'publications' | 'bookshelves' | 'articles' | 'wikis' | 'specs' | 'repositories' | 'sections' | 'highlights' | 'comments' | 'spells';
-	const TAB_NAMES: Tab[] = ['publications', 'bookshelves', 'articles', 'wikis', 'specs', 'repositories', 'sections', 'highlights', 'comments', 'spells'];
+	type Tab = 'publications' | 'bookshelves' | 'articles' | 'wikis' | 'specs' | 'repositories' | 'sections' | 'narrations' | 'audio' | 'highlights' | 'comments' | 'spells';
+	const TAB_NAMES: Tab[] = ['publications', 'bookshelves', 'articles', 'wikis', 'specs', 'repositories', 'sections', 'narrations', 'audio', 'highlights', 'comments', 'spells'];
 
 	// View state that must survive the buffer unmounting (every buffer
 	// switch unmounts its renderer — opening an event from a spell's
@@ -144,6 +148,10 @@
 	// the repository buffer (issues + threads).
 	let repositories = $state<api.GitRepository[]>([]);
 	let sections = $state<NostrEvent[]>([]);
+	// Kind-32176 narrations: roots (an `a`-children TOC = "narration index")
+	// and leaves (one Blossom blob each), newest version per d-tag.
+	let narrations = $state<NostrEvent[]>([]);
+	let audioLeaves = $state<NostrEvent[]>([]);
 	// NIP-84 highlights (kind 9802) this author has made on other content.
 	let highlights = $state<NostrEvent[]>([]);
 	let comments = $state<NostrEvent[]>([]);
@@ -321,7 +329,7 @@
 	}
 
 	async function loadLocal(pk: string) {
-		const [prof, pubResult, artResult, wikiResult, specResult, secResult, hlResult, comResult, spellResult, bookResult, shelfResult, repoResult] =
+		const [prof, pubResult, artResult, wikiResult, specResult, secResult, narResult, hlResult, comResult, spellResult, bookResult, shelfResult, repoResult] =
 			await Promise.all([
 				api.getProfile(pk),
 				api.queryEvents([{ kinds: [30040], authors: [pk], limit: tabLimits.publications }], 'local_only'),
@@ -329,6 +337,7 @@
 				api.queryEvents([{ kinds: [30818], authors: [pk], limit: tabLimits.wikis }], 'local_only'),
 				api.queryEvents([{ kinds: [30817], authors: [pk], limit: tabLimits.specs }], 'local_only'),
 				api.queryEvents([{ kinds: [30041], authors: [pk], limit: tabLimits.sections }], 'local_only'),
+				api.queryEvents([{ kinds: [32176], authors: [pk], limit: Math.max(tabLimits.narrations, tabLimits.audio) }], 'local_only'),
 				api.queryEvents([{ kinds: [9802], authors: [pk], limit: tabLimits.highlights }], 'local_only'),
 				api.queryEvents([{ kinds: [1111], authors: [pk], limit: tabLimits.comments }], 'local_only'),
 				api.listSpells(pk, tabLimits.spells, 'local_only'),
@@ -377,6 +386,16 @@
 			secByDtag.set(d_tag, e);
 		}
 		sections = [...secByDtag.values()].sort((a, b) => b.created_at - a.created_at);
+		const narByDtag = new Map<string, NostrEvent>();
+		for (const e of (narResult.events as NostrEvent[])) {
+			const d_tag = getTag(e, 'd') || '';
+			const existing = narByDtag.get(d_tag);
+			if (existing && existing.created_at >= e.created_at) continue;
+			narByDtag.set(d_tag, e);
+		}
+		const allNar = [...narByDtag.values()].sort((a, b) => b.created_at - a.created_at);
+		narrations = allNar.filter((e) => e.tags.some((t) => t[0] === 'a'));
+		audioLeaves = allNar.filter((e) => !e.tags.some((t) => t[0] === 'a'));
 		highlights = (hlResult.events as NostrEvent[]).sort((a, b) => b.created_at - a.created_at);
 		comments = (comResult.events as NostrEvent[]).sort((a, b) => b.created_at - a.created_at);
 		spells = spellResult.entries; // engine returns newest-first
@@ -396,6 +415,8 @@
 		specs: [30817],
 		repositories: [30617],
 		sections: [30041],
+		narrations: [32176],
+		audio: [32176],
 		highlights: [9802],
 		comments: [1111],
 		spells: [777, 30777],
@@ -409,6 +430,8 @@
 		specs: 'specs',
 		repositories: 'repositories',
 		sections: 'sections',
+		narrations: 'narration indexes',
+		audio: 'audio leaves',
 		highlights: 'highlights',
 		comments: 'comments',
 		spells: 'spells'
@@ -431,6 +454,8 @@
 		specs: 200,
 		repositories: 200,
 		sections: 200,
+		narrations: 200,
+		audio: 400,
 		highlights: 200,
 		comments: 200,
 		spells: 200
@@ -444,6 +469,8 @@
 			specs: false,
 			repositories: false,
 			sections: false,
+			narrations: false,
+			audio: false,
 			highlights: false,
 			comments: false,
 			spells: false
@@ -467,6 +494,8 @@
 		if (tab === 'specs') return specs;
 		if (tab === 'repositories') return repositories;
 		if (tab === 'sections') return sections;
+		if (tab === 'narrations') return narrations;
+		if (tab === 'audio') return audioLeaves;
 		if (tab === 'highlights') return highlights;
 		if (tab === 'spells') {
 			// While a spell's result feed is shown, the cursor walks the
@@ -837,6 +866,8 @@
 			const dTag = getTag(sec, 'd') || '';
 			const title = getTag(sec, 'title') || dTag || '[Untitled]';
 			onopenaddr?.({ kind: 30041, pubkey: sec.pubkey, d_tag: dTag }, title);
+		} else if (activeTab === 'narrations' || activeTab === 'audio') {
+			onopennarration?.(item as NostrEvent);
 		} else if (activeTab === 'spells') {
 			if (spellResults) {
 				app.eventModalData = item as NostrEvent;
@@ -875,6 +906,9 @@
 			const sec = item as NostrEvent;
 			const dTag = getTag(sec, 'd') || '';
 			app.openAddressableInModal({ kind: 30041, pubkey: sec.pubkey, d_tag: dTag });
+		} else if (activeTab === 'narrations' || activeTab === 'audio') {
+			const ev = item as NostrEvent;
+			app.openAddressableInModal({ kind: 32176, pubkey: ev.pubkey, d_tag: getTag(ev, 'd') || '' });
 		} else {
 			const addr = (item as { addr: { kind: number; pubkey: string; d_tag: string } }).addr;
 			app.openAddressableInModal(addr);
@@ -1066,6 +1100,8 @@
 		{@render tabCell('specs', 'Specs', specs.length)}
 		{@render tabCell('repositories', 'Repositories', repositories.length)}
 		{@render tabCell('sections', 'Sections', sections.length)}
+		{@render tabCell('narrations', 'Narrations', narrations.length)}
+		{@render tabCell('audio', 'Audio', audioLeaves.length)}
 		{@render tabCell('highlights', 'Highlights', highlights.length)}
 		{@render tabCell('comments', 'Comments', comments.length)}
 		{@render tabCell('spells', 'Spells', spellRows.length)}
@@ -1394,6 +1430,62 @@
 								onpilldrop={() => app.pillActionByAddr(addr, 'drop')}
 								signed={isEventSigned(sec.sig)}
 								relays={sec.relays ?? []}
+							/>
+							{@render menuBtn(() => app.openAddressableInModal(addr))}
+						</div>
+					</div>
+				{/each}
+			{/if}
+		{:else if activeTab === 'narrations' || activeTab === 'audio'}
+			{@const rows = activeTab === 'narrations' ? narrations : audioLeaves}
+			{#if rows.length === 0}
+				<div class="empty">{activeTab === 'narrations' ? 'No narration indexes' : 'No audio leaves'}</div>
+			{:else}
+				{#each rows as ev, i (ev.id)}
+					{@const dTag = getTag(ev, 'd') || ''}
+					{@const title = getTag(ev, 'title') || dTag || '[Untitled]'}
+					{@const about = getTag(ev, 'A')}
+					{@const voice = getTag(ev, 'voice')}
+					{@const duration = Number(getTag(ev, 'duration') ?? 0)}
+					{@const children = ev.tags.filter((t) => t[0] === 'a').length}
+					{@const addr = { kind: 32176, pubkey: ev.pubkey, d_tag: dTag }}
+					<!-- svelte-ignore a11y_no_static_element_interactions -->
+					<div
+						class="item pub-item"
+						class:item--cursor={i === cursor}
+						data-cursor={i}
+						onclick={() => { cursor = i; onopennarration?.(ev); }}
+						onkeydown={(e) => { if (e.key === 'Enter') onopennarration?.(ev); }}
+						onfocus={() => (cursor = i)}
+						role="button"
+						tabindex="0"
+					>
+						<div class="item-main">
+							<span class="item-title">🎧 {title}</span>
+							<div class="item-footer">
+								{#if children}
+									<span class="item-ref">{children} section{children === 1 ? '' : 's'}</span>
+								{/if}
+								{#if voice}
+									<span class="item-ref">{voice}</span>
+								{/if}
+								{#if duration > 0}
+									<span class="item-ref">{Math.floor(duration / 60)}:{String(Math.floor(duration % 60)).padStart(2, '0')}</span>
+								{/if}
+								{#if about}
+									<span class="item-ref" title={about}>on {about.split(':').pop()}</span>
+								{/if}
+								<span class="item-time">{formatTime(ev.created_at)}</span>
+							</div>
+						</div>
+						<div class="item-rail">
+							<PoolStateBadges
+								item={app.findPoolItemByAddr(addr)}
+								onpillctx={() => app.pillActionByAddr(addr, 'context')}
+								onpillcmp={() => app.pillActionByAddr(addr, 'compose')}
+								onpilldrop={() => app.pillActionByAddr(addr, 'drop')}
+								signed={isEventSigned(ev.sig)}
+								relays={ev.relays ?? []}
 							/>
 							{@render menuBtn(() => app.openAddressableInModal(addr))}
 						</div>

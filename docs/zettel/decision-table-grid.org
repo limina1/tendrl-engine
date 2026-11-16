@@ -1,0 +1,53 @@
+#+TITLE: Decision: tables render as a grid of source runs
+#+TYPE: decision
+#+STATUS: decided
+#+DATE: 2026-11-12
+
+A decorated-source base (see [[file:idea-rendering-layers.org][rendering
+layers]]) keeps a section as one =pre-wrap= run so every DOM position maps
+to its UTF-16 offset in the event's content. For tables that was the wrong
+trade: a pipe table only lines up when its author padded the columns, and
+never in a proportional face or once a cell holds a ref chip.
+
+* The decision
+
+When a base is active, a table it recognises is drawn as a real
+=<table>= *made of the source runs of each cell's range*, not of a
+re-rendered copy:
+
+- Each cell renders the same segments the flow would (text, highlight
+  marks, nostrdown chips), each still stamped =data-src-start= — so
+  highlight capture maps a selection inside a cell to the true offset,
+  and refs stay live. Highlight capture never needed one contiguous run;
+  it needed the stamps.
+- What is not drawn: the =|= separators, the =|---|= / =|---+---|= rule
+  row, cell padding, the newline after the last row.
+- Wide tables scroll sideways inside the measure (=.ly-tablewrap=,
+  =overflow-x: auto=); a cell wraps only past ~28em, so one long cell
+  cannot make the grid endless.
+- The grid shows in both syntax views (*rendered* and *show markers*):
+  misaligned columns hurt either way. With the layer *off* the table is
+  literal source, as before.
+
+* How
+
+- Bases emit structure, not just style: =table= (block; Org emits one
+  per line, merged), =tr= / =th= (row; =th= = header) and the existing
+  one-char =mark= spans on =|=. Markdown maps Lezer's =TableRow=; Org
+  marks every non-rule row; AsciiDoc groups cells into rows of
+  =[cols=…]= or the first row's cell count, so one-cell-per-line tables
+  work.
+- =web/src/lib/layers/table-layout.ts=, pure: =tableLayout= → rows ×
+  trimmed cell ranges (empty cells kept); =layoutSegments= splits text
+  and highlight runs at cell boundaries (atoms never split) and groups
+  them into flow + grid blocks. =RichContent= renders the blocks.
+- Known gap: AsciiDoc cell specifiers (=2+|=, =a|=) are not parsed —
+  spans and per-cell styles fall back to plain cells.
+
+* Related
+- [[file:index.org][Index]]
+- [[file:idea-rendering-layers.org][Rendering layers]]
+- [[file:decision-layers-default-on.org][Markup layers on by default]]
+- [[file:feat-reader.org][Reader]]
+- [[file:feat-discussions.org][Discussions & highlights]] — the capture
+  surface the stamps keep exact

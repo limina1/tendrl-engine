@@ -29,6 +29,10 @@
 	import { getAppState } from '$lib/state.svelte';
 	import { identityCanSign } from '$lib/identity/signer';
 	import { shell } from '$lib/wm/shell.svelte';
+	import { highlighterChoice } from '$lib/discussions/highlighter-choice.svelte';
+	import HighlighterPicker from './HighlighterPicker.svelte';
+	import { highlightPreview } from '$lib/discussions/highlight-preview.svelte';
+	import { markSampleStyle } from '$lib/discussions/colors';
 
 	let {
 		getContent,
@@ -263,6 +267,7 @@
 			text: hit.text
 		};
 		text = hit.text;
+		highlightPreview.target = { content: hit.content, start: hit.start, end: hit.end };
 		annotation = '';
 		contextText = '';
 		contextOpen = false;
@@ -302,6 +307,7 @@
 	function dismiss() {
 		clearTimeout(selTimer);
 		pending = null;
+		highlightPreview.target = null;
 		text = '';
 		annotation = '';
 		contextText = '';
@@ -326,7 +332,8 @@
 				context:
 					contextText.trim() ||
 					(isEdited ? undefined : contextAround(pending.content, pending.start, pending.end)),
-				comment: annotation.trim() || undefined
+				comment: annotation.trim() || undefined,
+				highlighter: highlighterChoice.current ?? undefined
 			});
 			const { successful, total } = resp.broadcast;
 			app.pushToast(
@@ -381,13 +388,19 @@
 		class:hc-popover--mobile={mobile}
 		role="dialog"
 		aria-label={askMode ? 'Annotate this passage' : 'Publish highlight'}
-		onfocusin={() => (touched = true)}
+		onfocusin={() => {
+			// Engaging the card drops the browser's selection so the live
+			// preview of the chosen style shows on the passage itself.
+			if (!touched) window.getSelection()?.removeAllRanges();
+			touched = true;
+		}}
 	>
 		<textarea
 			class="hc-text"
 			rows={mobile ? 4 : 3}
 			bind:value={text}
 			disabled={posting}
+			style={highlighterChoice.current ? markSampleStyle(highlighterChoice.current) : ''}
 			aria-label={askMode ? 'Selected passage (editable)' : 'Highlighted text (editable)'}
 		></textarea>
 		{#if askMode}
@@ -429,6 +442,7 @@
 				>select in text</button>
 			</div>
 		{/if}
+		<HighlighterPicker bind:value={highlighterChoice.current} disabled={posting} />
 		<div class="hc-foot">
 			{#if !contextOpen}
 				<button
@@ -462,7 +476,7 @@
 		left: 50%;
 		top: calc(50% - var(--kb-inset, 0px) / 2);
 		transform: translate(-50%, -50%);
-		width: min(360px, 92vw);
+		width: min(400px, 92vw);
 		max-height: calc(100dvh - var(--kb-inset, 0px) - 24px);
 		overflow-y: auto;
 		background: var(--bg);
