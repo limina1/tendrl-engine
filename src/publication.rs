@@ -803,13 +803,16 @@ fn process_root_publications(
     limit: usize,
     timeline: &RelayTimeline,
     skip_authors: &std::collections::HashSet<String>,
+    contained: &std::collections::HashSet<String>,
 ) -> Vec<Publication> {
     use std::collections::{HashMap, HashSet};
 
     // Build set of all addresses an index references as children: a nested
     // index, or a feed-kind document (an article / wiki page) that is a
     // chapter of a listed publication — the publication is the root.
-    let mut child_addrs = HashSet::new();
+    // Seeded with documents the caller found inside a local index outside
+    // this window (a section whose publication isn't in the page).
+    let mut child_addrs: HashSet<String> = contained.clone();
     for event in &events {
         if event.get("kind").and_then(|k| k.as_u64()) != Some(KIND_PUBLICATION_INDEX) {
             continue;
@@ -2248,11 +2251,11 @@ impl<'a> PublicationEngine<'a> {
         opts: &FeedListOptions,
     ) -> Result<FeedListing> {
         use serde_json::json;
-        let kinds: Vec<u64> = if opts.kinds.is_empty() {
-            vec![KIND_PUBLICATION_INDEX]
-        } else {
-            opts.kinds.iter().map(|k| *k as u64).collect()
-        };
+        // Nothing checked: an empty feed, without touching the store or relays.
+        if opts.kinds.is_empty() {
+            return Ok(FeedListing { roots: Vec::new(), unprofiled: Vec::new() });
+        }
+        let kinds: Vec<u64> = opts.kinds.iter().map(|k| *k as u64).collect();
 
         // One relay timeline. `local` = no provenance; anything else is a
         // relay URL, normalized once here so provenance comparison and the
@@ -2438,19 +2441,46 @@ impl<'a> PublicationEngine<'a> {
             crate::query::profiles_missing(self.engine.ndb(), &authors).into_iter().collect()
         };
         let require_profile = opts.require_profile;
-        let run_filter = |ev: Vec<serde_json::Value>, ig: crate::engine::IgnoreList, skip: std::collections::HashSet<String>| {
+        // Standalone sections only: a 30041 that any local index lists is a
+        // chapter, even when that index is outside this window.
+        let contained_of = |ev: Vec<serde_json::Value>| async move {
+            let coords: Vec<NAddr> = ev
+                .iter()
+                .filter(|e| e.get("kind").and_then(|k| k.as_u64()) == Some(30041))
+                .filter_map(|e| {
+                    let pk = e.get("pubkey")?.as_str()?;
+                    let d = e.get("tags")?.as_array()?.iter().find_map(|t| {
+                        let a = t.as_array()?;
+                        (a.first()?.as_str()? == "d").then(|| a.get(1)?.as_str())?
+                    })?;
+                    Some(NAddr::new(30041, pk, d))
+                })
+                .collect();
+            if coords.is_empty() {
+                return std::collections::HashSet::new();
+            }
+            self.containing_publications(&coords)
+                .await
+                .map(|m| m.into_iter().filter(|(_, v)| !v.is_empty()).map(|(k, _)| k).collect())
+                .unwrap_or_default()
+        };
+        let run_filter = |ev: Vec<serde_json::Value>,
+                          ig: crate::engine::IgnoreList,
+                          skip: std::collections::HashSet<String>,
+                          contained: std::collections::HashSet<String>| {
             let timeline = timeline.clone();
             async move {
                 tokio::task::spawn_blocking(move || {
                     let skip = if require_profile { skip } else { Default::default() };
-                    process_root_publications(ev, ig, limit, &timeline, &skip)
+                    process_root_publications(ev, ig, limit, &timeline, &skip, &contained)
                 })
                 .await
                 .map_err(|e| crate::error::EngineError::Database(format!("spawn_blocking: {e}")))
             }
         };
         let mut unprofiled = unprofiled_of(&events);
-        let mut roots = run_filter(events.clone(), ignore_list.clone(), unprofiled.clone()).await?;
+        let contained = contained_of(events.clone()).await;
+        let mut roots = run_filter(events.clone(), ignore_list.clone(), unprofiled.clone(), contained).await?;
 
         // A single query window can starve the feed: the broad filter samples
         // the most recent 30040s by created_at, and reference-less (skippable)
@@ -2529,7 +2559,8 @@ impl<'a> PublicationEngine<'a> {
             }));
             if events.len() > before_len {
                 unprofiled = unprofiled_of(&events);
-                roots = run_filter(events.clone(), ignore_list.clone(), unprofiled.clone()).await?;
+                let contained = contained_of(events.clone()).await;
+                roots = run_filter(events.clone(), ignore_list.clone(), unprofiled.clone(), contained).await?;
             }
             // A short window means the store has nothing older.
             edge = if short_window { None } else { response_min };
@@ -4404,12 +4435,22 @@ mod tests {
             doc(30818, "topic", &other, 20),  // a root wiki page by `other`
         ];
         let ig = crate::engine::IgnoreList::default();
-        let all = process_root_publications(events.clone(), ig.clone(), 10, &RelayTimeline::All, &Default::default());
+        let all = process_root_publications(events.clone(), ig.clone(), 10, &RelayTimeline::All, &Default::default(), &Default::default());
         let got: Vec<(u64, &str, usize)> = all.iter().map(|p| (p.addr.kind, p.addr.d_tag.as_str(), p.section_count())).collect();
         assert_eq!(got, vec![(30040, "book", 1), (30023, "essay", 0), (30818, "topic", 0)], "single docs keep their kind, cite nothing as sections");
         let skip: std::collections::HashSet<String> = [other].into_iter().collect();
-        let profiled = process_root_publications(events, ig, 10, &RelayTimeline::All, &skip);
+        let profiled = process_root_publications(events, ig, 10, &RelayTimeline::All, &skip, &Default::default());
         assert!(profiled.iter().all(|p| p.addr.kind != 30818), "an author without a kind 0 is left out");
+        let inside: std::collections::HashSet<String> = [format!("30023:{pk}:essay")].into_iter().collect();
+        let outside_window = process_root_publications(
+            vec![doc(30023, "essay", &pk, 30)],
+            crate::engine::IgnoreList::default(),
+            10,
+            &RelayTimeline::All,
+            &Default::default(),
+            &inside,
+        );
+        assert!(outside_window.is_empty(), "a document a local index lists (outside the window) is not a root");
     }
 
     #[test]
@@ -4432,7 +4473,7 @@ mod tests {
         ];
         let ig = crate::engine::IgnoreList::default();
 
-        let all = process_root_publications(events.clone(), ig.clone(), 10, &RelayTimeline::All, &Default::default());
+        let all = process_root_publications(events.clone(), ig.clone(), 10, &RelayTimeline::All, &Default::default(), &Default::default());
         assert_eq!(all.len(), 3);
 
         let damus = process_root_publications(
@@ -4440,6 +4481,7 @@ mod tests {
             ig.clone(),
             10,
             &RelayTimeline::parse(Some("relay.damus.io")),
+            &Default::default(),
             &Default::default(),
         );
         let tags: Vec<&str> = damus.iter().map(|p| p.addr.d_tag.as_str()).collect();
@@ -4453,11 +4495,12 @@ mod tests {
             1,
             &RelayTimeline::parse(Some("wss://nos.lol")),
             &Default::default(),
+            &Default::default(),
         );
         assert_eq!(nos.len(), 1);
         assert_eq!(nos[0].addr.d_tag, "two");
 
-        let local = process_root_publications(events, ig, 10, &RelayTimeline::Local, &Default::default());
+        let local = process_root_publications(events, ig, 10, &RelayTimeline::Local, &Default::default(), &Default::default());
         assert_eq!(local.len(), 1);
         assert_eq!(local[0].addr.d_tag, "three");
     }

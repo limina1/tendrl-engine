@@ -1621,8 +1621,10 @@ function _createAppState() {
 			// relays — the first-run choice modal must come first. initialize()
 			// re-runs loadFeed() once status arrives, and chooseNetworkMode()
 			// runs it after a fresh pick.
+			// An empty feed because no kind is checked is not a cold cache.
 			if (
 				resp.publications.length === 0 &&
+				(resp.kinds?.length ?? 1) > 0 &&
 				!coldFetchAttempted &&
 				networkStatus?.mode_chosen === true
 			) {
@@ -1898,12 +1900,12 @@ function _createAppState() {
 		const forTimeline = feedTimeline;
 		try {
 			const oldest = Math.min(...feed.map(p => p.created_at));
-			const existing = new Set(feed.map(p => `${p.addr.pubkey}:${p.addr.d_tag}`));
+			const existing = new Set(feed.map(p => `${p.addr.kind}:${p.addr.pubkey}:${p.addr.d_tag}`));
 			const merge = (resp: { publications: PublicationSummary[] }): number => {
 				// Never splice an old timeline's page into the new one.
 				if (forTimeline !== feedTimeline) return 0;
 				const fresh = resp.publications.filter(
-					p => !existing.has(`${p.addr.pubkey}:${p.addr.d_tag}`)
+					p => !existing.has(`${p.addr.kind}:${p.addr.pubkey}:${p.addr.d_tag}`)
 				);
 				for (const p of fresh) existing.add(`${p.addr.pubkey}:${p.addr.d_tag}`);
 				if (fresh.length) {

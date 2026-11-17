@@ -301,17 +301,20 @@ sections and embeds new events on a 60-second interval when embeddings are enabl
   Web: feed bookshelf mode, `EventViewModal` Shelve action, profile
   Bookshelves tab.
 - **`feed_kinds.rs`**: the feed's kind registry — `FEED_KINDS` (30040
-  publication, 30023 article, 30818 wiki on; 30817 spec off; `has_sections`
-  marks an index) + `FeedPrefs` in `<data_dir>/feed.json` (per-kind on/off,
-  `require_profile`). `PublicationEngine::list_feed` lists roots of the
+  publication, 30023 article, 30818 wiki on; 30041 standalone section and
+  30817 spec off; `has_sections` marks an index; each with a one-line
+  `description`) + `FeedPrefs` in `<data_dir>/feed.json` (per-kind on/off —
+  any subset, none = an empty feed — and `require_profile`). A 30041 is
+  listed only when no local index contains it (`containing_publications`). `PublicationEngine::list_feed` lists roots of the
   enabled kinds (one relay filter per kind so a loud kind can't take a
   sync's whole window; a document a 30040 lists is a chapter, not a root)
   and reports `unprofiled` authors; the publications handler pulls their
   kind 0s detached (`backfill_missing_profiles`, 20-min per-key cooldown),
   and with `require_profile` the feed leaves profile-less authors out
   (likelier spam) until one lands — the web re-reads on a kind-0 ingest.
-  API: `GET|PUT /api/v1/feed/kinds`. Web: `feed-kinds.svelte.ts` + the
-  feed's kind bar. Long-form kinds (30023/30818/30817) open in the reader
+  API: `GET|PUT /api/v1/feed/kinds` (`only: [kinds]` = check exactly
+  these). Web: `feed-kinds.svelte.ts` + the feed's `kinds n/m ▾` checkable
+  list (all / none / invert, debounced into one write). Long-form kinds (30023/30818/30817) open in the reader
   (`openDocument` in `state.svelte.ts`), not the slim DocBuffer, so they
   get the tools sheet and highlights drawer.
 - **`history.rs`**: reading / listening history — `<data_dir>/history.json`,

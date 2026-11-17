@@ -883,6 +883,8 @@ export interface FeedKind {
 	kind: number;
 	label: string;
 	plural: string;
+	/** One line for the checkable list: what this kind is. */
+	description: string;
 	default_on: boolean;
 	/** An index of sections (30040): the row shows a section count. */
 	has_sections: boolean;
@@ -899,7 +901,12 @@ export function getFeedKinds() {
 	return fetchJson<FeedKindsView>('/api/v1/feed/kinds');
 }
 
-export function putFeedKinds(update: { kinds?: Record<number, boolean>; require_profile?: boolean }) {
+export function putFeedKinds(update: {
+	kinds?: Record<number, boolean>;
+	/** Check exactly these kinds; every other registry kind unchecked. */
+	only?: number[];
+	require_profile?: boolean;
+}) {
 	return fetchJson<FeedKindsView>('/api/v1/feed/kinds', {
 		method: 'PUT',
 		body: JSON.stringify(update)
