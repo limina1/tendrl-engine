@@ -136,6 +136,23 @@
 			buffer: { id: 'settings', kind: 'settings', label: 'settings', kicker: 'notifications' }
 		});
 	}
+	async function drop(ids: string[]) {
+		if (!ids.length) return;
+		try {
+			await notifications.dismiss(ids);
+		} catch (e) {
+			app.pushToast(e instanceof Error ? e.message : String(e), 'error');
+		}
+	}
+	async function restoreAll() {
+		try {
+			await notifications.restoreAll();
+		} catch (e) {
+			app.pushToast(e instanceof Error ? e.message : String(e), 'error');
+		}
+	}
+	/** My sent merge requests that are settled (merged / declined). */
+	const settledMine = $derived(st.mine.filter((r) => r.status && r.status !== 'open'));
 	let fetching = $state(false);
 	async function fetchNow() {
 		if (fetching) return;
@@ -159,6 +176,9 @@
 			{#if st.counts.activity_count}· <span class="nb-new">{st.counts.activity_count} new</span>{/if}
 		</span>
 		<span class="nb-spacer"></span>
+		{#if st.dismissed}
+			<button class="nb-btn" onclick={restoreAll} title="Bring back every row you dismissed">{st.dismissed} dismissed · restore</button>
+		{/if}
 		<button class="nb-btn" onclick={fetchNow} disabled={fetching || st.loading} title="Pull from relays — a filter per enabled rule on your read relays (Confirm-gated)">{fetching ? 'fetching…' : 'fetch'}</button>
 		<button class="nb-btn" onclick={() => void notifications.refresh()} disabled={st.loading} title="Re-read the local store">↻</button>
 	</div>
@@ -176,6 +196,7 @@
 				{#each g.rows as r (r.id)}
 					{@const b = badge(r)}
 					<div class="acard ask" data-id={r.id} data-key={r.key} style={au(r.pubkey)} role="listitem">
+						<button type="button" class="acard__x" onclick={() => drop([r.id])} title="Dismiss — drop this from the list (nothing is published; restore from the header)" aria-label="Dismiss">×</button>
 						<button type="button" class="acard__body" onclick={() => (isMergeRequest(r) ? review(r) : open(r))} title={isMergeRequest(r) ? 'Review the diff' : 'Open the target'}>
 							<span class="acard__t"><span class="badge {b.cls}">{b.text}</span>{r.summary}</span>
 							<span class="acard__by"><span class="acard__dot"></span>{authorFallback(r.pubkey)} · {relTime(r.created_at)}</span>
@@ -205,6 +226,7 @@
 				{#each g.rows as r (r.id)}
 					{@const b = badge(r)}
 					<div class="acard" data-id={r.id} style={au(r.pubkey)} role="listitem">
+						<button type="button" class="acard__x" onclick={() => drop([r.id])} title="Dismiss — drop this from the list (nothing is published; restore from the header)" aria-label="Dismiss">×</button>
 						<button type="button" class="acard__body" onclick={() => open(r)} title="Open">
 							<span class="acard__t"><span class="badge {b.cls}">{b.text}</span>{r.summary}</span>
 							<span class="acard__by"><span class="acard__dot"></span>{authorFallback(r.pubkey)} · {relTime(r.created_at)}</span>
@@ -215,12 +237,17 @@
 		{/if}
 
 		{#if (st.done ?? []).length}
-			<div class="grp">done <span class="grp__n">{(st.done ?? []).length}</span><span class="grp__hint">— asks you settled</span></div>
+			<div class="grp">
+				done <span class="grp__n">{(st.done ?? []).length}</span><span class="grp__hint">— asks you settled</span>
+				<span class="nb-spacer"></span>
+				<button class="grp__link" onclick={() => drop((st.done ?? []).map((r) => r.id))} title="Dismiss every settled ask">clear all ×</button>
+			</div>
 			{#each doneGroups as g (g.key)}
 				<div class="grp grp--sub">{g.label}</div>
 				{#each g.rows as r (r.id)}
 					{@const b = badge(r)}
 					<div class="acard" data-id={r.id} data-key={r.key} style={au(r.pubkey)} role="listitem">
+						<button type="button" class="acard__x" onclick={() => drop([r.id])} title="Dismiss — drop this from the list (nothing is published; restore from the header)" aria-label="Dismiss">×</button>
 						<button type="button" class="acard__body" onclick={() => (isMergeRequest(r) ? review(r) : open(r))} title={isMergeRequest(r) ? 'Open the review' : 'Open the target'}>
 							<span class="acard__t"><span class="badge {b.cls}">{b.text}</span>{r.summary}</span>
 							<span class="acard__by"><span class="acard__dot"></span>{authorFallback(r.pubkey)} · {relTime(r.created_at)}</span>
@@ -230,7 +257,13 @@
 			{/each}
 		{/if}
 
-		<div class="grp">mine <span class="grp__n">{st.mine.length}</span><span class="grp__hint">— merge requests you sent</span></div>
+		<div class="grp">
+			mine <span class="grp__n">{st.mine.length}</span><span class="grp__hint">— merge requests you sent</span>
+			{#if settledMine.length}
+				<span class="nb-spacer"></span>
+				<button class="grp__link" onclick={() => drop(settledMine.map((r) => r.id))} title="Dismiss your merged / declined requests">clear settled ({settledMine.length}) ×</button>
+			{/if}
+		</div>
 		{#if !st.mine.length}
 			<div class="alist__empty">you have sent no merge requests</div>
 		{:else}
@@ -239,6 +272,7 @@
 				{#each g.rows as r (r.id)}
 					{@const b = mineBadge(r)}
 					<div class="acard" class:ask={b.cls === 'ask'} data-id={r.id} data-key={r.key} style={au(r.pubkey)} role="listitem">
+						<button type="button" class="acard__x" onclick={() => drop([r.id])} title="Dismiss — drop this from the list (nothing is published; restore from the header)" aria-label="Dismiss">×</button>
 						<button type="button" class="acard__body" onclick={() => review(r)} title="Open the review (read-only — you sent this)">
 							<span class="acard__t"><span class="badge {b.cls}">{b.text}</span>{r.summary || r.event?.content || 'merge request'}</span>
 							<span class="acard__by"><span class="acard__dot"></span>{relTime(r.created_at)}</span>
@@ -364,6 +398,32 @@
 		border-radius: 3px;
 		margin: var(--s-1) 0;
 		font: var(--t-xs) / 1.45 var(--font-sans);
+	}
+	.acard {
+		position: relative;
+	}
+	.acard__body {
+		padding-right: calc(var(--s-3) + 22px) !important;
+	}
+	.acard__x {
+		position: absolute;
+		top: 4px;
+		right: 4px;
+		width: 24px;
+		height: 24px;
+		display: grid;
+		place-items: center;
+		padding: 0;
+		border: 0;
+		border-radius: 3px;
+		background: transparent;
+		color: var(--base5);
+		font: var(--t-sm) / 1 var(--font-mono);
+		cursor: pointer;
+	}
+	.acard__x:hover {
+		color: var(--fg);
+		background: rgba(255, 255, 255, 0.06);
 	}
 	.acard.ask {
 		border-left-color: var(--orange);

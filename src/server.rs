@@ -995,6 +995,10 @@ pub async fn start(opts: ServeOptions) -> anyhow::Result<RunningServer> {
             post(api::notifications::fetch_handler),
         )
         .route(
+            "/api/v1/notifications/dismiss",
+            post(api::notifications::dismiss_handler),
+        )
+        .route(
             "/api/v1/insertions/glossary",
             post(api::insertions::glossary_publish_handler),
         )

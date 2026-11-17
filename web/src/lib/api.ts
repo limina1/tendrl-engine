@@ -3624,6 +3624,8 @@ export interface NotificationsResponse {
 	/** Asks for me that are settled (merged / declined) — only with `status=open`. */
 	done?: NotificationRow[];
 	counts: NotificationCounts;
+	/** Rows the user dismissed (×) that this listing hid. */
+	dismissed?: number;
 }
 
 export interface NotificationRule {
@@ -3658,6 +3660,15 @@ export function putNotificationPrefs(
 	return fetchJson<NotificationPrefs>('/api/v1/notifications/prefs', {
 		method: 'PUT',
 		body: JSON.stringify({ entries })
+	});
+}
+
+/** Drop rows from the notification list (local view state — nothing is
+ *  published). `restore` brings them back; `restore` with no ids, all of them. */
+export function dismissNotifications(ids: string[], restore = false): Promise<NotificationsResponse> {
+	return fetchJson<NotificationsResponse>('/api/v1/notifications/dismiss', {
+		method: 'POST',
+		body: JSON.stringify({ ids, restore })
 	});
 }
 

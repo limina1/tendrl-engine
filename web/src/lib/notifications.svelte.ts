@@ -17,6 +17,8 @@ export type NotificationsState = {
 	/** Settled asks for me (merged / declined) — the engine's `done` group. */
 	done: api.NotificationRow[];
 	counts: api.NotificationCounts;
+	/** How many rows the user dismissed (hidden from every group). */
+	dismissed: number;
 	rules: api.NotificationRule[];
 	loading: boolean;
 	error: string | null;
@@ -32,6 +34,7 @@ let state = $state<NotificationsState>({
 	mine: [],
 	done: [],
 	counts: EMPTY_COUNTS,
+	dismissed: 0,
 	rules: [],
 	loading: false,
 	error: null,
@@ -51,6 +54,17 @@ function watchedKinds(): Set<number> {
 	return new Set(on.length ? on : [818, 7, 30041]);
 }
 
+function applyList(list: api.NotificationsResponse) {
+	state.acts = list.acts ?? [];
+	state.activity = list.activity ?? [];
+	state.mine = list.mine ?? [];
+	state.done = list.done ?? [];
+	state.counts = list.counts ?? EMPTY_COUNTS;
+	state.dismissed = list.dismissed ?? 0;
+	state.error = null;
+	state.loaded = true;
+}
+
 /** Read the list (and, the first time, the rules). Coalesces concurrent calls. */
 export function refresh(status: 'open' | 'all' = 'open'): Promise<void> {
 	if (!browser) return Promise.resolve();
@@ -64,14 +78,8 @@ export function refresh(status: 'open' | 'all' = 'open'): Promise<void> {
 				state.rules.length ? Promise.resolve(null) : api.getNotificationPrefs()
 			]);
 			if (mySeq !== seq) return;
-			state.acts = list.acts ?? [];
-			state.activity = list.activity ?? [];
-			state.mine = list.mine ?? [];
-			state.done = list.done ?? [];
-			state.counts = list.counts ?? EMPTY_COUNTS;
+			applyList(list);
 			if (prefs) state.rules = prefs.rules ?? [];
-			state.error = null;
-			state.loaded = true;
 		} catch (e) {
 			if (mySeq !== seq) return;
 			// No identity yet (or the engine is not up): a quiet zero, not a toast.
@@ -118,15 +126,37 @@ export async function fetchFromRelays(policy: 'local_first' | 'fetch_always' = '
 	state.loading = true;
 	try {
 		const list = await api.fetchNotifications({ policy, mode_confirm: true });
-		state.acts = list.acts ?? [];
-		state.activity = list.activity ?? [];
-		state.mine = list.mine ?? [];
-		state.counts = list.counts ?? EMPTY_COUNTS;
-		state.error = null;
-		state.loaded = true;
+		seq++; // a listing in flight is older than this one
+		applyList(list);
 	} finally {
 		state.loading = false;
 	}
+}
+
+/** Drop rows (the ×). Optimistic: the rows leave the groups at once; the
+ *  engine's answer (the fresh listing) settles the counts. */
+export async function dismiss(ids: string[]): Promise<void> {
+	if (!browser || !ids.length) return;
+	const gone = new Set(ids);
+	const keep = (rows: api.NotificationRow[]) => rows.filter((r) => !gone.has(r.id));
+	state.acts = keep(state.acts);
+	state.activity = keep(state.activity);
+	state.mine = keep(state.mine);
+	state.done = keep(state.done);
+	seq++;
+	try {
+		applyList(await api.dismissNotifications(ids));
+	} catch (e) {
+		void refresh();
+		throw e;
+	}
+}
+
+/** Bring every dismissed row back. */
+export async function restoreAll(): Promise<void> {
+	if (!browser) return;
+	seq++;
+	applyList(await api.dismissNotifications([], true));
 }
 
 export const notifications = {
@@ -137,7 +167,9 @@ export const notifications = {
 	refreshSoon,
 	reloadPrefs,
 	savePrefs,
-	fetchFromRelays
+	fetchFromRelays,
+	dismiss,
+	restoreAll
 };
 
 // Live: an ingested event of a watched kind (or a request-record change)

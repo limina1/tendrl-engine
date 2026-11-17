@@ -23,7 +23,7 @@ use crate::error::{EngineError, Result};
 use crate::publication::insertion::{coord_parts, event_tags};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 /// What a row asks of the user.
@@ -182,6 +182,11 @@ pub struct PrefEntry {
 pub struct Prefs {
     #[serde(default)]
     pub entries: BTreeMap<String, PrefEntry>,
+    /// Event ids the user dropped from the list (the row's ×). Local view
+    /// state only — nothing is published, the event itself is untouched;
+    /// a dismissed row leaves every group and every count.
+    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
+    pub dismissed: BTreeSet<String>,
 }
 
 /// A rule with the user's choice applied.
@@ -228,6 +233,25 @@ impl Prefs {
         std::fs::rename(&tmp, &path)?;
         restrict_permissions(&path);
         Ok(())
+    }
+
+    /// Drop (or, with `restore`, bring back) rows by event id. Only 64-hex
+    /// ids are kept; `restore` with no ids clears the whole set.
+    pub fn dismiss(&mut self, ids: &[String], restore: bool) -> usize {
+        let valid = ids
+            .iter()
+            .map(|i| i.trim().to_ascii_lowercase())
+            .filter(|i| i.len() == 64 && i.bytes().all(|b| b.is_ascii_hexdigit()));
+        if restore {
+            if ids.is_empty() {
+                let n = self.dismissed.len();
+                self.dismissed.clear();
+                return n;
+            }
+            valid.filter(|i| self.dismissed.remove(i)).count()
+        } else {
+            valid.filter(|i| self.dismissed.insert(i.clone())).count()
+        }
     }
 
     /// Set one entry; an unknown key or a fixed (act) row's `on` is refused
@@ -457,6 +481,23 @@ mod tests {
         }
         std::fs::write(Prefs::path(dir.path()), "{ not json").unwrap();
         assert_eq!(Prefs::load(dir.path()), Prefs::default(), "corrupt → defaults");
+    }
+
+    #[test]
+    fn dismiss_and_restore() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut p = Prefs::default();
+        let a = "a".repeat(64);
+        let b = "B".repeat(64);
+        assert_eq!(p.dismiss(&[a.clone(), b.clone(), "short".into()], false), 2, "non-hex ids are refused");
+        assert!(p.dismissed.contains(&"b".repeat(64)), "ids are lowercased");
+        assert_eq!(p.dismiss(&[a.clone()], false), 0, "already dismissed");
+        p.save(dir.path()).unwrap();
+        let mut back = Prefs::load(dir.path());
+        assert_eq!(back.dismissed.len(), 2);
+        assert_eq!(back.dismiss(&[a], true), 1);
+        assert_eq!(back.dismiss(&[], true), 1, "restore with no ids clears all");
+        assert!(back.dismissed.is_empty());
     }
 
     #[test]

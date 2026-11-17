@@ -74,6 +74,8 @@ pub struct NotificationsResponse {
     /// listing is `status=open`; empty for `all` (they stay in `acts`).
     pub done: Vec<Row>,
     pub counts: Counts,
+    /// How many rows the user dismissed (×) and this listing hid.
+    pub dismissed: usize,
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -287,6 +289,14 @@ pub async fn list_notifications(engine: &AppState, me_pk: &str, prefs: &Prefs, s
             });
         }
     }
+    // Dismissed rows (the ×) leave every group and every count.
+    let before = events.len() + mine_818.len();
+    events.retain(|e| !e.get("id").and_then(Value::as_str).is_some_and(|id| prefs.dismissed.contains(id)));
+    let mine_818: Vec<Value> = mine_818
+        .into_iter()
+        .filter(|e| !e.get("id").and_then(Value::as_str).is_some_and(|id| prefs.dismissed.contains(id)))
+        .collect();
+    let dismissed = before - events.len() - mine_818.len();
     let parent_roots = my_parent_roots(engine, me_pk).await?;
     let mut titles = Titles { engine, cache: HashMap::new() };
     let only_open = status != "all";
@@ -364,7 +374,7 @@ pub async fn list_notifications(engine: &AppState, me_pk: &str, prefs: &Prefs, s
         activity_count: activity.iter().filter(|r| r.how == How::Count).count(),
         activity_list: activity.iter().filter(|r| r.how == How::List).count(),
     };
-    Ok(NotificationsResponse { me: me_pk.to_string(), acts, activity, mine, done, counts })
+    Ok(NotificationsResponse { me: me_pk.to_string(), acts, activity, mine, done, counts, dismissed })
 }
 
 /// GET /api/v1/notifications
@@ -418,6 +428,33 @@ pub async fn prefs_put_handler(
     }
     prefs.save(engine.data_dir())?;
     Ok(Json(PrefsResponse { rules: prefs.apply() }))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct DismissRequest {
+    #[serde(default)]
+    pub ids: Vec<String>,
+    /// Bring the ids back instead; with no ids, bring back every row.
+    #[serde(default)]
+    pub restore: bool,
+}
+
+/// POST /api/v1/notifications/dismiss — drop rows from the list (local view
+/// state in `notifications.json`; never an event, the event is untouched).
+/// Answers with the fresh `open` listing.
+pub async fn dismiss_handler(
+    State(engine): State<AppState>,
+    Extension(signing): Extension<crate::signing::SigningController>,
+    Json(req): Json<DismissRequest>,
+) -> Result<Json<NotificationsResponse>> {
+    let me = me_or_err(signing.active_pubkey().await)?;
+    if req.ids.is_empty() && !req.restore {
+        return Err(EngineError::BadRequest("ids required".into()));
+    }
+    let mut prefs = Prefs::load(engine.data_dir());
+    prefs.dismiss(&req.ids, req.restore);
+    prefs.save(engine.data_dir())?;
+    Ok(Json(list_notifications(&engine, &me, &prefs, "open").await?))
 }
 
 #[derive(Debug, Deserialize, Default)]
