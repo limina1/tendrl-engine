@@ -530,8 +530,8 @@
 			? "Edit this replaceable event's tags and content in the composer and publish the replacement (yours only)"
 			: n.kind === 30041
 				? isOwnEvent
-					? 'Edit this section in place, in its publication — Sign republishes it'
-					: 'Edit this section in its publication — Sign publishes your copy and sends the author a merge request'
+					? 'Edit this section on its own — Sign republishes just this note'
+					: 'Edit this section on its own — Sign publishes your copy of this note and sends the author a merge request'
 				: n.kind === 30040
 					? 'Edit the whole publication, every section unlocked'
 					: isOwnEvent
@@ -566,16 +566,11 @@
 						pub = null;
 					}
 				}
+				// The publication is only placement (the edit's `index`); the
+				// composer holds this one section, so a missing index is fine.
 				const index = pub ? await fullEvent(pub.id) : null;
-				if (!index || index.kind !== 30040) {
-					app.pushToast(
-						"This section's publication isn't local — open the publication, then edit the section",
-						'info'
-					);
-					return;
-				}
 				onclose();
-				await app.editPublicationInComposer(index, { focus: ev });
+				app.editSectionInComposer(ev, index);
 			} else if (ev.kind === 30040) {
 				onclose();
 				await app.editPublicationInComposer(ev);

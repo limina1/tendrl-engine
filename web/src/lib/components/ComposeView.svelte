@@ -351,11 +351,24 @@
 	const isAtomic = $derived(composeKind !== 30040);
 	const isCustomKind = $derived(!PRESET_KINDS.has(composeKind));
 
+	// Edit section: one 30041 alone, published as that single note. Its Type
+	// is Notes and stays Notes — switching would detach the edit.
+	const isNoteEdit = $derived(app.composeEdit?.mode === 'note' && composeKind === 30041);
+
 	const typeValue = $derived(
-		isCustomKind ? 'custom' : composeKind === 30040 ? (app.composeNotes ? 'notes' : 'pub') : String(composeKind)
+		isNoteEdit
+			? 'notes'
+			: isCustomKind
+				? 'custom'
+				: composeKind === 30040
+					? app.composeNotes
+						? 'notes'
+						: 'pub'
+					: String(composeKind)
 	);
 	function onKindSelect(e: Event) {
 		const v = (e.currentTarget as HTMLSelectElement).value;
+		if (isNoteEdit) return;
 		if (v === 'pub' || v === 'notes') {
 			app.composeKind = 30040;
 			app.composeNotes = v === 'notes';
@@ -1022,17 +1035,30 @@
 
 	const edit = $derived(app.composeEdit);
 
+	/** Leave the edit: first click arms, second resets the composer to a
+	 *  fresh publication draft (handleCompose clears the edit and the pool). */
+	let leaveArmed = $state(false);
+	function leaveEdit() {
+		if (!leaveArmed) {
+			leaveArmed = true;
+			return;
+		}
+		leaveArmed = false;
+		app.handleCompose();
+	}
+
 	/** The section-edit requests a Sign makes for the current edit, or null
 	 *  when the edit is better published as a whole (own publication with a
 	 *  changed structure — the normal republish path handles that). */
 	function editRequests(): api.SectionEditRequest[] | null {
 		const e = edit;
 		if (!e) return null;
-		if (e.mode === 'atomic') {
+		if (e.mode === 'atomic' || e.mode === 'note') {
 			if (!e.baseId) return null;
 			return [
 				{
 					section: e.baseId,
+					index: e.indexCoord,
 					content: atomicParsed.content,
 					title: atomicParsed.title,
 					format: composeFormat,
@@ -1179,12 +1205,18 @@
 		     event of that kind. -->
 		<label class="kind-group" data-tour="compose-kind" title="Type — what a Sign publishes">
 			<span class="kind-label">Type</span>
-			<select class="kind-select" value={typeValue} onchange={onKindSelect}>
+			<select
+				class="kind-select"
+				value={typeValue}
+				onchange={onKindSelect}
+				disabled={isNoteEdit}
+				title={isNoteEdit ? 'Editing one section — Sign publishes just this note' : undefined}
+			>
 				{#each KIND_PRESETS as preset (preset.value)}
 					<option value={preset.value}>{preset.label}</option>
 				{/each}
 			</select>
-			{#if isCustomKind}
+			{#if isCustomKind && !isNoteEdit}
 				<input
 					class="kind-input"
 					type="number"
@@ -1314,6 +1346,8 @@
 					Editing “{edit.title || 'section'}” in its publication — the other sections are locked.
 				{:else if edit.mode === 'publication'}
 					Editing the whole publication.
+				{:else if edit.mode === 'note'}
+					Editing the section “{edit.title || 'section'}” on its own — headings inside it stay part of it.
 				{:else}
 					Editing “{edit.title}”.
 				{/if}
@@ -1321,6 +1355,15 @@
 					? 'Sign republishes your changes in place (same d).'
 					: 'Sign publishes your copy and sends the author a merge request; their version is untouched until they merge.'}
 			</span>
+			<!-- The way out of an edit: back to a fresh, empty composer. Two
+			     steps, so a stray click doesn't drop typed changes. -->
+			<button
+				class="edit-leave"
+				class:armed={leaveArmed}
+				onclick={leaveEdit}
+				onblur={() => (leaveArmed = false)}
+				title="Leave this edit and start a new, empty draft — the event itself is untouched"
+			>{leaveArmed ? 'discard changes?' : 'stop editing ×'}</button>
 		</div>
 	{/if}
 
@@ -1863,6 +1906,26 @@
 	}
 	.edit-banner--fork .edit-pill {
 		color: var(--id-forked, #b294bb);
+	}
+	.edit-leave {
+		margin-left: auto;
+		flex-shrink: 0;
+		align-self: center;
+		font-size: var(--t-2xs);
+		padding: 2px 8px;
+		background: transparent;
+		border: 1px solid var(--border);
+		border-radius: var(--radius);
+		color: var(--fg-alt);
+		cursor: pointer;
+	}
+	.edit-leave:hover {
+		color: var(--fg);
+		border-color: currentColor;
+	}
+	.edit-leave.armed {
+		color: var(--danger);
+		border-color: currentColor;
 	}
 	.rail-tags {
 		padding: 10px;

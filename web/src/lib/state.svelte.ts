@@ -114,7 +114,8 @@ import { tagFromStored, wireTag } from '$lib/types';
 
 /** What the composer was opened to edit from an event menu. */
 export type ComposeEdit = {
-	mode: 'section' | 'publication' | 'atomic';
+	/** `note`: one 30041 alone (Edit section), its body kept whole. */
+	mode: 'section' | 'publication' | 'atomic' | 'note';
 	/** The edited event's author. */
 	owner: string;
 	/** The editor is that author — republish instead of fork + request. */
@@ -3772,6 +3773,35 @@ function _createAppState() {
 		navigateToCompose();
 	}
 
+	/** Open the composer on one section alone (Edit section): only that
+	 *  30041 in the pool, its title as the level-1 heading and its content
+	 *  whole — headings inside it stay content, never new sections. Type
+	 *  reads Notes; Sign sends just this event to section-edit (own →
+	 *  republish in place, someone else's → fork + kind-818). `index` is
+	 *  the publication it was opened from, when known (placement only). */
+	function editSectionInComposer(ev: api.AttachedEvent, index?: api.AttachedEvent | null) {
+		const me = identityStatus?.pubkey ?? '';
+		clearComposePool();
+		const format = tagOf(ev, 'm') ?? DEFAULT_COMPOSE_FORMAT;
+		const head = format === 'text/org' ? '* ' : format === 'text/markdown' ? '# ' : '= ';
+		const title = tagOf(ev, 'title') ?? tagOf(ev, 'd') ?? '';
+		seedDraftMetadata(title, editableTags(ev.tags));
+		composeKind = 30041;
+		composeNotes = true;
+		composeFormat = format;
+		composeAtomicBody = `${head}${title}\n\n${ev.content}`;
+		composeAtomicSeeded = true;
+		composeEdit = {
+			mode: 'note',
+			owner: ev.pubkey,
+			own: !!me && ev.pubkey === me,
+			baseId: ev.id,
+			indexCoord: index && index.kind === 30040 ? coordOf(index) : undefined,
+			title
+		};
+		navigateToCompose();
+	}
+
 	// Set the publication-level draft fields (title + topic tags) and
 	// optional source provenance. Used by ReaderBuffer's "Edit" so both the
 	// 30040 metadata and the fork lineage survive the round trip from
@@ -6064,6 +6094,7 @@ function _createAppState() {
 		seedDraftMetadata,
 		editPublicationInComposer,
 		editAtomicInComposer,
+		editSectionInComposer,
 		reorderComposeSection,
 		previewDraft,
 
