@@ -39,24 +39,54 @@
 	let cursor = $state(savedView?.cursor ?? 0);
 	let listEl: HTMLDivElement | undefined = $state();
 
-	// The feed kind registry (engine-owned, `src/feed_kinds.rs`): one toggle
-	// per kind + the kind-0 presence check. A change reloads the feed.
+	// The feed kind registry (engine-owned, `src/feed_kinds.rs`) as a
+	// checkable list: any subset of kinds, with all / none / invert (the
+	// FetchConfirmModal idiom), plus the kind-0 presence check. Clicks edit
+	// a draft; the draft is written once, a beat after the last click, and
+	// the feed reloads — so all/none/invert or a run of ticks is one read.
 	$effect(() => {
 		void loadFeedKinds();
 	});
 	let kindBusy = $state(false);
-	async function toggleKind(kind: number, on: boolean) {
-		if (kindBusy) return;
+	let kindsOpen = $state(false);
+	/** The checked set being edited; null = mirror the engine's view. */
+	let kindDraft = $state<Set<number> | null>(null);
+	const checkedKinds = $derived(kindDraft ?? new Set(feedKinds.enabledKinds()));
+	let kindTimer: ReturnType<typeof setTimeout> | null = null;
+	function editKinds(next: Set<number>) {
+		kindDraft = next;
+		if (kindTimer) clearTimeout(kindTimer);
+		kindTimer = setTimeout(() => {
+			kindTimer = null;
+			void applyKinds();
+		}, 450);
+	}
+	async function applyKinds() {
+		const draft = kindDraft;
+		if (!draft) return;
 		kindBusy = true;
 		try {
-			await feedKinds.setKind(kind, on);
+			await feedKinds.setOnly([...draft]);
+			// a click that landed while the write was in flight stays a draft
+			if (kindDraft === draft) kindDraft = null;
 			await app.loadFeed();
 		} catch (e) {
+			kindDraft = null;
 			app.pushToast(e instanceof Error ? e.message : String(e), 'error');
 		} finally {
 			kindBusy = false;
 		}
 	}
+	function toggleKind(kind: number) {
+		const next = new Set(checkedKinds);
+		if (next.has(kind)) next.delete(kind);
+		else next.add(kind);
+		editKinds(next);
+	}
+	const allKindNums = $derived(feedKinds.view.kinds.map((k) => k.kind));
+	const kindsAll = () => editKinds(new Set(allKindNums));
+	const kindsNone = () => editKinds(new Set());
+	const kindsInvert = () => editKinds(new Set(allKindNums.filter((k) => !checkedKinds.has(k))));
 	async function toggleRequireProfile() {
 		if (kindBusy) return;
 		kindBusy = true;
@@ -498,6 +528,15 @@
 					<option value={row.value}>{row.label}</option>
 				{/each}
 			</select>
+			{#if feedKinds.loaded}
+				<button
+					class="sync kinds-btn"
+					class:kinds-btn--open={kindsOpen}
+					aria-expanded={kindsOpen}
+					onclick={() => (kindsOpen = !kindsOpen)}
+					title={`Which kinds the feed lists — ${feedKinds.view.kinds.filter((k) => checkedKinds.has(k.kind)).map((k) => k.plural).join(', ') || 'none'}${feedKinds.view.require_profile ? ' · authors with a profile only' : ''}`}
+				>kinds {checkedKinds.size}/{allKindNums.length}{feedKinds.view.require_profile ? ' · ✓profile' : ''} {kindsOpen ? '▴' : '▾'}</button>
+			{/if}
 			<span class="count">{app.feed.length}</span>
 			<button
 				class="sync"
@@ -547,30 +586,37 @@
 			</button>
 		{/if}
 	</div>
-	{#if mode === 'relays' && feedKinds.loaded}
-		<!-- What the feed lists: the engine's kind registry, one toggle per
-		     kind, plus the presence check — authors with no kind-0 profile
-		     are likelier spam; the engine pulls missing profiles on its own. -->
-		<div class="kind-bar" role="group" aria-label="Kinds in the feed">
-			{#each feedKinds.view.kinds as k (k.kind)}
-				<button
-					class="kind-chip"
-					class:kind-chip--on={k.on}
-					aria-pressed={k.on}
-					disabled={kindBusy}
-					onclick={() => toggleKind(k.kind, !k.on)}
-					title={`${k.on ? 'Hide' : 'Show'} ${k.plural} (kind ${k.kind}) in the feed`}
-				>{k.plural}</button>
-			{/each}
-			<span class="kind-sep" aria-hidden="true">·</span>
-			<button
-				class="kind-chip"
-				class:kind-chip--on={feedKinds.view.require_profile}
-				aria-pressed={feedKinds.view.require_profile}
-				disabled={kindBusy}
-				onclick={toggleRequireProfile}
-				title="List only authors with a kind-0 profile — a sign of a regular presence; profile-less keys are far likelier spam. Missing profiles are pulled automatically (Auto mode, or with a Sync you approve)."
-			>has profile</button>
+	{#if mode === 'relays' && feedKinds.loaded && kindsOpen}
+		<!-- What the feed lists: the engine's kind registry as a checkable
+		     list (any subset), plus the presence check — authors with no
+		     kind-0 profile are likelier spam; the engine pulls missing
+		     profiles on its own. -->
+		<div class="kind-panel" role="group" aria-label="Kinds in the feed">
+			<div class="kind-head">
+				<span class="kind-head__t">kinds in the feed</span>
+				<span class="kind-tools">
+					<button class="kind-tool" onclick={kindsAll} disabled={checkedKinds.size === allKindNums.length} title="Check every kind">all</button>
+					<button class="kind-tool" onclick={kindsNone} disabled={checkedKinds.size === 0} title="Uncheck every kind (an empty feed)">none</button>
+					<button class="kind-tool" onclick={kindsInvert} title="Invert the selection: checked kinds become unchecked and the other way round">invert</button>
+				</span>
+			</div>
+			<ul class="kind-list">
+				{#each feedKinds.view.kinds as k (k.kind)}
+					<li>
+						<label class="kind-row">
+							<input type="checkbox" checked={checkedKinds.has(k.kind)} onchange={() => toggleKind(k.kind)} />
+							<span class="kind-name">{k.plural}</span>
+							<code class="kind-num">{k.kind}</code>
+							<span class="kind-desc">{k.description}</span>
+						</label>
+					</li>
+				{/each}
+			</ul>
+			<label class="kind-row kind-row--profile">
+				<input type="checkbox" checked={feedKinds.view.require_profile} disabled={kindBusy} onchange={toggleRequireProfile} />
+				<span class="kind-name">has profile</span>
+				<span class="kind-desc">only authors with a kind-0 profile — profile-less keys are far likelier spam; missing profiles are pulled automatically (Auto mode, or with a Sync you approve)</span>
+			</label>
 		</div>
 	{/if}
 	{#if mode === 'history'}
@@ -678,7 +724,7 @@
 		<!-- While a (local) read is pending the previous rows stay up,
 		     dimmed, rather than blanking to "Loading…". -->
 		<div class="feed-list" class:feed-list--pending={app.feedLoading} bind:this={listEl}>
-			{#each app.feed as pub_item, i (`${pub_item.addr.pubkey}:${pub_item.addr.d_tag}`)}
+			{#each app.feed as pub_item, i (`${pub_item.addr.kind}:${pub_item.addr.pubkey}:${pub_item.addr.d_tag}`)}
 				{@render pubRow(pub_item, i)}
 			{/each}
 			{#if app.feedHasMore}
@@ -688,6 +734,11 @@
 					</button>
 				</div>
 			{/if}
+		</div>
+	{:else if feedKinds.loaded && feedKinds.enabledKinds().length === 0}
+		<div class="empty">
+			<p>No kinds checked — the feed lists nothing.</p>
+			<button onclick={() => (kindsOpen = true)}>choose kinds</button>
 		</div>
 	{:else}
 		<div class="empty">
@@ -826,40 +877,86 @@
 	.title { display: block; font-size: var(--t-sm); font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-bottom: 2px; }
 	/* Fixed-width, right-aligned count so "N sections" forms a column
 	   across rows regardless of how many pills precede it. */
-	.kind-bar {
-		display: flex;
-		flex-wrap: wrap;
-		align-items: center;
-		gap: 4px;
-		padding: 4px var(--s-3, 12px);
-		border-bottom: 1px solid var(--panel-border);
-		font: var(--t-2xs) / 1.2 var(--font-mono);
-	}
-	.kind-chip {
-		font: inherit;
-		min-height: 24px;
-		padding: 0 8px;
-		border: 1px solid var(--panel-border);
-		border-radius: 3px;
-		background: transparent;
-		color: var(--base5);
-		cursor: pointer;
-	}
-	.kind-chip:hover:not(:disabled) {
+	.kinds-btn--open {
 		color: var(--fg);
 		border-color: var(--base5);
 	}
-	.kind-chip--on {
-		color: var(--cyan);
-		border-color: currentColor;
+	.kind-panel {
+		padding: 6px var(--s-3, 12px) 8px;
+		border-bottom: 1px solid var(--panel-border);
+		background: var(--panel-bg-soft, transparent);
+		font-size: var(--t-xs);
 	}
-	.kind-chip:disabled {
-		opacity: 0.6;
+	.kind-head {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+		margin-bottom: 4px;
+	}
+	.kind-head__t {
+		font: 600 var(--t-3xs) / 1.2 var(--font-mono);
+		letter-spacing: 0.08em;
+		text-transform: uppercase;
+		color: var(--base5);
+	}
+	.kind-tools {
+		margin-left: auto;
+		display: flex;
+		gap: 4px;
+	}
+	.kind-tool {
+		appearance: none;
+		background: none;
+		border: 1px solid var(--panel-border);
+		border-radius: var(--r-sm);
+		color: var(--base5);
+		font: inherit;
+		font-size: calc(var(--t-xs) - 1px);
+		padding: 1px 6px;
+		min-height: 22px;
+		cursor: pointer;
+	}
+	.kind-tool:hover:not(:disabled) {
+		color: var(--fg);
+	}
+	.kind-tool:disabled {
+		opacity: 0.45;
 		cursor: default;
 	}
-	.kind-sep {
-		color: var(--base4);
-		padding: 0 2px;
+	.kind-list {
+		list-style: none;
+		margin: 0;
+		padding: 0;
+	}
+	.kind-row {
+		display: flex;
+		align-items: baseline;
+		gap: 8px;
+		min-height: 28px;
+		padding: 2px 0;
+		cursor: pointer;
+	}
+	.kind-row input {
+		align-self: center;
+	}
+	.kind-name {
+		color: var(--fg);
+		white-space: nowrap;
+	}
+	.kind-num {
+		font-family: var(--font-mono);
+		font-size: var(--t-2xs);
+		color: var(--base5);
+	}
+	.kind-desc {
+		color: var(--base5);
+		font-size: var(--t-2xs);
+		min-width: 0;
+	}
+	.kind-row--profile {
+		margin-top: 4px;
+		padding-top: 6px;
+		border-top: 1px dashed var(--panel-border);
 	}
 	.meta--kind {
 		text-transform: uppercase;

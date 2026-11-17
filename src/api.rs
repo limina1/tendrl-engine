@@ -1381,6 +1381,10 @@ pub struct FeedKindsUpdate {
     pub kinds: std::collections::BTreeMap<u16, bool>,
     #[serde(default)]
     pub require_profile: Option<bool>,
+    /// Check exactly these kinds (every other registry kind unchecked) —
+    /// the list's all / none / invert. Applied before `kinds`.
+    #[serde(default)]
+    pub only: Option<Vec<u16>>,
 }
 
 /// `PUT /api/v1/feed/kinds` — update the choices; answers with the view.
@@ -1389,6 +1393,9 @@ pub async fn feed_kinds_put_handler(
     Json(update): Json<FeedKindsUpdate>,
 ) -> Result<Json<crate::feed_kinds::FeedKindsView>, EngineError> {
     let mut prefs = crate::feed_kinds::FeedPrefs::load(engine.data_dir());
+    if let Some(only) = &update.only {
+        prefs.set_only(only)?;
+    }
     for (kind, on) in &update.kinds {
         prefs.set_kind(*kind, *on)?;
     }

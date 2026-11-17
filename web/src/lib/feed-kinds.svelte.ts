@@ -37,13 +37,17 @@ export const feedKinds = {
 	entry(kind: number): api.FeedKind | undefined {
 		return view.kinds.find((k) => k.kind === kind);
 	},
-	/** Kinds the feed currently lists (what an ingest must name to re-read). */
+	/** Kinds the feed currently lists (what an ingest must name to re-read).
+	 *  Empty when every box is unchecked — the feed is then empty too. */
 	enabledKinds(): number[] {
-		const on = view.kinds.filter((k) => k.on).map((k) => k.kind);
-		return on.length ? on : [30040];
+		return view.kinds.filter((k) => k.on).map((k) => k.kind);
 	},
 	async setKind(kind: number, on: boolean) {
 		view = await api.putFeedKinds({ kinds: { [kind]: on } });
+	},
+	/** Check exactly `kinds` — the list's all / none / invert in one write. */
+	async setOnly(kinds: number[]) {
+		view = await api.putFeedKinds({ only: kinds });
 	},
 	async setRequireProfile(on: boolean) {
 		view = await api.putFeedKinds({ require_profile: on });

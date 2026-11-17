@@ -30,8 +30,10 @@ pub struct FeedKind {
     pub kind: u16,
     /// Singular label for a row's chip ("article").
     pub label: &'static str,
-    /// Plural, for the filter toggle ("articles").
+    /// Plural, for the checkable list ("articles").
     pub plural: &'static str,
+    /// One line for the list row: what this kind is.
+    pub description: &'static str,
     pub default_on: bool,
     /// An index of sections (30040): a row shows its section count, an
     /// index with no children is junk and skipped, and an index another
@@ -42,10 +44,46 @@ pub struct FeedKind {
 
 /// The registry. Order = the order of the toggles in the feed.
 pub const FEED_KINDS: &[FeedKind] = &[
-    FeedKind { kind: 30040, label: "publication", plural: "publications", default_on: true, has_sections: true },
-    FeedKind { kind: 30023, label: "article", plural: "articles", default_on: true, has_sections: false },
-    FeedKind { kind: 30818, label: "wiki", plural: "wiki", default_on: true, has_sections: false },
-    FeedKind { kind: 30817, label: "spec", plural: "specs", default_on: false, has_sections: false },
+    FeedKind {
+        kind: 30040,
+        label: "publication",
+        plural: "publications",
+        description: "NKBIP-01 publication indexes — books, papers, kastens",
+        default_on: true,
+        has_sections: true,
+    },
+    FeedKind {
+        kind: 30041,
+        label: "section",
+        plural: "standalone sections",
+        description: "NKBIP-01 sections no listed publication contains",
+        default_on: false,
+        has_sections: false,
+    },
+    FeedKind {
+        kind: 30023,
+        label: "article",
+        plural: "articles",
+        description: "NIP-23 long-form articles — high volume on most relays",
+        default_on: true,
+        has_sections: false,
+    },
+    FeedKind {
+        kind: 30818,
+        label: "wiki",
+        plural: "wiki pages",
+        description: "NIP-54 wiki articles",
+        default_on: true,
+        has_sections: false,
+    },
+    FeedKind {
+        kind: 30817,
+        label: "spec",
+        plural: "specs",
+        description: "Specifications (NIP / NKBIP drafts)",
+        default_on: false,
+        has_sections: false,
+    },
 ];
 
 pub fn feed_kind(kind: u16) -> Option<&'static FeedKind> {
@@ -107,15 +145,23 @@ impl FeedPrefs {
         self.kinds.get(&k.kind).copied().unwrap_or(k.default_on)
     }
 
-    /// The kinds the feed lists, in registry order. Never empty: with every
-    /// toggle off the feed falls back to publications rather than nothing.
+    /// The kinds the feed lists, in registry order. May be empty — every
+    /// box unchecked is an empty feed, said so in the UI, not a fallback.
     pub fn enabled_kinds(&self) -> Vec<u16> {
-        let on: Vec<u16> = FEED_KINDS.iter().filter(|k| self.is_on(k)).map(|k| k.kind).collect();
-        if on.is_empty() {
-            vec![crate::publication::KIND_PUBLICATION_INDEX as u16]
-        } else {
-            on
+        FEED_KINDS.iter().filter(|k| self.is_on(k)).map(|k| k.kind).collect()
+    }
+
+    /// Check exactly `kinds` (every other registry kind unchecked) — the
+    /// checkable list's all / none / invert in one write. A kind outside
+    /// the registry is refused.
+    pub fn set_only(&mut self, kinds: &[u16]) -> Result<()> {
+        if let Some(bad) = kinds.iter().find(|k| feed_kind(**k).is_none()) {
+            return Err(crate::error::EngineError::BadRequest(format!("kind {bad} is not a feed kind")));
         }
+        for k in FEED_KINDS {
+            self.kinds.insert(k.kind, kinds.contains(&k.kind));
+        }
+        Ok(())
     }
 
     /// Set a kind on/off; a kind outside the registry is refused.
@@ -191,11 +237,17 @@ mod tests {
         p.set_kind(30817, true).unwrap();
         p.set_kind(30023, false).unwrap();
         assert_eq!(p.enabled_kinds(), vec![30040, 30818, 30817]);
+        p.set_kind(30023, true).unwrap();
+        p.set_kind(30817, false).unwrap();
         assert!(p.set_kind(1, true).is_err(), "not a feed kind");
         for k in FEED_KINDS {
             p.set_kind(k.kind, false).unwrap();
         }
-        assert_eq!(p.enabled_kinds(), vec![30040], "never an empty feed");
+        assert!(p.enabled_kinds().is_empty(), "every box unchecked = an empty feed");
+        p.set_only(&[30818, 30041]).unwrap();
+        assert_eq!(p.enabled_kinds(), vec![30041, 30818], "registry order");
+        assert!(p.set_only(&[1]).is_err());
+        assert_eq!(p.enabled_kinds(), vec![30041, 30818], "a refused set changes nothing");
     }
 
     #[test]

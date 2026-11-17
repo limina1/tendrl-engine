@@ -31,19 +31,37 @@ await ev(`(()=>{document.querySelectorAll('.rf-action--ghost, .rf-close, .dt-ski
 // close a first-run network-mode chooser / confirm modal if one is up
 await ev(`(()=>{[...document.querySelectorAll('[role=dialog] button')].filter(b=>/^(auto|skip|close|×|cancel)/i.test(b.textContent.trim())).slice(0,1).forEach(b=>b.click());})()`); await sleep(800);
 await sleep(2500);
-check('kind-bar', await waitFor('.kind-bar .kind-chip'));
-const chips = await ev(`[...document.querySelectorAll('.kind-bar .kind-chip')].map(b=>b.textContent.trim()+(b.classList.contains('kind-chip--on')?'+':'-')).join('|')`);
-check('chips', /publications\+\|articles\+\|wiki\+\|specs-\|has profile-/.test(chips), chips);
+// the kinds button → the checkable list (all / none / invert)
+check('kinds-button', await waitFor('.kinds-btn'));
+await clickJs(`document.querySelector('.kinds-btn')`); await sleep(500);
+check('kind-panel', await waitFor('.kind-panel .kind-row'));
+const rowsTxt = async () => ev(`[...document.querySelectorAll('.kind-list .kind-row')].map(r=>(r.querySelector('input').checked?'+':'-')+r.querySelector('.kind-name').textContent.trim()).join('|')`);
+const r0 = await rowsTxt();
+check('list-default', r0 === '+publications|-standalone sections|+articles|+wiki pages|-specs', r0);
 await waitFor('.feed-list .row', 40, 300);
-const metas = async () => ev(`[...document.querySelectorAll('.feed-list .row .meta')].map(m=>m.textContent.trim().toLowerCase())`);
-let m1 = await metas();
-check('article-rows', m1.some((t) => t === 'article'), `${m1.length} rows, ${m1.filter((t) => t === 'article').length} articles`);
-await shot('feed-mixed');
-// articles off → the feed reloads with publications + wiki only
-await clickJs(byText('.kind-bar .kind-chip', /^articles$/)); await sleep(2500);
-let m2 = await metas();
-check('articles-off', m2.length > 0 && !m2.includes('article') && m2.some((t) => /sections/.test(t)), `${m2.length} rows: ${[...new Set(m2.map((t) => t.replace(/\d+/, 'N')))].join(',')}`);
-await shot('feed-no-articles');
+const metas = async () => ev(`[...document.querySelectorAll('.feed-list .row .meta')].map(m=>m.textContent.trim().toLowerCase().replace(/^\\d+ sections$/, 'publication'))`);
+await shot('panel-default');
+// none → empty feed, no relay sync
+await clickJs(byText('.kind-tool', /^none$/)); await sleep(2200);
+check('none-empty', (await count('.feed-list .row')) === 0 && /No kinds checked/.test(await ev(`document.querySelector('.empty')?.textContent ?? ''`)), await rowsTxt());
+// invert → every kind checked
+await clickJs(byText('.kind-tool', /^invert$/)); await sleep(2500);
+const r1 = await rowsTxt();
+check('invert-all', !r1.includes('-'), r1);
+// uncheck articles by its row → publications / sections / wiki / specs only
+await clickJs(`[...document.querySelectorAll('.kind-list .kind-row')].find(r=>/articles/.test(r.textContent)).querySelector('input')`); await sleep(2500);
+const m2 = await metas();
+const kindsSeen = [...new Set(m2)];
+check('articles-off', m2.length > 0 && !m2.includes('article'), `${m2.length} rows: ${kindsSeen.join(',')}`);
+await shot('no-articles');
+// invert → articles only
+await clickJs(byText('.kind-tool', /^invert$/)); await sleep(2500);
+const m3 = await metas();
+check('invert-articles-only', m3.length > 0 && m3.every((t) => t === 'article'), `${m3.length} rows: ${[...new Set(m3)].join(',')}`);
+const btn = await ev(`document.querySelector('.kinds-btn').textContent.trim()`);
+check('button-summary', /^kinds 1\/5/.test(btn), btn);
+// back to defaults minus articles for the wiki step
+await clickJs(byText('.kind-tool', /^invert$/)); await sleep(2500);
 // open a wiki row from the feed: the reader, with the tools button
 const wikiRow = `[...document.querySelectorAll('.feed-list .row')].find(r=>r.querySelector('.meta')?.textContent.trim().toLowerCase()==='wiki')`;
 if (await ev(`!!(${wikiRow})`)) {
@@ -57,8 +75,8 @@ if (await ev(`!!(${wikiRow})`)) {
 // openCoord path (nostrdown refs, comment targets): a 30818 coordinate → reader buffer id
 const coord = await ev(`(async()=>{const r=await fetch('/api/v1/publications?limit=5&policy=local_only&general=true'); const d=await r.json(); const w=d.publications.find(p=>p.addr.kind===30818); return w?\`30818:\${w.addr.pubkey}:\${w.addr.d_tag}\`:null})()`);
 check('have-wiki-coord', typeof coord === 'string', String(coord));
-// restore
-await clickJs(byText('.kind-bar .kind-chip', /^articles$/)); await sleep(1500);
+// restore the defaults
+await ev(`fetch('/api/v1/feed/kinds',{method:'PUT',headers:{'content-type':'application/json'},body:JSON.stringify({only:[30040,30023,30818]})})`);
 ws.close();
 const failed = results.filter((r) => !r.ok).length;
 console.log(`\n${results.length - failed}/${results.length} passed · screenshots in ${OUT}`);
