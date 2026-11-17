@@ -802,19 +802,27 @@ fn process_root_publications(
     ignore_list: crate::engine::IgnoreList,
     limit: usize,
     timeline: &RelayTimeline,
+    skip_authors: &std::collections::HashSet<String>,
 ) -> Vec<Publication> {
     use std::collections::{HashMap, HashSet};
 
-    // Build set of all addresses referenced as children
+    // Build set of all addresses an index references as children: a nested
+    // index, or a feed-kind document (an article / wiki page) that is a
+    // chapter of a listed publication — the publication is the root.
     let mut child_addrs = HashSet::new();
     for event in &events {
+        if event.get("kind").and_then(|k| k.as_u64()) != Some(KIND_PUBLICATION_INDEX) {
+            continue;
+        }
         if let Some(tags) = event.get("tags").and_then(|v| v.as_array()) {
             for tag in tags {
                 if let Some(arr) = tag.as_array() {
                     if arr.first().and_then(|v| v.as_str()) == Some("a") {
                         if let Some(addr_str) = arr.get(1).and_then(|v| v.as_str()) {
                             if let Some(addr) = NAddr::from_a_tag(addr_str) {
-                                if addr.kind == KIND_PUBLICATION_INDEX {
+                                if addr.kind == KIND_PUBLICATION_INDEX
+                                    || crate::feed_kinds::feed_kind(addr.kind as u16).is_some()
+                                {
                                     child_addrs.insert(addr.to_a_tag());
                                 }
                             }
@@ -831,12 +839,18 @@ fn process_root_publications(
     let mut skipped_dupe = 0usize;
     let mut skipped_err = 0usize;
     let mut skipped_ignored = 0usize;
+    let mut skipped_unprofiled = 0usize;
 
     for event in events {
         let event_id = event.get("id").and_then(|v| v.as_str()).unwrap_or("");
         let pubkey = event.get("pubkey").and_then(|v| v.as_str()).unwrap_or("");
+        let kind = event.get("kind").and_then(|v| v.as_u64()).unwrap_or(KIND_PUBLICATION_INDEX);
         if ignore_list.is_ignored(event_id, pubkey) {
             skipped_ignored += 1;
+            continue;
+        }
+        if skip_authors.contains(pubkey) {
+            skipped_unprofiled += 1;
             continue;
         }
         let d_tag = event.get("tags").and_then(|t| t.as_array()).and_then(|tags| {
@@ -845,20 +859,29 @@ fn process_root_publications(
                 if arr.first()?.as_str()? == "d" { arr.get(1)?.as_str() } else { None }
             })
         }).unwrap_or("");
-        let a_tag = format!("{}:{}:{}", KIND_PUBLICATION_INDEX, pubkey, d_tag);
+        let a_tag = format!("{}:{}:{}", kind, pubkey, d_tag);
         if ignore_list.is_coordinate_ignored(&a_tag) {
             skipped_ignored += 1;
             continue;
         }
+        let has_sections = crate::feed_kinds::feed_kind(kind as u16).map(|k| k.has_sections).unwrap_or(true);
 
         match Publication::from_event(&event, true) {
-            Ok(pub_) => {
+            Ok(mut pub_) => {
+                if !has_sections {
+                    // A single document (article / wiki / spec): its own
+                    // kind, no children — `a` tags on it are citations.
+                    pub_.addr.kind = kind;
+                    pub_.sections.clear();
+                    pub_.nested.clear();
+                    pub_.order.clear();
+                }
                 let own_addr = pub_.addr.to_a_tag();
                 if child_addrs.contains(&own_addr) {
                     skipped_child += 1;
                     continue;
                 }
-                if pub_.sections.is_empty() && pub_.nested.is_empty() {
+                if has_sections && pub_.sections.is_empty() && pub_.nested.is_empty() {
                     skipped_empty += 1;
                     continue;
                 }
@@ -879,8 +902,8 @@ fn process_root_publications(
     }
 
     tracing::info!(
-        "list_root_publications: {} unique roots (skipped: {} child, {} empty, {} dupe, {} err, {} ignored)",
-        by_addr.len(), skipped_child, skipped_empty, skipped_dupe, skipped_err, skipped_ignored
+        "list_root_publications: {} unique roots (skipped: {} child, {} empty, {} dupe, {} err, {} ignored, {} without a profile)",
+        by_addr.len(), skipped_child, skipped_empty, skipped_dupe, skipped_err, skipped_ignored, skipped_unprofiled
     );
 
     // Timeline scoping happens after dedup so the version the feed shows
@@ -1073,6 +1096,20 @@ async fn emit_pub_event(
 }
 
 /// Publication engine extension for the main Engine
+/// What the feed lists (`PublicationEngine::list_feed`).
+#[derive(Debug, Clone)]
+pub struct FeedListOptions {
+    pub kinds: Vec<u16>,
+    pub require_profile: bool,
+}
+
+/// A feed page plus the authors seen with no local kind 0.
+#[derive(Debug, Clone)]
+pub struct FeedListing {
+    pub roots: Vec<Publication>,
+    pub unprofiled: Vec<String>,
+}
+
 pub struct PublicationEngine<'a> {
     engine: &'a Engine,
 }
@@ -2191,7 +2228,31 @@ impl<'a> PublicationEngine<'a> {
         general: bool,
         relay: Option<&str>,
     ) -> Result<Vec<Publication>> {
+        let opts = FeedListOptions { kinds: vec![KIND_PUBLICATION_INDEX as u16], require_profile: false };
+        Ok(self.list_feed(policy, limit, before, general, relay, &opts).await?.roots)
+    }
+
+    /// The feed: root documents of every kind in `opts.kinds` (the feed
+    /// kind registry, `crate::feed_kinds`) — 30040 indexes no other index
+    /// lists, plus single documents (articles, wiki pages…) no index lists.
+    /// With `require_profile`, authors with no local kind 0 are left out;
+    /// either way `unprofiled` names the authors seen without one, for the
+    /// caller to pull.
+    pub async fn list_feed(
+        &self,
+        policy: FetchPolicy,
+        limit: usize,
+        before: Option<u64>,
+        general: bool,
+        relay: Option<&str>,
+        opts: &FeedListOptions,
+    ) -> Result<FeedListing> {
         use serde_json::json;
+        let kinds: Vec<u64> = if opts.kinds.is_empty() {
+            vec![KIND_PUBLICATION_INDEX]
+        } else {
+            opts.kinds.iter().map(|k| *k as u64).collect()
+        };
 
         // One relay timeline. `local` = no provenance; anything else is a
         // relay URL, normalized once here so provenance comparison and the
@@ -2221,16 +2282,22 @@ impl<'a> PublicationEngine<'a> {
         //     Profiles for these foreign authors backfill separately via the
         //     web's prefetchProfiles — that's the feed/profile separation.
         let mut filters_to_fetch: Vec<serde_json::Value> = Vec::new();
+        // One filter per kind, each with its own window: kinds differ by
+        // orders of magnitude in volume (articles vs publication indexes),
+        // and a shared `limit` would hand a relay's whole answer to the
+        // loudest kind.
         if !authors.is_empty() {
-            let mut scoped = json!({
-                "kinds": [KIND_PUBLICATION_INDEX],
-                "limit": limit * 10,
-                "authors": authors.clone(),
-            });
-            if let Some(ts) = before {
-                scoped["until"] = json!(ts - 1);
+            for k in &kinds {
+                let mut scoped = json!({
+                    "kinds": [k],
+                    "limit": limit * 10,
+                    "authors": authors.clone(),
+                });
+                if let Some(ts) = before {
+                    scoped["until"] = json!(ts - 1);
+                }
+                filters_to_fetch.push(scoped);
             }
-            filters_to_fetch.push(scoped);
             filters_to_fetch.push(json!({
                 "kinds": [0],
                 "authors": authors.clone(),
@@ -2238,14 +2305,16 @@ impl<'a> PublicationEngine<'a> {
             }));
         }
         if general || authors.is_empty() {
-            let mut broad = json!({
-                "kinds": [KIND_PUBLICATION_INDEX],
-                "limit": limit * 5,
-            });
-            if let Some(ts) = before {
-                broad["until"] = json!(ts - 1);
+            for k in &kinds {
+                let mut broad = json!({
+                    "kinds": [k],
+                    "limit": limit * 5,
+                });
+                if let Some(ts) = before {
+                    broad["until"] = json!(ts - 1);
+                }
+                filters_to_fetch.push(broad);
             }
-            filters_to_fetch.push(broad);
         }
 
         // Honor the caller's policy. The web's loadFeed() retries
@@ -2267,7 +2336,7 @@ impl<'a> PublicationEngine<'a> {
                 // plus the search relays serving publication indexes.
                 let relays: Vec<String> = match &timeline {
                     RelayTimeline::Relay(url) => vec![url.clone()],
-                    _ => self.engine.relays_for_kinds(Some(&[30040])),
+                    _ => self.engine.relays_for_kinds(Some(&kinds)),
                 };
                 let label = match &timeline {
                     RelayTimeline::Relay(url) => format!("Feed sync — {url}"),
@@ -2357,17 +2426,31 @@ impl<'a> PublicationEngine<'a> {
 
         // Offload CPU-heavy dedup/filter/sort to blocking threadpool
         // so the async runtime stays responsive
-        let run_filter = |ev: Vec<serde_json::Value>, ig: crate::engine::IgnoreList| {
+        // Authors seen without a local kind 0 — re-derived as the window
+        // grows (one indexed query over the distinct authors).
+        let unprofiled_of = |ev: &[serde_json::Value]| -> std::collections::HashSet<String> {
+            let mut authors: Vec<String> = ev
+                .iter()
+                .filter_map(|e| e.get("pubkey").and_then(|p| p.as_str()).map(String::from))
+                .collect();
+            authors.sort();
+            authors.dedup();
+            crate::query::profiles_missing(self.engine.ndb(), &authors).into_iter().collect()
+        };
+        let require_profile = opts.require_profile;
+        let run_filter = |ev: Vec<serde_json::Value>, ig: crate::engine::IgnoreList, skip: std::collections::HashSet<String>| {
             let timeline = timeline.clone();
             async move {
                 tokio::task::spawn_blocking(move || {
-                    process_root_publications(ev, ig, limit, &timeline)
+                    let skip = if require_profile { skip } else { Default::default() };
+                    process_root_publications(ev, ig, limit, &timeline, &skip)
                 })
                 .await
                 .map_err(|e| crate::error::EngineError::Database(format!("spawn_blocking: {e}")))
             }
         };
-        let mut roots = run_filter(events.clone(), ignore_list.clone()).await?;
+        let mut unprofiled = unprofiled_of(&events);
+        let mut roots = run_filter(events.clone(), ignore_list.clone(), unprofiled.clone()).await?;
 
         // A single query window can starve the feed: the broad filter samples
         // the most recent 30040s by created_at, and reference-less (skippable)
@@ -2394,8 +2477,9 @@ impl<'a> PublicationEngine<'a> {
             let mut created: Vec<u64> = events
                 .iter()
                 .filter(|e| {
-                    e.get("kind").and_then(|k| k.as_u64())
-                        == Some(KIND_PUBLICATION_INDEX as u64)
+                    e.get("kind")
+                        .and_then(|k| k.as_u64())
+                        .is_some_and(|k| kinds.contains(&k))
                 })
                 .filter_map(|e| e.get("created_at").and_then(|c| c.as_u64()))
                 .collect();
@@ -2415,7 +2499,7 @@ impl<'a> PublicationEngine<'a> {
                 .engine
                 .get_events(
                     vec![json!({
-                        "kinds": [KIND_PUBLICATION_INDEX],
+                        "kinds": kinds.clone(),
                         "limit": broad_window,
                         "until": until - 1,
                     })],
@@ -2444,7 +2528,8 @@ impl<'a> PublicationEngine<'a> {
                     .unwrap_or(false)
             }));
             if events.len() > before_len {
-                roots = run_filter(events.clone(), ignore_list.clone()).await?;
+                unprofiled = unprofiled_of(&events);
+                roots = run_filter(events.clone(), ignore_list.clone(), unprofiled.clone()).await?;
             }
             // A short window means the store has nothing older.
             edge = if short_window { None } else { response_min };
@@ -2458,7 +2543,9 @@ impl<'a> PublicationEngine<'a> {
             );
         }
 
-        Ok(roots)
+        let mut unprofiled: Vec<String> = unprofiled.into_iter().collect();
+        unprofiled.sort();
+        Ok(FeedListing { roots, unprofiled })
     }
 
     /// Find alternate versions of a section (for forking UI)
@@ -4294,6 +4381,38 @@ mod tests {
     }
 
     #[test]
+    fn feed_roots_mix_kinds_and_honour_profile_skip() {
+        let pk = "a".repeat(64);
+        let doc = |kind: u64, d: &str, author: &str, t: u64| {
+            serde_json::json!({
+                "id": format!("{:0>64}", format!("{kind}{d}")),
+                "pubkey": author, "created_at": t, "kind": kind,
+                "tags": [["d", d], ["title", d], ["a", "30023:ffff:cited"]],
+                "content": "body", "sig": "1".repeat(128)
+            })
+        };
+        let index = serde_json::json!({
+            "id": "f".repeat(64), "pubkey": pk, "created_at": 50, "kind": 30040,
+            "tags": [["d", "book"], ["title", "Book"], ["a", format!("30023:{pk}:chapter")]],
+            "content": "", "sig": "1".repeat(128)
+        });
+        let other = "b".repeat(64);
+        let events = vec![
+            index,
+            doc(30023, "chapter", &pk, 40),   // a chapter of "book" — not a root
+            doc(30023, "essay", &pk, 30),     // a root article
+            doc(30818, "topic", &other, 20),  // a root wiki page by `other`
+        ];
+        let ig = crate::engine::IgnoreList::default();
+        let all = process_root_publications(events.clone(), ig.clone(), 10, &RelayTimeline::All, &Default::default());
+        let got: Vec<(u64, &str, usize)> = all.iter().map(|p| (p.addr.kind, p.addr.d_tag.as_str(), p.section_count())).collect();
+        assert_eq!(got, vec![(30040, "book", 1), (30023, "essay", 0), (30818, "topic", 0)], "single docs keep their kind, cite nothing as sections");
+        let skip: std::collections::HashSet<String> = [other].into_iter().collect();
+        let profiled = process_root_publications(events, ig, 10, &RelayTimeline::All, &skip);
+        assert!(profiled.iter().all(|p| p.addr.kind != 30818), "an author without a kind 0 is left out");
+    }
+
+    #[test]
     fn relay_timeline_parse_normalizes_and_recognizes_local() {
         assert_eq!(RelayTimeline::parse(None), RelayTimeline::All);
         assert_eq!(RelayTimeline::parse(Some("  ")), RelayTimeline::All);
@@ -4313,7 +4432,7 @@ mod tests {
         ];
         let ig = crate::engine::IgnoreList::default();
 
-        let all = process_root_publications(events.clone(), ig.clone(), 10, &RelayTimeline::All);
+        let all = process_root_publications(events.clone(), ig.clone(), 10, &RelayTimeline::All, &Default::default());
         assert_eq!(all.len(), 3);
 
         let damus = process_root_publications(
@@ -4321,6 +4440,7 @@ mod tests {
             ig.clone(),
             10,
             &RelayTimeline::parse(Some("relay.damus.io")),
+            &Default::default(),
         );
         let tags: Vec<&str> = damus.iter().map(|p| p.addr.d_tag.as_str()).collect();
         assert_eq!(tags, vec!["one", "two"]);
@@ -4332,11 +4452,12 @@ mod tests {
             ig.clone(),
             1,
             &RelayTimeline::parse(Some("wss://nos.lol")),
+            &Default::default(),
         );
         assert_eq!(nos.len(), 1);
         assert_eq!(nos[0].addr.d_tag, "two");
 
-        let local = process_root_publications(events, ig, 10, &RelayTimeline::Local);
+        let local = process_root_publications(events, ig, 10, &RelayTimeline::Local, &Default::default());
         assert_eq!(local.len(), 1);
         assert_eq!(local[0].addr.d_tag, "three");
     }

@@ -883,6 +883,10 @@ pub async fn start(opts: ServeOptions) -> anyhow::Result<RunningServer> {
         )
         // Publication endpoints
         .route("/api/v1/publications", get(api::list_publications_handler))
+        .route(
+            "/api/v1/feed/kinds",
+            get(api::feed_kinds_get_handler).put(api::feed_kinds_put_handler),
+        )
         .route("/api/v1/publications/relays", get(api::feed_relays_handler))
         .route("/api/v1/bookshelf", get(api::bookshelf_handler))
         .route("/api/v1/bookshelf/all", get(api::bookshelves_handler))
