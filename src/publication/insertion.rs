@@ -108,14 +108,18 @@ impl InsertionAnchor {
             coord_parts(root).ok_or_else(|| format!("root is not a kind:pubkey:d coordinate: `{root}`"))?;
         let (parent_kind, parent_pubkey, _) = coord_parts(parent)
             .ok_or_else(|| format!("parent is not a kind:pubkey:d coordinate: `{parent}`"))?;
-        if !matches!(root_kind, 30040 | 30041) {
+        // A document an insertion can sit in: an NKBIP-01 index or note, or
+        // a single long-form document (article 30023, wiki 30818, spec
+        // 30817) — read in the reader as a one-section publication.
+        let anchorable = |k: u32| matches!(k, 30040 | 30041 | 30023 | 30818 | 30817);
+        if !anchorable(root_kind) {
             return Err(format!(
-                "an insertion roots at a 30040 index or a standalone 30041 note, not kind {root_kind}"
+                "an insertion roots at a 30040 index, a standalone 30041 note or a long-form document (30023 / 30818 / 30817), not kind {root_kind}"
             ));
         }
-        if !matches!(parent_kind, 30040 | 30041) {
+        if !anchorable(parent_kind) {
             return Err(format!(
-                "an insertion attaches to a 30040 index or a 30041 section, not kind {parent_kind}"
+                "an insertion attaches to a 30040 index, a 30041 section or a long-form document (30023 / 30818 / 30817), not kind {parent_kind}"
             ));
         }
         if let Some(id) = &parent_event_id {
@@ -951,9 +955,21 @@ mod tests {
 
     #[test]
     fn anchor_rejects_foreign_kinds() {
-        assert!(InsertionAnchor::new(&format!("30023:{PK_A}:x"), &sec(1), None, Placement::After).is_err());
+        assert!(InsertionAnchor::new(&format!("1:{PK_A}:x"), &sec(1), None, Placement::After).is_err());
+        assert!(InsertionAnchor::new(&format!("30311:{PK_A}:x"), &sec(1), None, Placement::After).is_err());
         assert!(InsertionAnchor::new(&root(), &format!("1111:{PK_A}:"), None, Placement::After).is_err());
         assert!(InsertionAnchor::new(&root(), &sec(1), Some("nothex".into()), Placement::After).is_err());
+    }
+
+    #[test]
+    fn anchor_accepts_long_form_documents() {
+        // A wiki page / article / spec read as a one-section document: the
+        // document is both the root and the parent.
+        for k in [30023u32, 30818, 30817] {
+            let doc = format!("{k}:{PK_A}:topic");
+            let a = InsertionAnchor::new(&doc, &doc, None, Placement::After).unwrap();
+            assert_eq!((a.root_kind, a.parent_kind), (k, k));
+        }
     }
 
     #[test]

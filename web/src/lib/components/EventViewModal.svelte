@@ -433,7 +433,12 @@
 	// insertions). A 30040 is its own root; a 30041 roots at the publication
 	// the reader had open (app.eventModalRoot), else at a containing index
 	// found by the lookup above, else at itself (a standalone note).
-	const canAnnotate = $derived((n.kind === 30040 || n.kind === 30041) && !!addrRef);
+	// A long-form document (30023 article, 30818 wiki, 30817 spec) is, like
+	// a 30040, its own root.
+	const LONGFORM_ROOTS = new Set([30023, 30818, 30817]);
+	const canAnnotate = $derived(
+		(n.kind === 30040 || n.kind === 30041 || LONGFORM_ROOTS.has(n.kind)) && !!addrRef
+	);
 	/** Where a note about this event belongs: a 30040 is its own root; a
 	 *  30041 roots at the publication the reader had open (app.eventModalRoot),
 	 *  else a containing index found by the lookup above, else itself (a
@@ -447,7 +452,7 @@
 		parentEventId?: string;
 	} | null {
 		if (!canAnnotate || !addrRef) return null;
-		if (n.kind === 30040) return { root: addrRef, rootTitle: n.title ?? null };
+		if (n.kind === 30040 || LONGFORM_ROOTS.has(n.kind)) return { root: addrRef, rootTitle: n.title ?? null };
 		const hint = app.eventModalRoot;
 		// Several versions of one index are one root — dedupe by coordinate.
 		const seen = new Set<string>();
