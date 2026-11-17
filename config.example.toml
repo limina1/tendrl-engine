@@ -44,7 +44,6 @@ timeout_ms = 15000
 # to <data_dir>/relays.json (the live working sets — general / fetch /
 # publish). This list is never re-read once relays.json exists.
 initial_relays = [
-    "wss://relay.damus.io",
     "wss://relay.noswhere.com",
     "wss://nos.lol",
 ]

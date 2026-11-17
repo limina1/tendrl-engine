@@ -33,7 +33,6 @@ use tracing::{debug, info, warn};
 /// run one.
 pub const DEFAULT_RELAYS: &[&str] = &[
     "wss://relay.noswhere.com",
-    "wss://relay.damus.io",
     "wss://theforest.nostr1.com",
     "wss://thecitadel.nostr1.com",
     "wss://mercury-relay.imwald.eu/relay",
