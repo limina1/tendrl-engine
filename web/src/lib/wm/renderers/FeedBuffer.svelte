@@ -9,6 +9,7 @@
 	import { promptText } from '$lib/wm/text-prompt.svelte';
 	import * as history from '$lib/history.svelte';
 	import * as nar from '$lib/narration.svelte';
+	import { feedKinds, loadFeedKinds } from '$lib/feed-kinds.svelte';
 	import {
 		discovery,
 		trigger as triggerTip,
@@ -37,6 +38,37 @@
 	let mode = $state<FeedMode>(savedView?.mode ?? 'relays');
 	let cursor = $state(savedView?.cursor ?? 0);
 	let listEl: HTMLDivElement | undefined = $state();
+
+	// The feed kind registry (engine-owned, `src/feed_kinds.rs`): one toggle
+	// per kind + the kind-0 presence check. A change reloads the feed.
+	$effect(() => {
+		void loadFeedKinds();
+	});
+	let kindBusy = $state(false);
+	async function toggleKind(kind: number, on: boolean) {
+		if (kindBusy) return;
+		kindBusy = true;
+		try {
+			await feedKinds.setKind(kind, on);
+			await app.loadFeed();
+		} catch (e) {
+			app.pushToast(e instanceof Error ? e.message : String(e), 'error');
+		} finally {
+			kindBusy = false;
+		}
+	}
+	async function toggleRequireProfile() {
+		if (kindBusy) return;
+		kindBusy = true;
+		try {
+			await feedKinds.setRequireProfile(!feedKinds.view.require_profile);
+			await app.loadFeed();
+		} catch (e) {
+			app.pushToast(e instanceof Error ? e.message : String(e), 'error');
+		} finally {
+			kindBusy = false;
+		}
+	}
 
 	$effect(() => {
 		return () => {
@@ -399,7 +431,11 @@
 				containedIn={pub_item.contained_in?.length ?? 0}
 				onpartof={() => findContainers(pub_item.addr)}
 			/>
-			<span class="meta">{pub_item.section_count} sections</span>
+			{#if feedKinds.entry(pub_item.addr.kind)?.has_sections ?? pub_item.addr.kind === 30040}
+				<span class="meta">{pub_item.section_count} sections</span>
+			{:else}
+				<span class="meta meta--kind" title={`kind ${pub_item.addr.kind}`}>{feedKinds.entry(pub_item.addr.kind)?.label ?? `kind ${pub_item.addr.kind}`}</span>
+			{/if}
 			{#if onremove}
 				<button
 					class="pill pill--remove"
@@ -511,6 +547,32 @@
 			</button>
 		{/if}
 	</div>
+	{#if mode === 'relays' && feedKinds.loaded}
+		<!-- What the feed lists: the engine's kind registry, one toggle per
+		     kind, plus the presence check — authors with no kind-0 profile
+		     are likelier spam; the engine pulls missing profiles on its own. -->
+		<div class="kind-bar" role="group" aria-label="Kinds in the feed">
+			{#each feedKinds.view.kinds as k (k.kind)}
+				<button
+					class="kind-chip"
+					class:kind-chip--on={k.on}
+					aria-pressed={k.on}
+					disabled={kindBusy}
+					onclick={() => toggleKind(k.kind, !k.on)}
+					title={`${k.on ? 'Hide' : 'Show'} ${k.plural} (kind ${k.kind}) in the feed`}
+				>{k.plural}</button>
+			{/each}
+			<span class="kind-sep" aria-hidden="true">·</span>
+			<button
+				class="kind-chip"
+				class:kind-chip--on={feedKinds.view.require_profile}
+				aria-pressed={feedKinds.view.require_profile}
+				disabled={kindBusy}
+				onclick={toggleRequireProfile}
+				title="List only authors with a kind-0 profile — a sign of a regular presence; profile-less keys are far likelier spam. Missing profiles are pulled automatically (Auto mode, or with a Sync you approve)."
+			>has profile</button>
+		</div>
+	{/if}
 	{#if mode === 'history'}
 		{#if !history.isLoaded()}
 			<div class="empty"><p>Loading history…</p></div>
@@ -764,6 +826,45 @@
 	.title { display: block; font-size: var(--t-sm); font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-bottom: 2px; }
 	/* Fixed-width, right-aligned count so "N sections" forms a column
 	   across rows regardless of how many pills precede it. */
+	.kind-bar {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: center;
+		gap: 4px;
+		padding: 4px var(--s-3, 12px);
+		border-bottom: 1px solid var(--panel-border);
+		font: var(--t-2xs) / 1.2 var(--font-mono);
+	}
+	.kind-chip {
+		font: inherit;
+		min-height: 24px;
+		padding: 0 8px;
+		border: 1px solid var(--panel-border);
+		border-radius: 3px;
+		background: transparent;
+		color: var(--base5);
+		cursor: pointer;
+	}
+	.kind-chip:hover:not(:disabled) {
+		color: var(--fg);
+		border-color: var(--base5);
+	}
+	.kind-chip--on {
+		color: var(--cyan);
+		border-color: currentColor;
+	}
+	.kind-chip:disabled {
+		opacity: 0.6;
+		cursor: default;
+	}
+	.kind-sep {
+		color: var(--base4);
+		padding: 0 2px;
+	}
+	.meta--kind {
+		text-transform: uppercase;
+		letter-spacing: 0.04em;
+	}
 	.meta {
 		font-size: var(--t-xs);
 		color: var(--base5);

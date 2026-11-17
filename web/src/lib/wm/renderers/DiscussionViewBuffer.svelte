@@ -221,11 +221,13 @@
 			const kind = parseInt(parts[0], 10);
 			const pubkey = parts[1];
 			const d_tag = parts.slice(2).join(':');
-			if (kind === 30040) {
+			// A publication or a long-form document reads in the reader
+			// (tools sheet, highlights drawer); anything else the doc view.
+			if (kind === 30040 || kind === 30023 || kind === 30818 || kind === 30817) {
 				store.openBuffer({
 					className: 'work',
 					buffer: {
-						id: `reader:30040:${pubkey}:${d_tag}${marker}`,
+						id: `reader:${kind}:${pubkey}:${d_tag}${marker}`,
 						kind: 'reader',
 						label: 'reader',
 						kicker: d_tag

@@ -2664,3 +2664,14 @@ curl -s -XPOST localhost:3131/api/v1/broadcast/send -H 'content-type: applicatio
 # GUI (chromium --headless=new --remote-debugging-port=9333 --user-data-dir=/tmp/lm/prof about:blank)
 node scripts/verify/broadcast-modal.mjs --port 3131  # 11 checks
 #+end_src
+
+* Feed kinds + long-form reader (feat/longform-tools-kinds)
+Isolated engine on :3131 against theforest only, auto mode, a synced general feed:
+#+begin_src sh
+curl -s -X POST localhost:3131/api/v1/network/mode -H 'content-type: application/json' -d '{"mode":"auto"}'
+curl -s localhost:3131/api/v1/feed/kinds
+curl -s "localhost:3131/api/v1/publications?limit=40&policy=fetch_always&general=true" | jq '{count, kinds, unprofiled_authors}'
+curl -s -X PUT localhost:3131/api/v1/feed/kinds -H 'content-type: application/json' -d '{"require_profile":true}'
+chromium --headless=new --remote-debugging-port=9333 --user-data-dir=/tmp/fk-chrome about:blank &
+node scripts/verify/feed-kinds.mjs --port 3131 --out /tmp/feed-kinds-shots   # kind bar, toggles, wiki → reader tools sheet
+#+end_src

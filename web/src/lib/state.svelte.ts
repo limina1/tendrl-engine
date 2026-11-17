@@ -1,4 +1,5 @@
-import { onKindsIngested } from '$lib/network/ingest';
+import { onKindsIngested, onIngested } from '$lib/network/ingest';
+import { feedKinds, loadFeedKinds } from '$lib/feed-kinds.svelte';
 import { DEFAULT_COMPOSE_FORMAT } from '$lib/layers/registry';
 import { goto } from '$app/navigation';
 import {
@@ -1571,7 +1572,7 @@ function _createAppState() {
 		try {
 			const resp = await api.listPublications(20, 'local_only', undefined, feedGeneral, forTimeline);
 			if (forTimeline !== feedTimeline || feedLoading) return;
-			const key = (p: PublicationSummary) => `${p.addr.pubkey}:${p.addr.d_tag}`;
+			const key = (p: PublicationSummary) => `${p.addr.kind}:${p.addr.pubkey}:${p.addr.d_tag}`;
 			const firstPage = new Map(resp.publications.map((p) => [key(p), p]));
 			const older = feed.length > 20 ? feed.filter((p) => !firstPage.has(key(p))) : [];
 			const next = [...resp.publications, ...older].sort((a, b) => b.created_at - a.created_at);
@@ -1590,10 +1591,25 @@ function _createAppState() {
 	// and the views that show those kinds re-read locally. Nothing here
 	// waits on a relay.
 	onKindsIngested([30040], () => {
-		void refreshFeedFromLocal();
 		void loadFeedRelays();
 		if (bookshelf) void loadBookshelf();
 	});
+	// The feed re-reads when a kind it lists lands — and, with the kind-0
+	// presence check on, when profiles land (a newly profiled author's
+	// documents join the feed). Throttled like onKindsIngested.
+	let feedIngestTimer: ReturnType<typeof setTimeout> | null = null;
+	onIngested((n) => {
+		const listed = feedKinds.enabledKinds();
+		const hit =
+			n.kinds.some((k) => listed.includes(k)) ||
+			(feedKinds.view.require_profile && n.kinds.includes(0));
+		if (!hit || feedIngestTimer) return;
+		feedIngestTimer = setTimeout(() => {
+			feedIngestTimer = null;
+			void refreshFeedFromLocal();
+		}, 600);
+	});
+	if (typeof window !== 'undefined') void loadFeedKinds();
 	onKindsIngested([30045], () => {
 		if (bookshelf || bookshelfError) void loadBookshelf();
 	});
@@ -3110,9 +3126,9 @@ function _createAppState() {
 		}
 	}
 
-	/** Open an addressable coordinate (`"kind:pubkey:dtag"`) — a 30040 in
-	 *  the publication reader, any other addressable (30023 article, 30818
-	 *  wiki, 30817 spec, 30041 section) in the canonical doc view. The
+	/** Open an addressable coordinate (`"kind:pubkey:dtag"`) — a 30040 or a
+	 *  long-form document (30023 article, 30818 wiki, 30817 spec) in the
+	 *  reader, any other addressable (a 30041 section…) in the doc view. The
 	 *  structured-event popup counterpart is `openAddressableInModal`.
 	 *  Used by nostrdown refs. */
 	function openCoord(coord: string) {
@@ -3127,7 +3143,25 @@ function _createAppState() {
 			return;
 		}
 		const short = d_tag.length > 24 ? d_tag.slice(0, 24) + '…' : d_tag;
-		navigateToDoc(`doc:${kind}:${pubkey}:${d_tag}`, short);
+		openDocument(kind, pubkey, d_tag, short);
+	}
+
+	/** Long-form kinds read in the publication reader, as a one-section
+	 *  document — the same tools sheet (highlight / annotate modes,
+	 *  highlights drawer with who highlighted, comments, broadcast) and the
+	 *  same buffer identity (`reader:kind:pubkey:d`) the feed opens. */
+	const READER_LONGFORM_KINDS = new Set([30023, 30818, 30817]);
+
+	/** Open an addressable that isn't a 30040: long-form in the reader,
+	 *  anything else in the slim doc view. `marker` is a `highlight=…` /
+	 *  `focus_comment=…` deep-link query. */
+	function openDocument(kind: number, pubkey: string, d_tag: string, kicker: string, marker?: string) {
+		const q = marker ? `?${marker}` : '';
+		if (READER_LONGFORM_KINDS.has(kind)) {
+			navigateToReader(`reader:${kind}:${pubkey}:${d_tag}${q}`, 'reader', kicker);
+		} else {
+			navigateToDoc(`doc:${kind}:${pubkey}:${d_tag}${q}`, kicker);
+		}
 	}
 
 	/** Open a kind-32176 narration: the publication reader when the
@@ -3814,13 +3848,12 @@ function _createAppState() {
 					const pubkey = parts[1];
 					const d_tag = parts.slice(2).join(':');
 					const kicker = d_tag.length > 24 ? d_tag.slice(0, 24) + '…' : d_tag;
-					// 30040 publications keep the reader; every other
-					// addressable (article/wiki/spec) opens the canonical
-					// doc view — same chrome regardless of entry point.
+					// 30040 publications and long-form documents open the
+					// reader; any other addressable the slim doc view.
 					if (kind === 30040) {
 						navigateToReader(`reader:${kind}:${pubkey}:${d_tag}?${marker}`, 'reader', kicker);
 					} else {
-						navigateToDoc(`doc:${kind}:${pubkey}:${d_tag}?${marker}`, kicker);
+						openDocument(kind, pubkey, d_tag, kicker, marker);
 					}
 					return;
 				}
@@ -3918,14 +3951,12 @@ function _createAppState() {
 			}
 			await openStandaloneSection(result);
 		} else {
-			// 30023 article / 30818 wiki / 30817 spec / any other addressable:
-			// the canonical doc view — the SAME buffer identity a nostrdown ref
-			// or comment target opens (`doc:kind:pubkey:dtag`), so the switcher
-			// holds one buffer per document instead of a reader twin that
-			// reloads on every alternation.
+			// 30023 article / 30818 wiki / 30817 spec: the reader; any other
+			// addressable: the doc view. One buffer identity per document
+			// whatever the entry point (feed, search, ref, comment target).
 			const { pubkey, d_tag } = result.addr;
 			const short = d_tag.length > 24 ? d_tag.slice(0, 24) + '…' : d_tag;
-			navigateToDoc(`doc:${result.kind}:${pubkey}:${d_tag}`, short);
+			openDocument(result.kind, pubkey, d_tag, short);
 		}
 	}
 

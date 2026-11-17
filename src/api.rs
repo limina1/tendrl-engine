@@ -1304,15 +1304,37 @@ pub async fn list_publications_handler(
     );
 
     let pub_engine = PublicationEngine::new(&engine);
-    let publications = pub_engine
-        .list_root_publications(
+    // The feed kind registry + the user's choices (`<data_dir>/feed.json`).
+    let prefs = crate::feed_kinds::FeedPrefs::load(engine.data_dir());
+    let opts = crate::publication::FeedListOptions {
+        kinds: prefs.enabled_kinds(),
+        require_profile: prefs.require_profile,
+    };
+    let listing = pub_engine
+        .list_feed(
             policy,
             query.limit,
             query.before,
             query.general,
             query.relay.as_deref(),
+            &opts,
         )
         .await?;
+    let publications = listing.roots;
+
+    // Pull the kind 0s the feed saw missing — detached, so the response
+    // never waits on relays; each author at most once per cooldown. The
+    // ingest announcement (kinds [0]) re-reads the feed when they land.
+    // A user-approved sync carries its relay okay to the pull (Confirm
+    // mode); a local read pulls only in Auto (the backfill's own rule).
+    let due = crate::feed_kinds::FEED_PROFILE_COOLDOWN.take_due(listing.unprofiled.clone());
+    if !due.is_empty() {
+        let eng = engine.clone();
+        let approved = matches!(policy, FetchPolicy::FetchAlways);
+        tokio::spawn(async move {
+            eng.backfill_missing_profiles(due, approved).await;
+        });
+    }
 
     // "local" = a signed snapshot the user created that hasn't (successfully)
     // been broadcast to any relay yet. Tracked engine-side; the feed renders a
@@ -1337,8 +1359,44 @@ pub async fn list_publications_handler(
 
     Ok(Json(json!({
         "publications": summaries,
-        "count": summaries.len()
+        "count": summaries.len(),
+        "kinds": opts.kinds,
+        "require_profile": opts.require_profile,
+        "unprofiled_authors": listing.unprofiled.len()
     })))
+}
+
+/// `GET /api/v1/feed/kinds` — the feed kind registry with the user's
+/// choices applied, plus the kind-0 presence option.
+pub async fn feed_kinds_get_handler(
+    State(engine): State<AppState>,
+) -> Result<Json<crate::feed_kinds::FeedKindsView>, EngineError> {
+    Ok(Json(crate::feed_kinds::FeedPrefs::load(engine.data_dir()).view()))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct FeedKindsUpdate {
+    /// `{ "30023": false, … }` — kinds to turn on / off.
+    #[serde(default)]
+    pub kinds: std::collections::BTreeMap<u16, bool>,
+    #[serde(default)]
+    pub require_profile: Option<bool>,
+}
+
+/// `PUT /api/v1/feed/kinds` — update the choices; answers with the view.
+pub async fn feed_kinds_put_handler(
+    State(engine): State<AppState>,
+    Json(update): Json<FeedKindsUpdate>,
+) -> Result<Json<crate::feed_kinds::FeedKindsView>, EngineError> {
+    let mut prefs = crate::feed_kinds::FeedPrefs::load(engine.data_dir());
+    for (kind, on) in &update.kinds {
+        prefs.set_kind(*kind, *on)?;
+    }
+    if let Some(r) = update.require_profile {
+        prefs.require_profile = r;
+    }
+    prefs.save(engine.data_dir())?;
+    Ok(Json(prefs.view()))
 }
 
 /// The feed-row shape of a publication (`PublicationSummary` on the web):

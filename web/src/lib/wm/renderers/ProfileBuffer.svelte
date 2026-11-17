@@ -26,30 +26,24 @@
 
 	function openAddr(addr: { kind: number; pubkey: string; d_tag: string }, title: string | null) {
 		const kicker = title ?? addr.d_tag ?? '[Untitled]';
-		// Long-form articles (30023), wiki pages (30818), and NIP specs
-		// (30817) are single documents — route them to the slim DocBuffer,
-		// which drops the reader's pager/outline chrome.
-		if (addr.kind === 30023 || addr.kind === 30818 || addr.kind === 30817) {
-			store.openBuffer({
-				className: 'work',
-				buffer: {
-					id: `doc:${addr.kind}:${addr.pubkey}:${addr.d_tag}`,
-					kind: 'doc',
-					label: addr.kind === 30023 ? 'article' : addr.kind === 30817 ? 'spec' : 'wiki',
-					kicker
-				}
-			});
-			return;
-		}
-		// Other addressables (e.g. standalone 30041 sections) reuse the
-		// reader buffer route — its parseBufferId regex matches any kind,
-		// and the publication-load path falls back to a single-section view.
+		// Every addressable reads in the reader: a long-form article (30023),
+		// wiki page (30818) or spec (30817) as a one-section document with
+		// the full tools sheet; a standalone 30041 likewise.
 		store.openBuffer({
 			className: 'work',
 			buffer: {
 				id: `reader:${addr.kind}:${addr.pubkey}:${addr.d_tag}`,
 				kind: 'reader',
-				label: addr.kind === 30041 ? 'section' : 'reader',
+				label:
+					addr.kind === 30041
+						? 'section'
+						: addr.kind === 30023
+							? 'article'
+							: addr.kind === 30817
+								? 'spec'
+								: addr.kind === 30818
+									? 'wiki'
+									: 'reader',
 				kicker
 			}
 		});

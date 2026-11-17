@@ -848,7 +848,44 @@ export function listPublications(
 	if (before) url += `&before=${before}`;
 	if (general) url += `&general=true`;
 	if (relay) url += `&relay=${encodeURIComponent(relay)}`;
-	return fetchJson<{ publications: PublicationSummary[]; count: number }>(url);
+	return fetchJson<{
+		publications: PublicationSummary[];
+		count: number;
+		/** The kinds this page listed (the feed registry's enabled set). */
+		kinds?: number[];
+		require_profile?: boolean;
+		/** Authors seen with no local kind 0 (the engine pulls them). */
+		unprofiled_authors?: number;
+	}>(url);
+}
+
+/** One kind the feed can list — the engine's registry (`feed_kinds.rs`)
+ *  with the user's choice applied. */
+export interface FeedKind {
+	kind: number;
+	label: string;
+	plural: string;
+	default_on: boolean;
+	/** An index of sections (30040): the row shows a section count. */
+	has_sections: boolean;
+	on: boolean;
+}
+
+export interface FeedKindsView {
+	kinds: FeedKind[];
+	/** List only authors with a kind-0 profile in the local store. */
+	require_profile: boolean;
+}
+
+export function getFeedKinds() {
+	return fetchJson<FeedKindsView>('/api/v1/feed/kinds');
+}
+
+export function putFeedKinds(update: { kinds?: Record<number, boolean>; require_profile?: boolean }) {
+	return fetchJson<FeedKindsView>('/api/v1/feed/kinds', {
+		method: 'PUT',
+		body: JSON.stringify(update)
+	});
 }
 
 /** The signed-in user's bookshelf (kind 30045). `fetch_always` pulls the
