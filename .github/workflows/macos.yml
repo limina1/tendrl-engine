@@ -1,0 +1,96 @@
+# Does tendrl-engine build, start and pass its tests on macOS?
+#
+# Apple Silicon and Intel, separately (fail-fast off so one doesn't hide the
+# other). Order is build → smoke → tests: the smoke test (does the binary boot
+# and serve the API + the SPA) answers "does it run on a Mac" even if a unit
+# test turns out to be platform-sensitive. The built binary is uploaded as an
+# artifact so a Mac tester can try it without a toolchain.
+#
+# Manual: Actions tab → "macOS" → Run workflow (or `gh workflow run macos.yml`).
+name: macOS
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ci/macos]
+
+jobs:
+  macos:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15        # Apple Silicon (arm64)
+            arch: arm64
+          - runner: macos-15-intel  # Intel (x86_64)
+            arch: x86_64
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 90
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Host info
+        run: |
+          sw_vers
+          uname -m
+          clang --version | head -1
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.arch }}
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: web/pnpm-lock.yaml
+
+      # The real SPA, so the smoke test checks what a user would get
+      # (build.rs only writes a placeholder index.html when web/build is absent).
+      - name: Build web UI
+        run: |
+          pnpm -C web install --frozen-lockfile
+          pnpm -C web build
+
+      - name: Build engine (release)
+        run: cargo build --release --locked
+
+      - name: Linked libraries
+        run: otool -L target/release/tendrl-engine
+
+      - name: Smoke test — boot, serve API + SPA
+        run: |
+          DATA="$RUNNER_TEMP/tendrl-data"
+          ./target/release/tendrl-engine --data-dir "$DATA" --port 3131 --no-open \
+            > "$RUNNER_TEMP/engine.log" 2>&1 &
+          PID=$!
+          ok=""
+          for i in $(seq 1 60); do
+            if curl -fsS http://127.0.0.1:3131/api/v1/network/status > "$RUNNER_TEMP/status.json"; then
+              ok=1; break
+            fi
+            if ! kill -0 "$PID" 2>/dev/null; then echo "engine exited early"; break; fi
+            sleep 1
+          done
+          echo "--- engine log ---"; cat "$RUNNER_TEMP/engine.log"
+          [ -n "$ok" ] || { echo "API never answered"; exit 1; }
+          echo "--- /api/v1/network/status ---"; cat "$RUNNER_TEMP/status.json"; echo
+          curl -fsS http://127.0.0.1:3131/ | grep -qi '<html' || { echo "SPA not served"; exit 1; }
+          curl -fsS http://127.0.0.1:3131/api/v1/embed/status; echo
+          kill "$PID"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tendrl-engine-macos-${{ matrix.arch }}
+          path: target/release/tendrl-engine
+          retention-days: 14
+
+      - name: Tests
+        run: cargo test --release --locked -- --test-threads=4
