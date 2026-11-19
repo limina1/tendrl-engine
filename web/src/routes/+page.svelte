@@ -1823,15 +1823,6 @@
 					{/if}
 				</span>
 			{/if}
-			<button
-				class="pill pill--btn pill--notif"
-				class:pill--notif-zero={notifZero}
-				class:pill--notif-asks={notif.counts.acts > 0}
-				onclick={openNotifications}
-				title="Notifications — what is for you: asks that need an act, and the activity kinds you chose in Settings › Notifications · SPC b o n"
-				aria-label="Notifications"
-				data-tour="ml-notifications"
-			>🔔 {notif.counts.acts} ask{notif.counts.acts === 1 ? '' : 's'}{#if notif.counts.activity_count}&nbsp;· <span class="pill__new">{notif.counts.activity_count} new</span>{/if}</button>
 			{#if app.providersState}
 				<span class="agent-pill-wrap" bind:this={agentWrapEl} data-tour="ml-agent">
 					{#if svcActive}
@@ -1953,6 +1944,15 @@
 					</span>
 				{/if}
 			{/if}
+			<button
+				class="pill pill--btn pill--notif"
+				class:pill--notif-zero={notifZero}
+				class:pill--notif-asks={notif.counts.acts > 0}
+				onclick={openNotifications}
+				title="Notifications — what is for you: asks that need an act, and the activity kinds you chose in Settings › Notifications · SPC b o n"
+				aria-label="Notifications"
+				data-tour="ml-notifications"
+			>🔔 {notif.counts.acts} ask{notif.counts.acts === 1 ? '' : 's'}{#if notif.counts.activity_count}&nbsp;· <span class="pill__new">{notif.counts.activity_count} new</span>{/if}</button>
 			{#if app.engineBranch}
 				<span class="ml__seg ml__branch" title="Git branch the engine is running from">{app.engineBranch}</span>
 			{/if}
