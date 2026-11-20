@@ -2043,6 +2043,7 @@ mod tests {
                 .map(|(a, b)| (a.to_string(), b.clone()))
                 .collect(),
             dropped: vec![],
+            warnings: vec![],
         }
     }
 

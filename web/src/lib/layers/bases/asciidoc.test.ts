@@ -301,4 +301,16 @@ describe('asciidoc base', () => {
 		for (let i = 0; i < t.length; i++) if (!hidden.some((h) => h.start <= i && i < h.end)) shown += t[i];
 		expect(shown).toBe('a.n see 1 H2O AD b');
 	});
+	it('a labelled link hides its scheme / macro name with its target; {empty} is a marker', () => {
+		const t = 'see https://x.org[site] and link:a.html[A] and https://y.org[] {empty}. next';
+		const s = spans(t);
+		const marks = covered(t, s, 'mark');
+		expect(marks).toContain('https:');
+		expect(marks).toContain('link:');
+		expect(marks).toContain('{empty}');
+		// An unlabelled link keeps its whole URL visible.
+		expect(marks.filter((x) => x === 'https:')).toHaveLength(1);
+		expect(covered(t, s, 'url')).toContain('//y.org');
+		expect(wellFormed(t, s)).toBe(true);
+	});
 });

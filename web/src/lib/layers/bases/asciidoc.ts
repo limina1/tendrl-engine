@@ -270,9 +270,23 @@ function scanInline(line: string, base: number, out: StyleSpan[], from = 0, nest
 		const targetAt = s + m[0].indexOf(target, m[1] ? m[1].length : (m[3]?.length ?? 0));
 		push(out, base + s, base + e, 'link');
 		if (target) push(out, base + targetAt, base + targetAt + target.length, 'url');
+		// A labelled link reads as its label: the scheme / macro name in front
+		// of the target (`https:`, `link:`, `xref:`) is a marker too, so the
+		// rendered view hides it along with the target.
+		if (target && m[5].trim() !== '' && targetAt > s) push(out, base + s, base + targetAt, 'mark');
 		const br = e - m[5].length - 2;
 		push(out, base + br, base + br + 1, 'mark');
 		push(out, base + e - 1, base + e, 'mark');
+		mask.take(s, e);
+	}
+	// `{empty}` renders as nothing (converters put it in front of text that
+	// would otherwise open a block) — a marker.
+	const EMPTY_ATTR = /\{empty\}/g;
+	while ((m = EMPTY_ATTR.exec(line))) {
+		const s = m.index;
+		const e = s + m[0].length;
+		if (!mask.free(s, e)) continue;
+		push(out, base + s, base + e, 'mark');
 		mask.take(s, e);
 	}
 	// `[[anchor]]`: styled as a link; nostrdown's atom wins if it is a wikilink.
