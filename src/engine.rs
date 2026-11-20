@@ -2562,6 +2562,52 @@ impl Engine {
         self.sync_embeddings_full().await
     }
 
+    /// Take the embed-pass guard for a destructive maintenance action, or
+    /// refuse while a pass runs: a pass mid-flight would save the old vectors
+    /// back (delete index) or re-download the model on its next batch
+    /// (delete model).
+    fn embed_maintenance_guard(&self) -> Result<tokio::sync::MutexGuard<'_, ()>> {
+        self.embedding_sync_guard.try_lock().map_err(|_| {
+            EngineError::BadRequest(
+                "An embedding pass is running — try again when it finishes".into(),
+            )
+        })
+    }
+
+    /// Delete the embedding index: empty it in memory and remove its files.
+    /// Returns the bytes freed. Nothing rebuilds it on its own afterwards —
+    /// the boot reconciliation scan is marked done, so only events ingested
+    /// from now on (with auto-embed on) or an explicit Sync / Reindex embed
+    /// again.
+    pub async fn delete_embedding_index(&self) -> Result<u64> {
+        let emb = self
+            .embedding
+            .as_ref()
+            .ok_or_else(|| EngineError::Config("Embedding not enabled".into()))?;
+        let _guard = self.embed_maintenance_guard()?;
+        let freed = emb.write().await.delete_files()?;
+        self.embed_dirty.lock().unwrap().clear();
+        self.embed_boot_scan_done
+            .store(true, std::sync::atomic::Ordering::Relaxed);
+        Ok(freed)
+    }
+
+    /// Unload the embedding model and delete its downloaded files. Returns
+    /// the bytes freed. The background loop skips while the model is absent
+    /// (it never triggers the download), so this stays deleted until the user
+    /// downloads it again, runs a `~:` search, or syncs.
+    pub async fn delete_embedding_model(&self) -> Result<u64> {
+        let emb = self
+            .embedding
+            .as_ref()
+            .ok_or_else(|| EngineError::Config("Embedding not enabled".into()))?;
+        let _guard = self.embed_maintenance_guard()?;
+        // The write lock waits out any in-flight embed / download holding a
+        // read lock on the index.
+        let mut index = emb.write().await;
+        index.delete_model()
+    }
+
     /// Query events using NIP-01 filters with the specified fetch policy
     pub async fn get_events(
         &self,

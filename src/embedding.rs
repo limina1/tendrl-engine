@@ -79,7 +79,9 @@ pub struct EmbeddingIndex {
     /// The ONNX model is heavy to load (downloads weights on first use), so it
     /// is initialized lazily on the first embed — opening the index stays
     /// cheap and tests that only exercise the HNSW store never load a model.
-    backend: std::sync::OnceLock<EmbeddingBackend>,
+    /// A `Mutex<Option<Arc>>` rather than a `OnceLock` so `delete_model` can
+    /// unload it again (a `OnceLock` can never be emptied).
+    backend: std::sync::Mutex<Option<std::sync::Arc<EmbeddingBackend>>>,
     /// fastembed model code resolved from `config.model` at construction.
     model_code: String,
     data_dir: PathBuf,
@@ -120,7 +122,7 @@ impl EmbeddingIndex {
         Ok(Self {
             index,
             mapping,
-            backend: std::sync::OnceLock::new(),
+            backend: std::sync::Mutex::new(None),
             model_code: Self::resolve_model_code(&config.model),
             data_dir: data_dir.to_path_buf(),
             cache_dir: Self::resolve_cache_dir(config),
@@ -183,7 +185,7 @@ impl EmbeddingIndex {
         Ok(Self {
             index,
             mapping,
-            backend: std::sync::OnceLock::new(),
+            backend: std::sync::Mutex::new(None),
             model_code: Self::resolve_model_code(&config.model),
             data_dir: data_dir.to_path_buf(),
             cache_dir: Self::resolve_cache_dir(config),
@@ -360,18 +362,12 @@ impl EmbeddingIndex {
     /// model download behind an explicit user action instead of a silent
     /// hang on the first embed/`~:` search.
     pub fn model_ready(&self) -> bool {
-        if self.backend.get().is_some() {
+        if self.backend.lock().map(|b| b.is_some()).unwrap_or(false) {
             return true;
         }
-        let cache = self
-            .cache_dir
-            .clone()
-            // fastembed's own default cache when none is configured.
-            .unwrap_or_else(|| PathBuf::from(".fastembed_cache"));
-        // hf-hub cache layout: <cache>/models--{org}--{name}/**/model.onnx.
         // Require an actual .onnx file so a partially-downloaded repo dir
         // doesn't count as ready.
-        let repo = cache.join(format!("models--{}", self.model_code.replace('/', "--")));
+        let repo = self.model_repo_dir();
         fn has_onnx(dir: &Path, depth: u8) -> bool {
             if depth == 0 {
                 return false;
@@ -392,6 +388,78 @@ impl EmbeddingIndex {
             false
         }
         has_onnx(&repo, 6)
+    }
+
+    /// The model cache root fastembed reads/writes: the resolved `cache_dir`,
+    /// else `FASTEMBED_CACHE_DIR` (which `Engine::init_embedding` points next
+    /// to the index), else fastembed's own CWD-relative default.
+    fn model_cache_root(&self) -> PathBuf {
+        self.cache_dir
+            .clone()
+            .or_else(|| std::env::var_os("FASTEMBED_CACHE_DIR").map(PathBuf::from))
+            .unwrap_or_else(|| PathBuf::from(".fastembed_cache"))
+    }
+
+    /// This model's hf-hub repo dir: `<cache>/models--{org}--{name}`.
+    fn model_repo_dir(&self) -> PathBuf {
+        self.model_cache_root()
+            .join(format!("models--{}", self.model_code.replace('/', "--")))
+    }
+
+    /// Bytes the model's files take on disk (0 when not downloaded).
+    pub fn model_bytes(&self) -> u64 {
+        dir_bytes(&self.model_repo_dir())
+    }
+
+    /// Bytes the persisted index (`vectors.idx` + `vectors.map`) takes on disk.
+    pub fn index_bytes(&self) -> u64 {
+        ["vectors.idx", "vectors.map"]
+            .iter()
+            .filter_map(|f| std::fs::metadata(self.data_dir.join(f)).ok())
+            .map(|m| m.len())
+            .sum()
+    }
+
+    /// Empty the index and remove its files from disk. Returns the bytes
+    /// freed. The next embed starts a fresh index (and saves it anew).
+    pub fn delete_files(&mut self) -> Result<u64> {
+        let freed = self.index_bytes();
+        self.clear()?;
+        for f in ["vectors.idx", "vectors.map"] {
+            match std::fs::remove_file(self.data_dir.join(f)) {
+                Ok(()) => {}
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+                Err(e) => {
+                    return Err(EngineError::Database(format!("Failed to delete {f}: {e}")))
+                }
+            }
+        }
+        info!("Deleted embedding index ({freed} bytes)");
+        Ok(freed)
+    }
+
+    /// Unload the ONNX model and delete its downloaded files. Returns the
+    /// bytes freed. `model_ready` is false afterwards, so the next embed or
+    /// `~:` search downloads it again — only on an explicit user action (the
+    /// background loop never triggers a download).
+    pub fn delete_model(&mut self) -> Result<u64> {
+        if let Ok(mut b) = self.backend.lock() {
+            *b = None;
+        }
+        let repo = self.model_repo_dir();
+        let freed = dir_bytes(&repo);
+        match std::fs::remove_dir_all(&repo) {
+            Ok(()) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => {
+                return Err(EngineError::Database(format!(
+                    "Failed to delete model files at {}: {e}",
+                    repo.display()
+                )))
+            }
+        }
+        info!("Deleted embedding model {} ({freed} bytes)", self.model_code);
+        Ok(freed)
     }
 
     /// Clear the index (for reindex)
@@ -479,15 +547,20 @@ impl EmbeddingIndex {
     }
 
     /// Lazily load (once) and return the in-process ONNX backend.
-    fn backend(&self) -> Result<&EmbeddingBackend> {
-        if let Some(b) = self.backend.get() {
-            return Ok(b);
+    fn backend(&self) -> Result<std::sync::Arc<EmbeddingBackend>> {
+        let poisoned = |_| EngineError::Database("embedding backend lock poisoned".into());
+        if let Some(b) = self.backend.lock().map_err(poisoned)?.as_ref() {
+            return Ok(std::sync::Arc::clone(b));
         }
-        let backend = Self::load_model(&self.model_code, self.cache_dir.as_deref())?;
-        // A concurrent caller may have set it first; either way one model wins
-        // and the loser is dropped.
-        let _ = self.backend.set(backend);
-        Ok(self.backend.get().expect("backend set above"))
+        // Load outside the lock — it may download for a minute. A concurrent
+        // caller may set it first; either way one model wins and the loser is
+        // dropped.
+        let loaded = std::sync::Arc::new(Self::load_model(
+            &self.model_code,
+            self.cache_dir.as_deref(),
+        )?);
+        let mut slot = self.backend.lock().map_err(poisoned)?;
+        Ok(std::sync::Arc::clone(slot.get_or_insert(loaded)))
     }
 
     fn load_model(code: &str, cache_dir: Option<&Path>) -> Result<EmbeddingBackend> {
@@ -506,6 +579,22 @@ impl EmbeddingIndex {
             .map_err(|e| EngineError::Config(format!("Failed to load ONNX model: {e}")))?;
         Ok(EmbeddingBackend { model })
     }
+}
+
+/// Total size of the files under `dir` (0 if it doesn't exist).
+#[cfg(any(feature = "embeddings", feature = "embeddings-dynamic"))]
+fn dir_bytes(dir: &Path) -> u64 {
+    let Ok(rd) = std::fs::read_dir(dir) else {
+        return 0;
+    };
+    rd.flatten()
+        .map(|e| match e.file_type() {
+            // hf-hub snapshots symlink into blobs/ — count each blob once.
+            Ok(t) if t.is_symlink() => 0,
+            Ok(t) if t.is_dir() => dir_bytes(&e.path()),
+            _ => e.metadata().map(|m| m.len()).unwrap_or(0),
+        })
+        .sum()
 }
 
 /// Stub compiled when no embedding backend feature is enabled (mobile builds).
@@ -595,6 +684,22 @@ impl EmbeddingIndex {
     }
 
     pub fn clear(&mut self) -> Result<()> {
+        match self.never {}
+    }
+
+    pub fn model_bytes(&self) -> u64 {
+        match self.never {}
+    }
+
+    pub fn index_bytes(&self) -> u64 {
+        match self.never {}
+    }
+
+    pub fn delete_files(&mut self) -> Result<u64> {
+        match self.never {}
+    }
+
+    pub fn delete_model(&mut self) -> Result<u64> {
         match self.never {}
     }
 }
@@ -720,6 +825,45 @@ mod tests {
         idx.clear().unwrap();
         assert_eq!(idx.len(), 0);
         assert!(!idx.contains("event_a"));
+    }
+
+    #[test]
+    fn test_delete_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut idx = EmbeddingIndex::new(dir.path(), &test_config()).unwrap();
+        idx.insert("event_a", &[1.0, 0.0, 0.0, 0.0]).unwrap();
+        idx.save().unwrap();
+        assert!(idx.index_bytes() > 0);
+
+        let freed = idx.delete_files().unwrap();
+        assert!(freed > 0);
+        assert_eq!(idx.len(), 0);
+        assert!(!dir.path().join("vectors.idx").exists());
+        assert!(!dir.path().join("vectors.map").exists());
+        // Deleting again is a no-op, not an error.
+        assert_eq!(idx.delete_files().unwrap(), 0);
+        // A fresh load after deletion starts empty.
+        let idx = EmbeddingIndex::load(dir.path(), &test_config()).unwrap();
+        assert_eq!(idx.len(), 0);
+    }
+
+    #[test]
+    fn test_delete_model_removes_repo_dir() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut config = test_config();
+        config.cache_dir = Some(dir.path().join("cache").to_string_lossy().into());
+        let mut idx = EmbeddingIndex::new(dir.path(), &config).unwrap();
+        // Fake a downloaded model in the hf-hub layout.
+        let snap = idx.model_repo_dir().join("snapshots").join("abc");
+        std::fs::create_dir_all(&snap).unwrap();
+        std::fs::write(snap.join("model.onnx"), [0u8; 64]).unwrap();
+        assert!(idx.model_ready());
+        assert_eq!(idx.model_bytes(), 64);
+
+        assert_eq!(idx.delete_model().unwrap(), 64);
+        assert!(!idx.model_ready());
+        assert!(!idx.model_repo_dir().exists());
+        assert_eq!(idx.delete_model().unwrap(), 0);
     }
 
     #[test]

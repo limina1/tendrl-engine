@@ -610,6 +610,21 @@
 		return `${value >= 100 || i === 0 ? Math.round(value) : value.toFixed(1)} ${units[i]}`;
 	}
 
+	// Two-step armed delete for the embedding index / model (no browser
+	// confirm — feat-ui-patterns): first click arms, second runs, 4s disarms.
+	let embedDeleteArmed = $state<'index' | 'model' | null>(null);
+	let embedDeleteTimer: ReturnType<typeof setTimeout> | null = null;
+	function armEmbedDelete(what: 'index' | 'model') {
+		if (embedDeleteTimer) clearTimeout(embedDeleteTimer);
+		if (embedDeleteArmed !== what) {
+			embedDeleteArmed = what;
+			embedDeleteTimer = setTimeout(() => (embedDeleteArmed = null), 4000);
+			return;
+		}
+		embedDeleteArmed = null;
+		app.handleDeleteEmbedding(what);
+	}
+
 	function formatDay(ts: number | undefined): string {
 		if (!ts) return '—';
 		return new Date(ts * 1000).toLocaleDateString();
@@ -1922,6 +1937,42 @@
 				automatically every 60s).<br />
 				<strong>Reindex</strong>: drop and rebuild the whole index — use after
 				changing the embedding model.
+			</p>
+
+			<div class="settings-row">
+				<span class="settings-label">Delete</span>
+				<div class="action-row">
+					<button
+						class="settings-action settings-action--danger"
+						onclick={() => armEmbedDelete('index')}
+						disabled={app.embeddingSyncing || app.embeddingDeleting !== null || (e.indexed_count === 0 && !e.index_bytes)}
+						title="Remove the vector index from disk. Your events are untouched; Sync rebuilds it."
+					>
+						{app.embeddingDeleting === 'index'
+							? 'Deleting…'
+							: embedDeleteArmed === 'index'
+								? 'really delete index?'
+								: `Index${e.index_bytes ? ` (${formatBytes(e.index_bytes)})` : ''}`}
+					</button>
+					<button
+						class="settings-action settings-action--danger"
+						onclick={() => armEmbedDelete('model')}
+						disabled={app.embeddingSyncing || app.embeddingDownloading || app.embeddingDeleting !== null || e.model_ready === false}
+						title="Unload the ONNX model and delete its downloaded files. Download it again to embed or run ~: searches."
+					>
+						{app.embeddingDeleting === 'model'
+							? 'Deleting…'
+							: embedDeleteArmed === 'model'
+								? 'really delete model?'
+								: `Model${e.model_bytes ? ` (${formatBytes(e.model_bytes)})` : ''}`}
+					</button>
+				</div>
+			</div>
+			<p class="settings-hint">
+				<strong>Index</strong>: removes the stored vectors; nothing rebuilds them on
+				its own — Sync (or auto-embed, for newly retrieved events) does.
+				<strong>Model</strong>: frees the downloaded model; semantic search and
+				embedding wait until you download it again.
 			</p>
 		{/if}
 		</div>
