@@ -656,6 +656,7 @@
 							{resolution}
 							{focusedHighlightId}
 							onopenlocal={openLocalSection}
+							anchors={section.anchors}
 						/>
 					{/if}
 					<EventLinks links={section.links ?? []} />

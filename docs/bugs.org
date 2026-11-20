@@ -6,6 +6,51 @@ Log defects here as they're found mid-task, then fix on a dedicated =bugs=
 branch (via worktree) and merge back to the integration branch — don't fold
 unrelated bug fixes into feature/cleanup commits. Tick =FIXED= with the commit.
 
+* OPEN — reader section badge says "remote" for a locally signed section
+:PROPERTIES:
+:found: 2026-11-20 (EPUB import verify: a book signed in Local mode; feed + event menu say local)
+:END:
+
+** Symptom
+In the reader, every section of a publication that was only signed locally
+shows the =remote= pill ("From relays — origin relay not recorded"); the
+feed row and the event menu correctly say =local= / "Only in local cache".
+
+** Cause
+=PoolStateBadges= shows =remote= for =signed === true= with no relays when
+=local= is not passed; the reader's section headers (=SectionCard= /
+=ContinuousView=) never pass =local=. Fix: carry the
+=LocalPublicationTracker= state (or "no relay provenance + signed by me")
+onto sections from the stream.
+
+* OPEN — scroll mode leaves out a nested index's sections
+:PROPERTIES:
+:found: 2026-11-20 (EPUB import verify: /The Problems of Philosophy/, root → Titlepage, Imprint, Preface, part (30040, 15 chapters), back matter)
+:END:
+
+** Symptom
+Paged mode walks all 23 sections; scroll mode rendered only the root's six
+leaves — the part's 15 chapters were absent (not collapsed rows, absent).
+Not yet checked on master with a hand-written nested publication; may be
+the tree's default collapse of nested indexes rather than a bug.
+
+* OPEN — =/api/v1/import= saves an upload under the raw client file name (path traversal)
+:PROPERTIES:
+:found: 2026-11-20 (EPUB import hand-off stream, reading =import_document_handler=)
+:END:
+
+** Symptom
+=import_document_handler= (=src/api.rs=) writes the upload to
+=documents_path().join(&filename)= with =filename= straight from the
+multipart =file_name()=. A name like =../../x= escapes the documents folder.
+Low exposure on desktop (unauthenticated loopback, the user's own browser),
+but any local page that can POST to :3030 could write files.
+
+** Fix
+Reuse =validate_publication_upload='s base-name cut (from
+=POST /api/v1/import/publication=, same file) for =/api/v1/import= too.
+Fix on the =bugs= branch, not in the EPUB feature.
+
 * FIXED — narration reads AsciiDoc role spans, hard breaks and footnote markers aloud
 :PROPERTIES:
 :found: 2026-11-09 (Russell, /Mysticism and Logic/ "III. Time": the TTS input held =[.i0]#… + #= around a Sufi verse and =[5]=)

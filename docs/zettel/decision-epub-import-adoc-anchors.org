@@ -1,0 +1,86 @@
+#+TITLE: Decision: EPUB imports as AsciiDoc — events at the TOC, anchors inside
+#+TYPE: decision
+#+STATUS: decided
+#+DATE: 2026-11-20
+
+An EPUB is a portable document: tendrl imports it to read, annotate and
+review, and the user decides separately whether any relay (their own
+included) ever holds it. The import is a *conversion into the composer*,
+not a new publishing path. Plan: [[file:../epub-import-plan.org][epub-import-plan]].
+
+* The decisions
+
+1. *No import-specific publish path.* The converter fills the composer;
+   signing is the existing local snapshot (=sign: true, broadcast: false=)
+   and sending is the broadcast picker, as for anything else. The
+   importer never nudges toward broadcasting — a copyrighted book read
+   privately is a normal case.
+2. *AsciiDoc is the default format* (=m= = =text/asciidoc=). EPUB's XHTML
+   carries footnotes, verse, attributed quotes, asides, description
+   lists, merged table cells, sup/sub and semantic classes; AsciiDoc has
+   native syntax for each, Markdown (CommonMark + our GFM setup) for
+   almost none. NKBIP-01 is AsciiDoc-centred, so the result also reads in
+   Alexandria. A Markdown writer may follow as an option; it would drop
+   what it cannot say and report it.
+3. *Events only at the table-of-contents levels.* The book's TOC decides
+   the 30040/30041 tree. Everything finer — in-chapter headings, note
+   targets, link targets — is addressed with *AsciiDoc's own anchors*
+   (=[#id]=, =anchor:id[]=, =<<id,text>>=), not with new events and not
+   with nostrdown. This is [[file:q-heading-anchors.org][q-heading-anchors]]
+   option 1 applied: sub-event addressing belongs to the markup engine;
+   nostrdown stays a layer of events. It reverses a proposal made in the
+   same discussion to make every note and linked heading its own 30041.
+   Promoting a heading to its own section later stays possible, and its
+   =<<id>>= links survive because the anchor travels with the text.
+4. *Anchor scope is the publication.* Ids are unique across the book
+   (=<chapter-slug>-<epub-id>=), and =<<id>>= may point into another
+   section. Asciidoctor renders an unresolved =<<id,text>>= as a plain
+   =<a href="#id">=, so Alexandria (each section converted on its own,
+   all on one page — =PublicationSection.svelte:176=) follows it too; a
+   renderer showing one section alone keeps the readable text.
+5. *Split depth = the TOC's depth, adjustable at import* (parts /
+   chapters). Bounded by the composer's structure: H2 sections, H3
+   nested, H4+ text (=SECTION_DEPTH= in =ComposeView.svelte=), so
+   in-chapter headings are written at level 4 and below.
+6. *Footnotes are numbered per section* — what Asciidoctor and Alexandria
+   do; book-wide numbering can come later, engine-side.
+7. *Endnotes: hybrid, by structure.* A note that is one paragraph goes
+   inline as =footnote:[…]=. A note with more than one paragraph, a list
+   or a quote stays in the notes section, linked both ways with
+   =<<id,^n^>>=. Accepted cost: mixed numbering on one line (¹ beside ¹³).
+   Compared in a reader mock: claude.ai/artifact/VCv1xzwszFY7pfR2EabUVd.
+
+* Converter rules (from running samples through Asciidoctor)
+
+- Never =--= in an id: Asciidoctor's replacements turn it into an em dash
+  inside the link target. Single hyphens only.
+- =anchor:id[]= is recognised only after a word boundary: place it
+  /before/ the word it marks (=in anchor:ch03-r12[]secret=).
+- A footnote is one paragraph: =+= hard breaks inside =footnote:[…]=
+  print literally. That is why multi-paragraph notes stay kept (7).
+- Never write =[[id]]=: nostrdown claims those bytes as a wikilink.
+- An id must not start with a digit: Asciidoctor ignores =anchor:= then
+  (found while building; the converter prefixes =_=).
+- In-chapter headings go out as =[discrete]= headings: a section-style
+  four-= heading under a =<h2>= makes Asciidoctor warn "section title out of sequence".
+- Escape =]= inside =footnote:[…]=, and neutralise AsciiDoc's prose
+  replacements in book text (={name}=, =(C)=, =--=, =...=, stray =*= =_=
+  =#= =+=, a leading =.=).
+
+* Out of scope
+
+- Print page numbers (=epub:type="pagebreak"=) — not needed.
+- Media overlays (SMIL synced audio) — not yet.
+- Images — phase two (a local, hash-keyed store shaped like Blossom).
+- Math (MathML → =stem:[]=) — whether tendrl renders math at all is a
+  separate decision.
+
+* Related
+
+- [[file:index.org][Index]]
+- [[file:feat-import.org][Feature: document import]]
+- [[file:q-heading-anchors.org][Question: heading anchors (decided: markup owns them)]]
+- [[file:decision-mimetype-tag.org][Decision: content format is the m tag]]
+- [[file:decision-table-grid.org][Decision: tables render as a grid]]
+- [[file:feat-reader.org][Feature: reader]]
+- [[file:feat-nostrdown.org][Feature: nostrdown]]

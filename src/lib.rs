@@ -65,6 +65,7 @@ pub mod document;
 pub mod drafts;
 pub mod embedding;
 pub mod engine;
+pub mod epub_import;
 pub mod feed_kinds;
 pub mod error;
 pub mod event_template;

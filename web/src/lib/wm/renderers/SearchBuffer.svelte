@@ -337,6 +337,8 @@
 	onimportpagetocompose={app.handleImportPageToCompose}
 	onimportpagestocontext={app.handleImportPagesToContext}
 	onimportpagestocompose={app.handleImportPagesToCompose}
+	onimportpublication={app.handleImportPublication}
+	importPublicationResult={app.importPublicationResult}
 	items={app.items}
 	localPubkeys={app.localPubkeys}
 	onviewprofile={app.handleViewProfile}

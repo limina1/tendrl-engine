@@ -140,6 +140,17 @@ never happen in the browser.
   follows the view: on a page it lists that page's highlights only
   (=· this page=).
 
+** AsciiDoc books: footnotes, cross-references, anchors (2026-11-20, =feat/epub-import=)
+- =footnote:[…]= renders as a superscript number per section (named reuse
+  keeps the first number) with a popover; the macro stays in the DOM,
+  hidden, so highlight offsets hold (=RichContent.svelte=, =reader/xref.ts=).
+- =<<id,text>>= is a link: same section scrolls; another section is found
+  through the leaf stream's =anchors= (=epub_import::anchors::adoc_anchors=,
+  filled only for AsciiDoc), loaded if needed, scrolled and flashed.
+- Tables honour =2+|= / =.2+|= spans and =a|= cells; sidebar / example /
+  verse blocks, sup/sub, roles (small caps) are styled.
+- Decision: [[file:decision-epub-import-adoc-anchors.org][EPUB imports as AsciiDoc]].
+
 * Gaps / open edges
 - Nested-publication packed cards, drill-in with breadcrumbs, and parent
   navigation are Phase 3 roadmap (=docs/wm-shell.md=).

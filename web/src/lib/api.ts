@@ -1921,6 +1921,46 @@ export async function importDocument(file: File): Promise<ImportResult> {
 	return res.json();
 }
 
+/** How deep the book's table of contents splits into sections. */
+export type ImportSplit = 'auto' | 'parts' | 'chapters';
+
+export interface ImportedSection {
+	title: string;
+	/** 2 = section, 3 = nested under the previous level-2 section. */
+	level: number;
+	/** AsciiDoc body, without its own heading line. */
+	content: string;
+}
+
+export interface ImportReport {
+	notes_inlined: number;
+	notes_kept: number;
+	dropped_items: string[];
+	images_skipped: number;
+	unresolved_links: string[];
+	warnings: string[];
+}
+
+/** An EPUB converted to an AsciiDoc publication, for the composer. Nothing is
+ *  stored or signed by the import. */
+export interface ImportedPublication {
+	title: string;
+	/** 30040 tags as [name, value] pairs. */
+	tags: [string, string][];
+	format: string;
+	sections: ImportedSection[];
+	report: ImportReport;
+}
+
+export async function importPublication(file: File, split: ImportSplit = 'auto'): Promise<ImportedPublication> {
+	const formData = new FormData();
+	formData.append('file', file);
+	formData.append('split', split);
+	const res = await fetch('/api/v1/import/publication', { method: 'POST', body: formData });
+	if (!res.ok) throw new Error(`${res.status}: ${await res.text()}`);
+	return res.json();
+}
+
 export function parseDocument(filename: string) {
 	return fetchJson<ImportResult>('/api/v1/documents/parse', {
 		method: 'POST',

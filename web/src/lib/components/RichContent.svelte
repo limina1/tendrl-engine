@@ -28,6 +28,21 @@
 	import { hiddenMarkerSpans } from '$lib/layers/hide-markers';
 	import { fenceLayout, layoutSegments, tableLayout } from '$lib/layers/table-layout';
 	import { layers } from '$lib/layers/store.svelte';
+	import {
+		anchorIdsIn,
+		anchorsFromStyles,
+		anchorsToUtf16,
+		footnoteBody,
+		footnoteMarks,
+		gridSlots,
+		cellStyle,
+		readerHiddenSpans,
+		revealAnchor,
+		xrefAt,
+		type AnchorEntry,
+		type Footnote
+	} from '$lib/reader/xref';
+	import Self from './RichContent.svelte';
 
 	const app = getAppState();
 
@@ -41,7 +56,8 @@
 		focusedHighlightId = null,
 		muted = false,
 		backfilling = false,
-		onopenlocal = undefined
+		onopenlocal = undefined,
+		anchors = undefined
 	}: {
 		content: string;
 		spans?: HighlightSpan[];
@@ -66,6 +82,10 @@
 		 *  section of the same document but isn't on screen (e.g. the paginated
 		 *  view renders one section at a time). Return true when handled. */
 		onopenlocal?: ((coord: string) => boolean) | undefined;
+		/** The engine's explicit AsciiDoc anchors for this content (UTF-8
+		 *  byte offsets, from the publication stream). Absent → read off the
+		 *  base's `anchor` spans instead. */
+		anchors?: AnchorEntry[] | undefined;
 	} = $props();
 
 	let rootEl = $state<HTMLElement | undefined>();
@@ -89,9 +109,22 @@
 	const segmentsFlat = $derived(
 		applyStyles(
 			buildSegments(content, liveSpans, refs, tokens, focusedHighlightId),
-			layers.hideMarkers && styles.length ? [...styles, ...hiddenMarkerSpans(content, styles)] : styles
+			layers.hideMarkers && styles.length
+				? [...styles, ...hiddenMarkerSpans(content, styles), ...readerHiddenSpans(styles)]
+				: styles
 		)
 	);
+
+	// AsciiDoc footnotes (lib/reader/xref): each `fn` run shows as one
+	// superscript number, keyed by the macro's start; the macro text stays
+	// in the DOM (hidden in the rendered view) so capture offsets hold.
+	const footnotes = $derived(styles.length ? footnoteMarks(content, styles) : []);
+	const fnAt = $derived(new Map(footnotes.map((f) => [f.start, f])));
+	// Anchors in UTF-16, for `data-anchor-id` stamps and same-section xrefs.
+	const localAnchors = $derived.by<AnchorEntry[]>(() => {
+		if (anchors && anchors.length) return anchorsToUtf16(content, anchors).sort((a, b) => a.start - b.start);
+		return styles.length ? anchorsFromStyles(content, styles) : [];
+	});
 	// Tables a base recognised render as a real grid (lib/layers/table-layout):
 	// cells hold the source runs of their range, separators are not drawn.
 	const blocks = $derived(
@@ -250,14 +283,75 @@
 		clearTimeout(previewTimer);
 		previewTimer = setTimeout(() => (preview = null), 120);
 	}
+
+	// Footnote popover: the note's text, rendered on its own (same base
+	// styles, re-based), floated under the number like the ref preview.
+	// Esc or a click outside closes it; Esc hands focus back to the number.
+	let fnOpen = $state<{ fn: Footnote; x: number; y: number; from: HTMLElement } | null>(null);
+	let fnPopEl = $state<HTMLElement | undefined>();
+	const fnBody = $derived(fnOpen ? footnoteBody(content, styles, fnOpen.fn) : null);
+	function toggleFootnote(e: MouseEvent, fn: Footnote) {
+		e.preventDefault();
+		e.stopPropagation();
+		if (fnOpen?.fn.start === fn.start) {
+			fnOpen = null;
+			return;
+		}
+		const from = e.currentTarget as HTMLElement;
+		const r = from.getBoundingClientRect();
+		fnOpen = { fn, x: Math.max(8, Math.min(r.left - 12, window.innerWidth - 368)), y: r.bottom + 6, from };
+	}
+	function fnKeydown(e: KeyboardEvent) {
+		if (!fnOpen || e.key !== 'Escape') return;
+		const from = fnOpen.from;
+		fnOpen = null;
+		from.focus();
+		e.stopPropagation();
+	}
+	function fnPointerdown(e: PointerEvent) {
+		if (!fnOpen) return;
+		const t = e.target as Node | null;
+		if (t && (fnPopEl?.contains(t) || fnOpen.from.contains(t))) return;
+		fnOpen = null;
+	}
+
+	// Cross-references (`<<id,text>>`): one delegated handler on the body.
+	// The id comes from the base's `xref-id` span under the clicked run. An
+	// anchor in this section scrolls here; any other is handed up as a
+	// bubbling `reader-xref` event (the reader looks it up across the
+	// publication's sections and sets `detail.handled`); unknown → toast.
+	function followXref(target: EventTarget | null): boolean {
+		const el = (target as Element | null)?.closest?.('.ly-xref');
+		if (!el || !rootEl?.contains(el)) return false;
+		const stamp = el.closest<HTMLElement>('[data-src-start]');
+		const at = Number(stamp?.dataset.srcStart);
+		if (!Number.isFinite(at)) return false;
+		const x = xrefAt(content, styles, at);
+		if (!x) return false;
+		const local = localAnchors.find((a) => a.id === x.id);
+		if (local && revealAnchor(rootEl, x.id, local.start)) return true;
+		const detail = { id: x.id, handled: false };
+		rootEl.dispatchEvent(new CustomEvent('reader-xref', { bubbles: true, detail }));
+		if (!detail.handled) app.pushToast(`No anchor “${x.id}” in this publication`, 'info');
+		return true;
+	}
+	function bodyClick(e: MouseEvent) {
+		if (followXref(e.target)) e.preventDefault();
+	}
+	function bodyKeydown(e: KeyboardEvent) {
+		if (e.key !== 'Enter' && e.key !== ' ') return;
+		if (followXref(e.target)) e.preventDefault();
+	}
 </script>
+
+<svelte:window onkeydown={fnKeydown} onpointerdown={fnPointerdown} />
 
 <!-- Every segment element carries its source position (`data-src-start`, plus
      `data-src-end` on atomic chips/cards whose DOM text differs from the
      source span) so selection capture can map DOM positions back to UTF-16
      content offsets. Text runs get a style-free wrapper span for the same
      reason — inline and inert inside the pre-wrap. -->
-{#snippet atom(seg: ContentSegment)}{#if seg.type === 'ref'}{#if seg.ref.kind === 'embed' || seg.ref.kind === 'quote' || seg.ref.kind === 'slot'}<span data-src-start={seg.srcStart} data-src-end={seg.srcEnd}><EmbedCard ref={seg.ref} onopen={openRef} {resolution} /></span>{:else}<button class="nd-ref nd-ref--{seg.ref.kind} {styleClass(seg.styles) ?? ''}" class:nd-unresolved={!seg.ref.found} class:nd-backfilling={backfilling && !seg.ref.found} data-src-start={seg.srcStart} data-src-end={seg.srcEnd} onclick={(e) => openRef(seg.ref, e)} onmouseenter={(e) => showPreview(e, seg.ref)} onmouseleave={hidePreview} onfocus={(e) => showPreview(e, seg.ref)} onblur={hidePreview} disabled={!seg.ref.coord && !(seg.ref.event_kind === 0 && seg.ref.author_pubkey) && !seg.ref.event_id && seg.ref.kind !== 'wiki'} title={refTitle(seg.ref)}>{seg.ref.kind === 'mention' ? '@' : ''}{seg.ref.label}</button>{/if}{:else if seg.type === 'token'}{#if seg.kind === 'wiki'}<button class="nd-token nd-token--wiki nd-token--live {styleClass(seg.styles) ?? ''}" data-src-start={seg.srcStart} data-src-end={seg.srcEnd} title="wiki: {seg.target} — resolving… click to search" onclick={() => app.openSearchFor(`k:30818 d:${seg.target}`, seg.target)}>{seg.display || seg.target}</button>{:else}<span class="nd-token nd-token--{seg.kind} {styleClass(seg.styles) ?? ''}" data-src-start={seg.srcStart} data-src-end={seg.srcEnd} title="{seg.kind}: {seg.target} — resolving…">{seg.display || seg.target}</span>{/if}{:else if seg.type === 'text'}<span class={styleClass(seg.styles)} data-src-start={seg.srcStart}>{seg.text}</span>{/if}{/snippet}
+{#snippet atom(seg: ContentSegment)}{#if seg.type === 'ref'}{#if seg.ref.kind === 'embed' || seg.ref.kind === 'quote' || seg.ref.kind === 'slot'}<span data-src-start={seg.srcStart} data-src-end={seg.srcEnd}><EmbedCard ref={seg.ref} onopen={openRef} {resolution} /></span>{:else}<button class="nd-ref nd-ref--{seg.ref.kind} {styleClass(seg.styles) ?? ''}" class:nd-unresolved={!seg.ref.found} class:nd-backfilling={backfilling && !seg.ref.found} data-src-start={seg.srcStart} data-src-end={seg.srcEnd} onclick={(e) => openRef(seg.ref, e)} onmouseenter={(e) => showPreview(e, seg.ref)} onmouseleave={hidePreview} onfocus={(e) => showPreview(e, seg.ref)} onblur={hidePreview} disabled={!seg.ref.coord && !(seg.ref.event_kind === 0 && seg.ref.author_pubkey) && !seg.ref.event_id && seg.ref.kind !== 'wiki'} title={refTitle(seg.ref)}>{seg.ref.kind === 'mention' ? '@' : ''}{seg.ref.label}</button>{/if}{:else if seg.type === 'token'}{#if seg.kind === 'wiki'}<button class="nd-token nd-token--wiki nd-token--live {styleClass(seg.styles) ?? ''}" data-src-start={seg.srcStart} data-src-end={seg.srcEnd} title="wiki: {seg.target} — resolving… click to search" onclick={() => app.openSearchFor(`k:30818 d:${seg.target}`, seg.target)}>{seg.display || seg.target}</button>{:else}<span class="nd-token nd-token--{seg.kind} {styleClass(seg.styles) ?? ''}" data-src-start={seg.srcStart} data-src-end={seg.srcEnd} title="{seg.kind}: {seg.target} — resolving…">{seg.display || seg.target}</span>{/if}{:else if seg.type === 'text'}{@const fn = fnAt.get(seg.srcStart)}{#if fn}<button class="rd-fn" data-src-start={fn.start} data-src-end={fn.end} aria-label="Footnote {fn.n}" aria-expanded={fnOpen?.fn.start === fn.start} onclick={(e) => toggleFootnote(e, fn)}>{fn.n}</button>{/if}<!-- svelte-ignore a11y_no_noninteractive_tabindex --><span class={styleClass(seg.styles)} data-src-start={seg.srcStart} data-anchor-id={localAnchors.length ? anchorIdsIn(localAnchors, seg.srcStart, seg.srcEnd) : undefined} role={seg.styles?.includes('xref') ? 'link' : undefined} tabindex={seg.styles?.includes('xref') ? 0 : undefined}>{seg.text}</span>{/if}{/snippet}
 <!-- A highlight is a <mark> AROUND its parts (text runs + any ref/token it
      spans), so a wikilink under a highlight stays a live link. The mark
      carries no data-src-end: selection capture resolves the innermost stamped
@@ -266,8 +360,19 @@
 <!-- A table is a scrollable grid inside the pre: each cell renders the
      source runs of its range (stamped), the pipes and rule row are not
      drawn. Header rows (th) go in thead. -->
-<pre class="section-content" class:muted bind:this={rootEl}>{#each blocks as b, bi (bi)}{#if b.kind === 'flow'}{#each b.segs as seg, i (i)}{@render run(seg)}{/each}{:else if b.kind === 'fence'}<span class="ly-fencewrap">{#each b.segs as seg, i (i)}{@render run(seg)}{/each}</span>{:else}<span class="ly-tablewrap"><table class="ly-grid"><tbody>{#each b.table.rows as row, ri (ri)}<tr class:ly-grid__head={row.header}>{#each { length: b.table.cols } as _, ci (ci)}{#if row.header}<th><span class="ly-cell">{#each b.cells[ri][ci] ?? [] as seg, k (k)}{@render run(seg)}{/each}</span></th>{:else}<td><span class="ly-cell">{#each b.cells[ri][ci] ?? [] as seg, k (k)}{@render run(seg)}{/each}</span></td>{/if}{/each}</tr>{/each}</tbody></table></span>{/if}{/each}</pre>
+<!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+<pre class="section-content" class:muted bind:this={rootEl} onclick={bodyClick} onkeydown={bodyKeydown}>{#each blocks as b, bi (bi)}{#if b.kind === 'flow'}{#each b.segs as seg, i (i)}{@render run(seg)}{/each}{:else if b.kind === 'fence'}<span class="ly-fencewrap">{#each b.segs as seg, i (i)}{@render run(seg)}{/each}</span>{:else}{@const slots = gridSlots(b.table.rows, b.table.cols)}<span class="ly-tablewrap"><table class="ly-grid"><tbody>{#each b.table.rows as row, ri (ri)}<tr class:ly-grid__head={row.header}>{#each slots[ri] as slot, si (si)}{@const cell = slot.cell >= 0 ? b.cells[ri][slot.cell] ?? [] : []}{@const cs = slot.cell >= 0 ? cellStyle(row.cells[slot.cell]) : undefined}{#if row.header}<th colspan={slot.colspan > 1 ? slot.colspan : undefined} rowspan={slot.rowspan > 1 ? slot.rowspan : undefined} style={cs}><span class="ly-cell">{#each cell as seg, k (k)}{@render run(seg)}{/each}</span></th>{:else}<td colspan={slot.colspan > 1 ? slot.colspan : undefined} rowspan={slot.rowspan > 1 ? slot.rowspan : undefined} style={cs}><span class="ly-cell">{#each cell as seg, k (k)}{@render run(seg)}{/each}</span></td>{/if}{/each}</tr>{/each}</tbody></table></span>{/if}{/each}</pre>
 {#if tip}<div class="hl-tip" use:portal style="left: {tip.x}px; top: {tip.y}px" role="tooltip">{#each tip.lines as line, i (i)}<div>{line}</div>{/each}</div>{/if}
+{#if fnOpen && fnBody}
+	<div
+		class="nd-preview rd-fnpop"
+		style="left:{fnOpen.x}px; top:{fnOpen.y}px"
+		use:portal
+		bind:this={fnPopEl}
+		role="note"
+		aria-label="Footnote {fnOpen.fn.n}"
+	><span class="rd-fnpop__n">{fnOpen.fn.n}</span>{#if fnBody.text}<Self content={fnBody.text} styles={fnBody.styles} />{:else}<span class="rd-fnpop__empty">(no text)</span>{/if}</div>
+{/if}
 {#if preview}
 	<!-- svelte-ignore a11y_no_static_element_interactions -->
 	<div
@@ -419,6 +524,65 @@
 	   Markdown / Org define it. Never applied to blank lines, fences,
 	   tables, headings or hard breaks — the base decides. */
 	.section-content :global(.ly-soft) { white-space: normal; }
+
+	/* AsciiDoc reader classes (docs/epub-import-contract.org). */
+	.section-content :global(.ly-sup) { vertical-align: super; font-size: 0.75em; line-height: 0; }
+	.section-content :global(.ly-sub) { vertical-align: sub; font-size: 0.75em; line-height: 0; }
+	.section-content :global(.ly-smallcaps) { font-variant-caps: all-small-caps; letter-spacing: 0.03em; }
+	.section-content :global(.ly-role) { font-style: inherit; }
+	.section-content :global(.ly-sidebar) {
+		background: color-mix(in srgb, var(--fg) 4%, transparent);
+		box-shadow: inset 2px 0 0 color-mix(in srgb, var(--fg) 18%, transparent);
+		box-decoration-break: clone;
+		-webkit-box-decoration-break: clone;
+	}
+	.section-content :global(.ly-example) {
+		box-shadow: inset 2px 0 0 color-mix(in srgb, var(--accent) 40%, transparent);
+		box-decoration-break: clone;
+		-webkit-box-decoration-break: clone;
+	}
+	/* Verse keeps its line breaks: the body is already pre-wrap, and a
+	   soft-break span inside a verse must not collapse them. */
+	.section-content :global(.ly-verse) { font-style: italic; }
+	.section-content :global(.ly-verse.ly-soft) { white-space: pre-wrap; }
+	.section-content :global(.ly-xref) {
+		color: var(--accent);
+		cursor: pointer;
+		text-decoration: underline;
+		text-decoration-style: dotted;
+		text-underline-offset: 0.15em;
+	}
+	.section-content :global(.ly-xref:focus-visible) { outline: 1px solid var(--accent); outline-offset: 1px; }
+	.section-content :global(.ly-anchor.ly-mark) { opacity: 0.35; }
+	/* The footnote number standing in for a footnote:[…] macro. */
+	.rd-fn {
+		all: unset;
+		vertical-align: super;
+		font-size: 0.72em;
+		line-height: 0;
+		padding: 0 0.12em;
+		color: var(--accent);
+		font-family: var(--font-sans);
+		font-variant-numeric: lining-nums;
+		cursor: pointer;
+		border-radius: 2px;
+	}
+	.rd-fn:hover { text-decoration: underline; }
+	.rd-fn:focus-visible { outline: 1px solid var(--accent); outline-offset: 1px; }
+	.rd-fn[aria-expanded='true'] { background: color-mix(in srgb, var(--accent) 18%, transparent); }
+	/* Flash on an anchor an xref just landed on (added by lib/reader/xref). */
+	.section-content :global(.rd-flash) { animation: rd-flash 1.5s ease-out; border-radius: 2px; }
+	@keyframes rd-flash {
+		0%,
+		30% { background-color: color-mix(in srgb, var(--accent) 35%, transparent); }
+		100% { background-color: transparent; }
+	}
+	@media (prefers-reduced-motion: reduce) {
+		.section-content :global(.rd-flash) {
+			animation: none;
+			background-color: color-mix(in srgb, var(--accent) 25%, transparent);
+		}
+	}
 
 	:global(.hl-tip) {
 		position: fixed;
@@ -581,6 +745,23 @@
 		box-shadow: var(--shadow-lg, 0 8px 30px rgba(0, 0, 0, 0.4));
 		overflow: hidden;
 	}
+	/* Footnote popover: the note body as its own small RichContent. */
+	.rd-fnpop {
+		display: flex;
+		gap: 0.5em;
+		align-items: baseline;
+		padding: 0.5em 0.75em;
+		max-height: 40vh;
+		overflow-y: auto;
+		width: min(360px, 90vw);
+	}
+	.rd-fnpop__n {
+		font-family: var(--font-mono);
+		font-size: var(--t-xs, 11px);
+		color: var(--accent);
+		flex: none;
+	}
+	.rd-fnpop__empty { color: var(--fg-muted); font-style: italic; }
 	/* Neutralize EmbedCard's own block margin inside the popover. */
 	.nd-preview :global(.nd-embed) {
 		margin: 0;

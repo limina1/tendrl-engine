@@ -779,6 +779,12 @@ pub async fn start(opts: ServeOptions) -> anyhow::Result<RunningServer> {
         .route("/api/v1/documents", get(api::list_documents_handler))
         .route("/api/v1/documents/parse", post(api::parse_document_handler))
         .route("/api/v1/import", post(api::import_document_handler))
+        // EPUB → AsciiDoc publication for the composer (a distinct path from
+        // `/api/v1/import`; axum matches routes exactly, no prefix overlap)
+        .route(
+            "/api/v1/import/publication",
+            post(api::import_publication_handler),
+        )
         // Profile + relay config + fetch
         .route("/api/v1/profile/:pubkey", get(api::profile_handler))
         .route("/api/v1/profiles/fetch", post(api::fetch_profiles_handler))

@@ -221,6 +221,10 @@ export type PubLoadEvent =
 			effective_format?: string | null;
 			format_source?: 'own' | 'kind' | 'inherited' | 'none';
 			format_from?: NAddr | null;
+			/** Explicit AsciiDoc anchors in `content` (`[#id]`, `[id=…]`,
+			 *  `anchor:id[]`) with UTF-8 byte offsets — for following a
+			 *  `<<id>>` across sections. Empty unless the format is AsciiDoc. */
+			anchors?: { id: string; start: number }[];
 	  }
 	| { type: 'error'; addr: NAddr; depth: number; message: string }
 	| { type: 'done'; total: number };
@@ -260,6 +264,9 @@ export interface LazySection {
 	/** Outward web links (the event's http(s) `r` tags), rendered as a
 	 *  link row under the section. */
 	links?: string[];
+	/** Explicit AsciiDoc anchors in `content` (UTF-8 byte offsets), from the
+	 *  leaf stream event — how a `<<id>>` finds its section. */
+	anchors?: { id: string; start: number }[];
 	/** NIP-54 fork marker — only meaningful for nested 30040 entries
 	 *  (sections never carry it). Drives the `fork` pill on the
 	 *  outline's nested-publication rows. */
