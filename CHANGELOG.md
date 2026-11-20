@@ -1,3 +1,19 @@
+## v0.23.0 — 2026-11-20
+
+- docs(epub-import): large-book composer check done
+- docs(epub-import): plan ticked with deviations, zettel rules from the build, reader feature notes, commands recipe
+- docs(bugs): reader 'remote' badge on local sections; scroll mode skips nested index sections
+- fix(epub-import): drop an hgroup subtitle that repeats the chapter title
+- fix(layers): labelled AsciiDoc links hide their scheme; {empty} is a marker
+- feat(epub-import): XHTML block tree + AsciiDoc writer
+- feat(epub-import): integration — structure warnings in the report, LazySection.anchors, EPUB MIME in the picker
+- feat(epub-import): structure — metadata, DRM check, nav/NCX TOC, spine cut into chapters
+- feat(epub-import): hand-off — /import/publication endpoint + open in composer
+- feat(epub-import): reader — AsciiDoc anchors, footnotes, xrefs, merged cells
+- feat(epub-import/layers): AsciiDoc footnote/xref/anchor/sup/sub/role classes, table spans
+- feat(epub-import): contracts for the parallel build
+- docs(epub-import): decision zettel + build plan
+
 ## v0.22.0 — 2026-11-19
 
 - fix(modeline): notifications pill sits on the right, after connect
