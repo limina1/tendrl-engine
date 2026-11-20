@@ -25,6 +25,10 @@ libraries, no sidecar.
 * Gaps / open edges
 - Imported document pages are flat 30041s; no automatic 30040 index assembly
   per document yet.
+- [ ] EPUB → AsciiDoc publication (TOC-split 30040/30041 tree, anchors
+  inside, hybrid notes, into the composer) — planned:
+  [[file:decision-epub-import-adoc-anchors.org][decision]],
+  [[file:../epub-import-plan.org][plan]].
 - Extraction quality is bounded by the pure-Rust parsers (notably complex
   PDF layouts).
 
@@ -32,3 +36,4 @@ libraries, no sidecar.
 - [[file:index.org][Index]]
 - [[file:idea-registry-metadata.org][Registry metadata]]
 - [[file:feat-embeddings.org][Embeddings]]
+- [[file:decision-epub-import-adoc-anchors.org][Decision: EPUB imports as AsciiDoc]]

@@ -1,0 +1,132 @@
+#+TITLE: EPUB import as an AsciiDoc publication — build plan
+#+DATE: 2026-11-20
+#+STATUS: planned (branch feat/epub-import, off master v0.22.0)
+
+Decisions and their reasons:
+[[file:zettel/decision-epub-import-adoc-anchors.org][decision-epub-import-adoc-anchors]].
+In one line: EPUB → (Rust) a 30040/30041 tree in AsciiDoc, split at the
+TOC, AsciiDoc anchors inside, hybrid notes → the composer → the existing
+local snapshot. No new publish path.
+
+* Where we start
+
+- =src/document.rs::parse_epub= emits one plain-text page per *spine
+  file*, titled by file stem, through =html2text=. Kept as is for the
+  search/context import; the publication import is a new path beside it.
+- =epub= 2.1.5: =doc.toc= (=NavPoint {label, content, children,
+  play_order}=) is filled from the EPUB2 =toc.ncx= only; for EPUB3,
+  =get_nav_id()= finds the =nav.xhtml= resource, which we parse.
+  =mdata()= gives the =dc:*= metadata.
+- =quick-xml= is already a dependency (DOCX); EPUB content is XHTML, so it
+  parses as XML.
+- Composer: H1 title, H2 section, H3 nests its H2 into an index, H4+ stay
+  text (=SECTION_DEPTH = 3=, =web/src/lib/components/ComposeView.svelte=).
+  =editAtomicInComposer= in =web/src/lib/state.svelte.ts= is the model
+  for seeding it (=clearComposePool=, =seedDraftMetadata=, =composeFormat=,
+  =composeAtomicBody=, =navigateToCompose=).
+- Import UI: =SearchPanel.svelte= / =SearchBuffer.svelte= (=handleImportFile=).
+
+* Phase 1 — the converter (Rust, engine only)
+
+New module =src/epub_import.rs= (pure above the zip read; unit-tested).
+
+- [ ] *Book model*: metadata → tags — =title=, =author= (each
+  =dc:creator=), =published_on=, =published_by=, =i= (=isbn:…= from
+  =dc:identifier=), =l=, =summary=, =t= (=dc:subject=).
+- [ ] *Refuse DRM*: =META-INF/encryption.xml= present → a clear error,
+  no partial import.
+- [ ] *TOC*: NCX via =doc.toc=; EPUB3 =nav.xhtml= (=epub:type="toc"= =<ol>=)
+  parsed ourselves; NCX as the fallback when both exist and nav is empty.
+  Each entry resolves to (spine file, optional fragment).
+- [ ] *Cut the spine at TOC entries*: a chapter may span several files
+  (Calibre splits) or share one file with others (=#fragment= starts).
+  Spine items outside the TOC (cover, nav, copyright) are reported, not
+  imported silently.
+- [ ] *Split depth*: =auto= (TOC depth, capped at two levels) | =parts= |
+  =chapters=. Deeper TOC levels become in-chapter headings.
+- [ ] *XHTML → block tree* (format-neutral): headings, paragraphs,
+  em/strong, sup/sub, span classes → roles (smallcaps), =lang=/=dir=,
+  =br=, poetry → verse, blockquote (+ attribution, epigraph), aside →
+  sidebar, ul/ol/dl, pre, hr, tables (colspan/rowspan, block cells),
+  links (internal / external), =epub:type= noteref / footnote / endnote /
+  rearnote. Images: alt text only in phase 1, reported.
+- [ ] *Notes, hybrid rule*: resolve every noteref to its note. One
+  paragraph, no block content → inline =footnote:[…]= at the reference
+  (named =footnote:name[…]= + =footnote:name[]= when referenced twice).
+  Otherwise keep it in the notes section, linked both ways
+  (=anchor:<ref-id>[]word<<note-id,^n^>>= / =<<ref-id,n.>>=). A notes
+  section left empty is dropped.
+- [ ] *AsciiDoc writer*: =m= = =text/asciidoc=; =#= book title, =##=/=###=
+  structure per split depth (as =/==/===), in-chapter headings at level
+  4+; ids =<chapter-slug>-<epub-id>= (single hyphens, never =--=, never
+  =[[id]]=); anchors before the word; every internal link
+  =<<id,text>>= with text; escaping per the decision's converter rules.
+- [ ] *Report*: notes inlined / kept, dropped spine items, images
+  skipped, unresolved links, warnings — returned beside the source.
+- [ ] *API*: =POST /api/v1/import/publication= (multipart: =file=,
+  =split=) → ={title, tags, format, source, report}=. Stores nothing,
+  signs nothing; the file is kept in the documents folder as
+  =/api/v1/import= does.
+- [ ] *Tests*: synthetic EPUB2 + EPUB3 fixtures built in-test with =zip=
+  (split chapter, multi-chapter file, nested parts, short + long
+  endnotes, footnote referenced twice, poetry, table with spans, DRM
+  stub); golden AsciiDoc; and an Asciidoctor check (when installed)
+  that the output converts with no warnings and every =<<id>>= has a
+  target in the book.
+
+* Phase 2 — into the composer (web)
+
+- [ ] =api.importPublication(file, split)= in =web/src/lib/api.ts=.
+- [ ] =openImportInComposer(result)= in =state.svelte.ts=, modelled on
+  =editAtomicInComposer=: kind 30040, notes off, =composeFormat= =
+  =text/asciidoc=, the tags seeded, the whole source as the body —
+  verify the publication seed path splits it into sections as on paste.
+- [ ] Import UI: for =.epub=, an "Open as publication" action with the
+  split choice beside the existing page list; the report as a toast plus
+  a details list (blessed primitives — =feat-ui-patterns.org=).
+- [ ] Signing = the existing Sign (local snapshot); nothing new.
+- [ ] Large books: check composer performance on a ~1 MB source; if it
+  drags, that is a composer fix, not an import special case.
+
+* Phase 3 — the reader catches up (AsciiDoc rendering)
+
+- [ ] *Footnotes*: =footnote:[…]= → a superscript number per section +
+  popover (=RichContent.svelte=), hiding the macro; works for
+  hand-written documents too. Highlight offsets must hold.
+- [ ] *Anchors + xrefs, engine side*: an anchor index per section
+  (=[#id]=, =[id=…]=, =anchor:id[]= → id + byte offset), shipped on
+  =PubLoadEvent::Leaf= (=src/publication.rs=) — no new endpoint.
+- [ ] *Anchors + xrefs, web*: anchor targets get DOM ids;
+  =<<id,text>>= is clickable — same section scrolls, another section
+  loads (if outside the horizon) then scrolls; optional peek popover.
+- [ ] *Tables* (=web/src/lib/layers/bases/asciidoc.ts=,
+  =layers/table-layout.ts=): mask nostrdown + passthrough before
+  counting cell pipes (=asciidoc.ts= pipe loop); merged cells
+  (=2+|=, =.2+|=); =a|= cells.
+- [ ] *Blocks and inline*: sidebar / example drawn as a box (containers
+  emit no block span today), admonition paragraphs, verse, sup/sub,
+  roles (=[.smallcaps]#…#=), =lang=/=dir=.
+- [ ] Composer wysiwyg mirrors the same (=web/src/lib/editor/wysiwyg.ts=).
+
+* Later
+
+- [ ] Images: local hash-keyed store shaped like Blossom; =image::=
+  targets by hash; cover → =image= tag; "send to my Blossom server"
+  uploads the same hashes.
+- [ ] Markdown writer as an import option (drops what it cannot say, in
+  the report).
+- [ ] Book-wide footnote numbering (engine, TOC order).
+- [ ] A nostrdown pipe escape (=\|= in display text) — only if tables of
+  refs need display text.
+- [ ] Math: decide whether tendrl renders =stem:[]= at all.
+
+* Verification
+
+- =cargo test epub_import= — fixtures + golden output + Asciidoctor check.
+- Real books: two or three public-domain EPUBs (one EPUB2, one EPUB3 with
+  endnotes, one with parts) through the endpoint; read the report.
+- Live (the /verify skill): isolated instance
+  (=--data-dir /tmp/tendrl-epub --port 3131=, network mode Local), import →
+  composer → Sign → the feed shows it with the "local" pill → reader:
+  footnote popovers, xref jumps across sections, back-links, tables.
+- Add the recipe to =docs/commands.org= ("EPUB import").
