@@ -1,3 +1,7 @@
+## v0.23.1 — 2026-11-20
+
+- feat(embeddings): delete the index or the model from Settings
+
 ## v0.23.0 — 2026-11-20
 
 - docs(epub-import): large-book composer check done
