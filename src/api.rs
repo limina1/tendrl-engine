@@ -2788,6 +2788,141 @@ pub async fn import_document_handler(
     Ok(Json(resp))
 }
 
+/// Validate an `/import/publication` upload: the file name's basename (no
+/// directory parts — the upload is saved under it) and the split depth.
+/// Only `.epub` is accepted (case-insensitive); anything else is a 400.
+fn validate_publication_upload(
+    filename: &str,
+    split: Option<&str>,
+) -> Result<(String, crate::epub_import::SplitDepth), EngineError> {
+    let base = filename
+        .rsplit(['/', '\\'])
+        .next()
+        .unwrap_or("")
+        .trim()
+        .to_string();
+    if base.is_empty() || base == "." || base == ".." {
+        return Err(EngineError::InvalidFilter("No file name given".into()));
+    }
+    let is_epub = std::path::Path::new(&base)
+        .extension()
+        .and_then(|e| e.to_str())
+        .is_some_and(|e| e.eq_ignore_ascii_case("epub"));
+    if !is_epub {
+        return Err(EngineError::InvalidFilter(format!(
+            "Only .epub files can be opened as a publication (got {base})"
+        )));
+    }
+    let split = split
+        .map(crate::epub_import::SplitDepth::parse)
+        .unwrap_or_default();
+    Ok((base, split))
+}
+
+/// POST /api/v1/import/publication — an EPUB converted into an AsciiDoc
+/// 30040/30041 publication for the composer (multipart `file` + `split` =
+/// `auto` | `parts` | `chapters`). The upload is kept in the documents
+/// folder like `/api/v1/import`; no event is stored, nothing is signed.
+pub async fn import_publication_handler(
+    State(engine): State<AppState>,
+    mut multipart: axum::extract::Multipart,
+) -> Result<Json<crate::epub_import::ImportedPublication>, EngineError> {
+    let mut filename = String::new();
+    let mut file_bytes = Vec::new();
+    let mut split: Option<String> = None;
+
+    while let Some(field) = multipart
+        .next_field()
+        .await
+        .map_err(|e| EngineError::Database(format!("Multipart error: {e}")))?
+    {
+        match field.name() {
+            Some("file") => {
+                filename = field.file_name().unwrap_or("upload").to_string();
+                file_bytes = field
+                    .bytes()
+                    .await
+                    .map_err(|e| EngineError::Database(format!("Read error: {e}")))?
+                    .to_vec();
+            }
+            Some("split") => {
+                split = Some(
+                    field
+                        .text()
+                        .await
+                        .map_err(|e| EngineError::Database(format!("Read error: {e}")))?,
+                );
+            }
+            _ => {}
+        }
+    }
+
+    if file_bytes.is_empty() {
+        return Err(EngineError::InvalidFilter("No file uploaded".into()));
+    }
+    let (filename, split) = validate_publication_upload(&filename, split.as_deref())?;
+
+    let docs_dir = engine.documents_path();
+    let dest = docs_dir.join(&filename);
+    std::fs::create_dir_all(docs_dir)
+        .map_err(|e| EngineError::Database(format!("Failed to create docs dir: {e}")))?;
+    std::fs::write(dest, &file_bytes)
+        .map_err(|e| EngineError::Database(format!("Failed to save file: {e}")))?;
+
+    let opts = crate::epub_import::ImportOptions { split };
+    let result = tokio::task::spawn_blocking(move || {
+        crate::epub_import::import_epub(&file_bytes, &opts)
+    })
+    .await
+    .map_err(|e| {
+        if e.is_panic() {
+            EngineError::Other(format!("EPUB import failed (converter panicked): {filename}"))
+        } else {
+            EngineError::Other(format!("EPUB import was cancelled: {e}"))
+        }
+    })??;
+
+    Ok(Json(result))
+}
+
+#[cfg(test)]
+mod import_publication_tests {
+    use super::validate_publication_upload;
+    use crate::epub_import::SplitDepth;
+
+    #[test]
+    fn accepts_epub_any_case_and_parses_split() {
+        let (name, split) = validate_publication_upload("Book.EPUB", Some("chapters")).unwrap();
+        assert_eq!(name, "Book.EPUB");
+        assert_eq!(split, SplitDepth::Chapters);
+        let (_, split) = validate_publication_upload("b.epub", Some("parts")).unwrap();
+        assert_eq!(split, SplitDepth::Parts);
+        let (_, split) = validate_publication_upload("b.epub", None).unwrap();
+        assert_eq!(split, SplitDepth::Auto);
+        let (_, split) = validate_publication_upload("b.epub", Some("bogus")).unwrap();
+        assert_eq!(split, SplitDepth::Auto);
+    }
+
+    #[test]
+    fn refuses_other_extensions() {
+        for name in ["book.pdf", "book", "book.epub.zip", "epub", ""] {
+            assert!(
+                validate_publication_upload(name, None).is_err(),
+                "{name} should be refused"
+            );
+        }
+    }
+
+    #[test]
+    fn strips_directory_parts() {
+        let (name, _) = validate_publication_upload("../../etc/x.epub", None).unwrap();
+        assert_eq!(name, "x.epub");
+        let (name, _) = validate_publication_upload("C:\\books\\y.epub", None).unwrap();
+        assert_eq!(name, "y.epub");
+        assert!(validate_publication_upload("dir/..", None).is_err());
+    }
+}
+
 // ============================================================================
 // Profile API Endpoint
 // ============================================================================

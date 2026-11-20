@@ -7,6 +7,7 @@
 		ImportPage,
 		TagValueCount
 	} from '$lib/types';
+	import type { ImportReport, ImportSplit } from '$lib/api';
 	import SearchInput from './SearchInput.svelte';
 	import SpellComposerModal from './SpellComposerModal.svelte';
 	import SpellBuilderModal from './SpellBuilderModal.svelte';
@@ -51,6 +52,8 @@
 		onimportpagetocompose,
 		onimportpagestocontext,
 		onimportpagestocompose,
+		onimportpublication,
+		importPublicationResult = null,
 		items = [],
 		localPubkeys = new Set<string>(),
 		onviewprofile,
@@ -107,6 +110,11 @@
 		onimportpagetocompose?: (page: ImportPage) => void;
 		onimportpagestocontext?: (pages: ImportPage[]) => void;
 		onimportpagestocompose?: (pages: ImportPage[]) => void;
+		/** Convert an .epub into an AsciiDoc publication and open it in the
+		 *  composer (engine-side; nothing stored or signed). */
+		onimportpublication?: (file: File, split: ImportSplit) => Promise<boolean> | void;
+		/** The last EPUB opened as a publication + its import report. */
+		importPublicationResult?: { filename: string; title: string; report: ImportReport } | null;
 		items?: ContextItem[];
 		localPubkeys?: Set<string>;
 		onviewprofile?: (pubkey: string) => void;
@@ -292,6 +300,32 @@
 		importChecked = next;
 	}
 
+	// ── EPUB: open as publication ────────────────────────────────────
+	// An .epub chosen in the upload control is held here (view state) until
+	// the user picks: open it as a publication (split choice) or import its
+	// pages like any other document. Kept after a page import so the page
+	// view can still offer "Open as publication" for the same file.
+	let epubFile = $state<File | null>(null);
+	let epubSplit = $state<ImportSplit>('auto');
+	const isEpub = (name: string) => name.toLowerCase().endsWith('.epub');
+	const epubInPageView = $derived(!!epubFile && epubFile.name === importFilename);
+	const reportIssues = $derived(
+		importPublicationResult
+			? importPublicationResult.report.dropped_items.length +
+					importPublicationResult.report.unresolved_links.length +
+					importPublicationResult.report.warnings.length
+			: 0
+	);
+
+	function pickUpload(f: File) {
+		if (isEpub(f.name) && onimportpublication) {
+			epubFile = f;
+		} else {
+			epubFile = null;
+			onimportfile?.(f);
+		}
+	}
+
 	const hasImportChecked = $derived(importChecked.size > 0);
 	const checkedImportPages = $derived(importPages.filter(p => importChecked.has(p.page_num)));
 	const hasDocResults = $derived(importPages.length > 0 && importFilename !== '');
@@ -300,6 +334,71 @@
 		(importPages.length > 0 && importFilename ? importPages.length : 0)
 	);
 </script>
+
+{#snippet epubActions(file: File, offerPages: boolean)}
+	<div class="epub-choice">
+		<div class="epub-choice__head">
+			<span class="import-file-badge">epub</span>
+			<span class="import-file-name">{file.name}</span>
+		</div>
+		<label class="epub-choice__split">
+			<span>Split at</span>
+			<select bind:value={epubSplit} disabled={importLoading}>
+				<option value="auto">book's contents (auto)</option>
+				<option value="parts">top level</option>
+				<option value="chapters">two levels</option>
+			</select>
+		</label>
+		<div class="epub-choice__actions">
+			<button
+				class="import-upload-btn epub-choice__primary"
+				disabled={importLoading}
+				onclick={async () => {
+					const ok = await onimportpublication?.(file, epubSplit);
+					// Opened: the choice is done (the page view keeps its own).
+					if (ok && offerPages) epubFile = null;
+				}}
+				title="Convert to an AsciiDoc publication and open it in the composer (nothing is signed)"
+			>Open as publication</button>
+			{#if offerPages}
+				<button class="import-upload-btn" disabled={importLoading} onclick={() => onimportfile?.(file)}>Import pages</button>
+				<button class="sel-btn" onclick={() => (epubFile = null)}>Cancel</button>
+			{/if}
+		</div>
+	</div>
+{/snippet}
+
+{#snippet importReportDetails(r: { filename: string; title: string; report: ImportReport })}
+	<details class="import-report">
+		<summary>
+			Last book: <strong>{r.title || r.filename}</strong>
+			<span class="import-report__counts">
+				{r.report.notes_inlined} notes inline · {r.report.notes_kept} kept{#if r.report.images_skipped} · {r.report.images_skipped} images skipped{/if}{#if reportIssues} · {reportIssues} to check{/if}
+			</span>
+		</summary>
+		{#if r.report.dropped_items.length}
+			<div class="import-report__group">
+				<span class="import-report__label">Not imported ({r.report.dropped_items.length})</span>
+				<ul>{#each r.report.dropped_items as item, i (i)}<li>{item}</li>{/each}</ul>
+			</div>
+		{/if}
+		{#if r.report.unresolved_links.length}
+			<div class="import-report__group">
+				<span class="import-report__label">Unresolved links ({r.report.unresolved_links.length})</span>
+				<ul>{#each r.report.unresolved_links as link, i (i)}<li><code>{link}</code></li>{/each}</ul>
+			</div>
+		{/if}
+		{#if r.report.warnings.length}
+			<div class="import-report__group">
+				<span class="import-report__label">Warnings ({r.report.warnings.length})</span>
+				<ul>{#each r.report.warnings as w, i (i)}<li>{w}</li>{/each}</ul>
+			</div>
+		{/if}
+		{#if !reportIssues}
+			<p class="import-report__ok">Nothing to check.</p>
+		{/if}
+	</details>
+{/snippet}
 
 <div class="search-panel">
 	{#if semanticTotal > 0}
@@ -598,6 +697,9 @@
 				<span class="import-file-name">{importFilename}</span>
 				<span class="import-page-count">{importPages.length} pages</span>
 			</div>
+			{#if epubInPageView && epubFile}
+				{@render epubActions(epubFile, false)}
+			{/if}
 			<div class="search-bar">
 				<input
 					type="text"
@@ -648,9 +750,15 @@
 		{:else}
 			<!-- File list view -->
 			<div class="search-results">
+				{#if importPublicationResult}
+					{@render importReportDetails(importPublicationResult)}
+				{/if}
 				{#if importLoading}
-					<p class="empty">Parsing document...</p>
+					<p class="empty">{epubFile ? 'Converting book...' : 'Parsing document...'}</p>
 				{:else}
+					{#if epubFile}
+						{@render epubActions(epubFile, true)}
+					{/if}
 					{#each documentFiles as file}
 						<!-- svelte-ignore a11y_no_static_element_interactions -->
 						<div class="import-file" onclick={() => onparsedocument?.(file.name)} onkeydown={(e) => { if (e.key === 'Enter') onparsedocument?.(file.name); }} role="button" tabindex="0">
@@ -666,7 +774,9 @@
 				<div class="import-upload">
 					<input type="file" accept=".pdf,.docx,.epub,.html,.htm,.txt,.md,.org,.adoc" bind:this={fileInput} onchange={() => {
 						const f = fileInput?.files?.[0];
-						if (f) onimportfile?.(f);
+						if (f) pickUpload(f);
+						// Re-choosing the same file must fire change again.
+						if (fileInput) fileInput.value = '';
 					}} hidden />
 					<button class="import-upload-btn" onclick={() => fileInput?.click()}>Upload file</button>
 				</div>
@@ -1249,6 +1359,74 @@
 	.import-upload-btn {
 		font-size: var(--t-2xs);
 		padding: 6px 16px;
+	}
+
+	/* EPUB: open as publication */
+	.epub-choice {
+		display: flex;
+		flex-direction: column;
+		gap: 8px;
+		padding: 10px 12px;
+		border-bottom: 1px solid var(--border);
+		font-size: var(--t-2xs);
+	}
+	.epub-choice__head {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+		min-width: 0;
+	}
+	.epub-choice__split {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+		color: var(--fg-muted);
+	}
+	.epub-choice__split select {
+		font-size: var(--t-2xs);
+		min-width: 0;
+	}
+	.epub-choice__actions {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: center;
+		gap: 8px;
+	}
+	.epub-choice__primary {
+		color: var(--accent);
+	}
+
+	/* Import report (last book opened as a publication) */
+	.import-report {
+		padding: 6px 12px;
+		border-bottom: 1px solid var(--border);
+		font-size: var(--t-2xs);
+	}
+	.import-report summary {
+		cursor: pointer;
+	}
+	.import-report__counts {
+		color: var(--fg-muted);
+		margin-left: 6px;
+	}
+	.import-report__group {
+		margin-top: 6px;
+	}
+	.import-report__label {
+		font-size: var(--t-3xs);
+		color: var(--fg-muted);
+		text-transform: uppercase;
+	}
+	.import-report ul {
+		margin: 2px 0 0;
+		padding-left: 18px;
+		max-height: 10em;
+		overflow-y: auto;
+		overflow-wrap: anywhere;
+	}
+	.import-report__ok {
+		margin: 6px 0 0;
+		color: var(--fg-muted);
 	}
 
 	/* Import header */
