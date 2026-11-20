@@ -128,6 +128,12 @@ fn leaf_pub_event(
         .map(|s| !s.is_empty() && !s.chars().all(|c| c == '0'))
         .unwrap_or(false);
     let links = event_web_links(leaf);
+    let anchors = match (effective_format.as_deref(), content.as_deref()) {
+        (Some(crate::mimetype::ASCIIDOC), Some(text)) => {
+            crate::epub_import::anchors::adoc_anchors(text)
+        }
+        _ => Vec::new(),
+    };
     PubLoadEvent::Leaf {
         addr,
         depth,
@@ -140,7 +146,7 @@ fn leaf_pub_event(
         effective_format,
         format_source,
         format_from,
-        anchors: Vec::new(),
+        anchors,
     }
 }
 
@@ -4416,6 +4422,32 @@ mod tests {
             "sig": "0".repeat(128),
             "relays": relays
         })
+    }
+
+    #[test]
+    fn leaf_event_carries_adoc_anchors_only_for_asciidoc() {
+        let addr = NAddr { kind: 30041, pubkey: "a".repeat(64), d_tag: "s".into() };
+        let leaf = |m: &str| {
+            serde_json::json!({
+                "kind": 30041,
+                "tags": [["d", "s"], ["m", m]],
+                "content": "[#ch1-top]\nText anchor:ch1-x[]here\n",
+            })
+        };
+        let anchors_of = |ev: PubLoadEvent| match ev {
+            PubLoadEvent::Leaf { anchors, .. } => anchors,
+            _ => panic!("not a leaf"),
+        };
+        let adoc = anchors_of(leaf_pub_event(addr.clone(), 1, &leaf("text/asciidoc"), None));
+        let got: Vec<&str> = adoc.iter().map(|a| a.id.as_str()).collect();
+        assert_eq!(got, vec!["ch1-top", "ch1-x"]);
+        assert!(anchors_of(leaf_pub_event(addr.clone(), 1, &leaf("text/markdown"), None)).is_empty());
+        // Inherited AsciiDoc counts too.
+        let untagged = serde_json::json!({
+            "kind": 30041, "tags": [["d", "s"]], "content": "[#a]\np\n",
+        });
+        let inh = FormatInherit { mimetype: "text/asciidoc".into(), from: addr.clone() };
+        assert_eq!(anchors_of(leaf_pub_event(addr, 1, &untagged, Some(&inh))).len(), 1);
     }
 
     #[test]
