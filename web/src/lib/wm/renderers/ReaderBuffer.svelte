@@ -32,6 +32,7 @@
 	import { resolveLayer, type LayerPick } from '$lib/layers/resolve';
 	import { mobileNav } from '../mobile-nav.svelte';
 	import { ResolutionTracker } from '$lib/nostr/resolution-progress.svelte';
+	import { findAnchor, revealAnchor, utf8ToUtf16, type AnchorEntry, type WithAnchors } from '$lib/reader/xref';
 	import type {
 		LazySection,
 		NAddr,
@@ -259,6 +260,9 @@
 		 *  nearest enclosing index) — drives the rendering-layer decision. */
 		effectiveFormat?: string | null;
 		formatSource?: 'own' | 'kind' | 'inherited' | 'none';
+		/** Explicit AsciiDoc anchors (UTF-8 byte offsets) off the leaf event —
+		 *  carried onto the section so a `<<id>>` can find its target. */
+		anchors?: AnchorEntry[];
 	};
 	// Two reading modes — paged (one section per page) and scroll
 	// (continuous). The outline view is gone (2026-09-11): the § toc
@@ -1030,6 +1034,55 @@
 	const narrationSummary = $derived(
 		parsedAddr?.kind === 30040 ? nar.summary(parsedAddr.pubkey, parsedAddr.dTag) : { sections: 0, narrated: 0, recordings: 0 }
 	);
+	// ── AsciiDoc cross-references across sections ──────────────────────
+	// RichContent handles an anchor in its own section; any other `<<id>>`
+	// bubbles up as a `reader-xref` DOM event (so it crosses SectionCard
+	// without a prop chain). Look the id up in the sections' engine anchors,
+	// go to that section (continuous: load if pending + scrollToSection;
+	// paginated: gotoSection), then reveal + flash the anchor once the
+	// section's body is in the DOM. A plain listener, not a lifecycle hook.
+	let xrefSeq = 0;
+	function followXref(id: string): boolean {
+		const hit = findAnchor(pristineSections as WithAnchors<LazySection>[], id);
+		if (!hit) return false;
+		const idx = hit.index;
+		const sec = pristineSections[idx];
+		const key = addrKey(sec.addr);
+		if (viewMode === 'continuous') {
+			handleLoadSection(idx);
+			continuousView?.scrollToSection(idx);
+		} else if (idx !== currentSection) {
+			gotoSection(idx, 'teleport');
+			handleLoadSection(idx);
+		}
+		const seq = ++xrefSeq;
+		let tries = 0;
+		const attempt = () => {
+			if (seq !== xrefSeq) return; // a newer jump superseded this one
+			const cur = pristineSections[idx];
+			const body = contentWrap?.querySelector(
+				`[data-section-addr="${CSS.escape(key)}"] .section__main pre.section-content`
+			);
+			if (body && cur?.content) {
+				const [offset] = utf8ToUtf16(cur.content, [hit.start]);
+				if (revealAnchor(body, id, offset)) return;
+			}
+			if (++tries < 40) setTimeout(attempt, 75);
+		};
+		setTimeout(attempt, 60);
+		return true;
+	}
+	$effect(() => {
+		const el = contentWrap;
+		if (!el) return;
+		const onXref = (e: Event) => {
+			const detail = (e as CustomEvent<{ id: string; handled: boolean }>).detail;
+			if (detail && !detail.handled && followXref(detail.id)) detail.handled = true;
+		};
+		el.addEventListener('reader-xref', onXref);
+		return () => el.removeEventListener('reader-xref', onXref);
+	});
+
 	function goToSectionCoord(coord: string) {
 		const idx = sectionIndexForAddr(coord);
 		if (idx < 0) return;
@@ -1611,8 +1664,9 @@
 					links: n.links,
 					forked: n.forked,
 					effective_format: n.effectiveFormat ?? null,
-					format_source: n.formatSource ?? 'none'
-				});
+					format_source: n.formatSource ?? 'none',
+					anchors: n.anchors
+				} as WithAnchors<LazySection>);
 				if (ancestors.has(key)) return; // cycle — node shown, subtree cut
 				const next = new Set(ancestors).add(key);
 				for (const ck of n.childKeys) walk(ck, depth + 1, next);
@@ -1739,7 +1793,8 @@
 					signed: ev.signed ?? true,
 					links: ev.links ?? [],
 					effectiveFormat: ev.effective_format ?? null,
-					formatSource: ev.format_source ?? 'none'
+					formatSource: ev.format_source ?? 'none',
+					anchors: ev.anchors ?? []
 				});
 				inHorizon.add(k);
 				resolvedCount++;
