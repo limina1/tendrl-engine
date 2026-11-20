@@ -221,6 +221,10 @@ export type PubLoadEvent =
 			effective_format?: string | null;
 			format_source?: 'own' | 'kind' | 'inherited' | 'none';
 			format_from?: NAddr | null;
+			/** Explicit AsciiDoc anchors in `content` (`[#id]`, `[id=…]`,
+			 *  `anchor:id[]`) with UTF-8 byte offsets — for following a
+			 *  `<<id>>` across sections. Empty unless the format is AsciiDoc. */
+			anchors?: { id: string; start: number }[];
 	  }
 	| { type: 'error'; addr: NAddr; depth: number; message: string }
 	| { type: 'done'; total: number };

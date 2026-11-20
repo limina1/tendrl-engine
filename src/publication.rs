@@ -140,6 +140,7 @@ fn leaf_pub_event(
         effective_format,
         format_source,
         format_from,
+        anchors: Vec::new(),
     }
 }
 
@@ -1073,6 +1074,12 @@ pub enum PubLoadEvent {
         format_source: &'static str,
         /// The index whose declaration was inherited (when `inherited`).
         format_from: Option<NAddr>,
+        /// Explicit AsciiDoc anchors in `content` (`[#id]`, `[id=…]`,
+        /// `anchor:id[]`) with byte offsets, so the reader can follow a
+        /// `<<id>>` into another section. Empty unless the effective
+        /// format is AsciiDoc.
+        #[serde(default)]
+        anchors: Vec<crate::epub_import::anchors::Anchor>,
     },
     /// A node (index or leaf) failed to resolve. Counted toward `N` so the
     /// client's `i/N` still terminates cleanly.

@@ -1,0 +1,82 @@
+#+TITLE: EPUB import — build contract (parallel agents)
+#+DATE: 2026-11-20
+
+The interfaces the five build streams share. Decision:
+[[file:zettel/decision-epub-import-adoc-anchors.org][decision-epub-import-adoc-anchors]];
+phases: [[file:epub-import-plan.org][epub-import-plan]]. Change this file only
+in the integration step, never from a stream.
+
+* Rust
+
+- =src/epub_import/model.rs= — all shared types (=ImportOptions=,
+  =SplitDepth=, =BookMeta=, =XhtmlSlice=, =ChapterSource=, =SubHeading=,
+  =BookStructure=, =ImportedSection=, =ImportReport=,
+  =ImportedPublication=, =IMPORT_FORMAT=). Read the doc comments: they are
+  the spec.
+- =structure::read_book(bytes, opts) -> Result<BookStructure>= — Structure.
+- =adoc::convert(&BookStructure) -> Result<ImportedPublication>= — AsciiDoc.
+  =xhtml.rs= is the AsciiDoc stream's private block tree.
+- =import_epub= (=mod.rs=) = the two in sequence. Errors use
+  =EngineError::InvalidFilter= for user-facing refusals (DRM, not an EPUB,
+  no TOC) so the API returns 400.
+- =anchors::adoc_anchors(content) -> Vec<Anchor { id, start }>= — Reader.
+  =PubLoadEvent::Leaf.anchors= (=src/publication.rs=) carries it.
+- =fixtures.rs= (=cfg(test)=) — Structure builds synthetic books; anyone
+  may use them after merge.
+
+* HTTP
+
+=POST /api/v1/import/publication= (multipart): =file= (the .epub), =split=
+(=auto= | =parts= | =chapters=, default =auto=) → 200
+=ImportedPublication= JSON (=tags= serialise as =[[name, value], …]=), 400
+on a refusal. Stores the upload in the documents folder like
+=/api/v1/import=; stores no event, signs nothing.
+
+* Web
+
+- =web/src/lib/api.ts=: =ImportSplit=, =ImportedSection=, =ImportReport=,
+  =ImportedPublication=, =importPublication(file, split)=.
+- =web/src/lib/types.ts=: leaf stream event =anchors?: {id, start}[]=.
+  =start= is a UTF-8 *byte* offset (Rust); convert to a UTF-16 index
+  before using it against a JS string.
+
+* Style-span classes of the AsciiDoc base
+
+=web/src/lib/layers/bases/asciidoc.ts= emits these (Layers stream); the
+reader (Reader stream) and the composer decorations consume them. A span
+is ={start, end, cls}= with UTF-16 offsets into the section content; the
+consumer re-reads text with =content.slice(start, end)=.
+
+| class       | covers                                                                  |
+|-------------+-------------------------------------------------------------------------|
+| =fn=        | a whole =footnote:[…]=, =footnote:name[…]= or =footnote:name[]=         |
+| =fnbody=    | the text between the brackets (absent for =footnote:name[]=)            |
+| =fnname=    | the =name= of a named footnote                                          |
+| =xref=      | a whole =<<id>>= or =<<id,text>>= (and =xref:id[text]=)                 |
+| =xref-id=   | the id                                                                  |
+| =xref-text= | the link text, when given                                               |
+| =anchor=    | a whole =anchor:id[]= (inline); a =[#id]= line keeps =kw= and adds =anchor= |
+| =sup= =sub= | =^x^= / =~x~= (the text, markers get =mark=)                            |
+| =role=      | =[.name]#text#= — whole span; =smallcaps= added when the role is smallcaps |
+| =sidebar=   | a =****= block (whole block, delimiters included)                       |
+| =example=   | an example block (delimited by four = signs)                            |
+| =verse=     | a =[verse]= block or paragraph                                          |
+
+The markers inside (=footnote:[=, =]=, =<<=, =>>=, =^=, =~=) also carry
+=mark=, so the existing hide-markers pass hides them in the rendered view.
+
+Tables: the base no longer counts =|= inside nostrdown tokens or =+…+=
+passthrough as a cell separator. Merged cells (=2+|=, =.2+|=, =2.3+|=) and
+cell styles (=a|=) are read from the source by =tableLayout=, which returns
+=colspan= / =rowspan= on =TableCell= (default 1) and keeps the spec text
+out of the cell's range.
+
+* Ownership (one stream per file)
+
+| stream    | files                                                                                     |
+|-----------+-------------------------------------------------------------------------------------------|
+| Structure | =src/epub_import/structure.rs=, =src/epub_import/fixtures.rs=                             |
+| AsciiDoc  | =src/epub_import/xhtml.rs=, =src/epub_import/adoc.rs=                                     |
+| Hand-off  | =src/api.rs= (new handler), =src/server.rs= (route), =web/src/lib/state.svelte.ts=, =SearchPanel.svelte=, =SearchBuffer.svelte= |
+| Layers    | =web/src/lib/layers/bases/asciidoc.ts= (+test), =web/src/lib/layers/table-layout.ts= (+test), =web/src/lib/editor/wysiwyg.ts= |
+| Reader    | =src/epub_import/anchors.rs=, =src/publication.rs= (fill =anchors= only), =RichContent.svelte=, =ContinuousView.svelte=, =PaginatedView.svelte=, =ReaderBuffer.svelte= |
