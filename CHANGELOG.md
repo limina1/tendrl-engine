@@ -1,3 +1,119 @@
+## v0.22.0 — 2026-11-19
+
+- fix(modeline): notifications pill sits on the right, after connect
+- chore(relays): drop relay.damus.io from the default seed
+- feat(compose): Edit section edits one note on its own
+- feat(feed): kinds as a checkable list — any subset, all / none / invert
+- feat(insertions): annotate long-form documents — 30023 / 30818 / 30817 anchor
+- feat(feed): kind registry + kind-0 presence check; long-form reads in the reader
+- feat(notifications): dismiss rows (×) — settled merge requests no longer stick
+- fix(ledger): a signed reply reloads the row's count; phone facets scroll sideways — harness 32/32; Phase 5d ticked
+- feat(insertions): reply_to (NIP-18 q) on insertions + per-annotation kind-1111 reply counts on load
+- feat(annotations): the ledger — rows, facets, in-place bodies, board, threads (Track B)
+- docs+verify(annotations): the ledger's zettel, plan Phase 5d, commands recipe, seed + CDP harness (Track F)
+- feat(reader): notes fold to a strip of stubs; n annotate on section titles; margin layout removed (ledger contract, Track C)
+- feat(review): the merge-request review to the ledger contract — status · ask · what changes · definitions · per-section diffs · thread · sticky verdict; takes the reader's leaf from a split ledger
+- feat(annotate): answer mode one term at a time; define them myself; request cards keep defining; composer replyTo
+- docs(annotations): ledger contract frozen from the approved prototype + Track 0 hooks
+- test(vocab): hand-answer harness (6/6 live) + recipe; note the nip07 source flip a fresh browser profile causes
+- feat(annotate): hand-answer mode — answer a request yourself: one signed definition per term (vocabulary) or one signed note (ask), each pointing at the request; notes/kasten open the composer with the request pointer; “answer it yourself ▸” on open request cards
+- style(annotate): the window's name and anchor letters are titles — the theme's green; the ask orange stays on the mode, the generated line and the sign button
+- style(annotate): the artifact's ask accent — an --ask token (orange) on the window's dot, anchor letters, mode segment, generated line, word hover and the sign button; the request card's badge and rail
+- fix(annotate): the mode segment no longer collapses when the window scrolls; generated notes/kasten requests are titled by mode
+- fix(web): the section menu's Annotate (n) really opens the annotate window; Write a note (q) is the composer — the swap that 4a946e4 lost
+- docs(vocab): the annotate window's four request modes in the idea zettel and the design doc
+- feat(annotate): one window, four request modes — notes · kasten · vocabulary · ask; `ask` = the user's own question (output: ask), notes/kasten generate a task when none is typed; the composer keeps its own door (q), no write segment
+- feat(web): one annotate window, four modes — write · notes · kasten · vocabulary as a segment on both forms; choosing a mode swaps forms with the same anchor
+- feat(reader): Tools sheet → “annotate §n” opens the request window on the current section (M → annotate → every mode)
+- fix(web): the section menu's Annotate (n) opens the request window (notes · kasten · vocabulary) — the composer is “Write a note” (q); the request window links to it (“write it yourself →”)
+- test(vocab): Step 6 live MCP check (14/14) + recipe
+- docs(zettel+plan): Phase 5c built — notifications/merge-request/vocabulary zettels say what exists; index; plan Step 6 ticked; design doc status
+- feat(tools): the agent works the asks — list_asks · get_ask_diff · review_ask (a local record, never an event) · prepare_merge (an unsigned draft) · fetch_asks; ReviewStore; GET /merge-requests/:id/review; skill "work the asks"
+- docs(vocab): Step 5 ticked — review live recipe (API 14/14, GUI 11/11)
+- feat(web): the review pane shows the assistant's local review record (findings, recommendation) when one exists
+- test(vocab): Step 5c live checks — review API script (diff → merge → done · decline) + CDP harness (bell → review pane → armed merge → ✓ merged)
+- feat(merge-requests): the review — line/index diff, GET /merge-requests/:id/diff (the owner's next version), POST /:id/merge + /:id/decline; 818 status + done group in notifications; role: ask rows in the load pass
+- test(vocab): Step 4 GUI harness — the foreign relink modal (derivative block, 818 preview, destination chips, armed send) 10/10
+- feat(web): merge-request review — review:<818> work buffer (engine diff → the owner's next versions, event preview, armed merge + / decline −), notifications rows open it, ask cards in the reader
+- test(vocab): Step 4 two-key API check (14/14) + Step 5 live recipes; seed prints the owner key; pill spacing; plan: Step 4 ticked, Step 5 partly
+- test(notifications): live checks — API script (prefs, 9802/1111 activity, stray 7 ignored, fixed rows) + CDP harness (bell pill, buffer groups, settings rows, PUT)
+- feat(relink): a stranger's relink is a derivative + kind-818 — index′/sections′ under their key (E/p back-pointers, relinked content + a tags), the 818 routed to the destination set; POST /merge-requests/react = the owner's verdict (403 otherwise)
+- fix(web): notification rule `verb` is the engine's {kind, label} object
+- feat(notifications): rules per kind, notifications.json prefs, GET /notifications (acts · activity · mine · counts), GET/PUT /prefs, POST /fetch
+- feat(web): fork + merge request — the relink modal's foreign path: derivative block, the 818 preview, the destination set with reason chips (inbox · found on · hint · yours) and per-relay checkboxes, a Confirm-gated kind-10002 fetch, armed “sign + send merge request”; api.ts merge-request types + list/react/destinations
+- feat(web): notifications — the 🔔 pill (desktop modeline) and ☰ drawer row, the notifications buffer (asks · activity · mine), Settings › Notifications (checkable kinds, count | list)
+- feat(merge-requests): kind-818 on publications — template/parse, status from the owner's newest kind-7, fork_section, destination set (inbox ∪ found-on ∪ hints ∪ mine), GET /merge-requests + POST /merge-requests/destinations
+- test(vocab): Step 3 live checks — relink API script (8/8) + CDP harness (modal diff → armed sign → refs + hover card, 10/10); seed §3 uses the phrase in its body; plan: Step 3 ticked
+- feat(relink): POST /publication/relink (+ /preview) — own publication: sections re-versioned under the same d with {{ref:<definition>|term}} and one a per definition; optional glossary promotion in the same publish
+- feat(nostrdown): a definition ref resolves with its first sentence as summary — the hover card shows the sense, not just the title
+- test(vocab): Step 2 live checks — API script (8/8) + CDP harness (def cards, per-event promote, glossary row); plan: Step 2 ticked
+- feat(web): relink modal — diff of the {{ref}} rewrites per section, per-definition glossary checkboxes, event preview, armed sign; entry points on request + definition cards; reader reloads on the relink signal
+- fix(web): glossary preview reads the engine's `owner` flag; `index` is optional (absent when nothing about the index changes)
+- feat(insertions): definitions — role: definition, per-event glossary promotion (POST /insertions/glossary + /preview), promoted/glossary on load
+- feat(nostrdown): link_terms — relink the first whole-word occurrence of each term as {{ref:<coord>|as written}}, skipping code / headings / native links / existing tokens (md · org · adoc · plain)
+- feat(web): definition cards + per-event glossary promotion — def badge, term chip, /insertions/glossary preview → armed sign, request card lists definitions
+- fix(requests): a vocabulary request titles itself by its terms, not the generated line; plan: Step 1 ticked
+- test(vocab): CDP harness + seed for the vocabulary ask (15 checks, live 15/15); commands.org recipe
+- fix(web): request preview reads the engine's `event` (+ `request`) shape
+- feat(requests): output: vocabulary — `terms` (one `term` tag each), generated task, POST /annotations/requests/preview
+- feat(web): annotate modal — vocabulary output marks words in the section content, generated content line, event preview
+- docs(zettel+plan+spec): Phase 5c — vocabulary requests, merge requests (818), notifications, asks routing
+- docs(vocabulary): design approved 2026-09-24
+- docs(vocabulary): choose notification kinds in the settings buffer; the bell shows what is for the user
+- docs(vocabulary): glossary promotion is per definition event
+- docs(vocabulary): the annotate modal marks words in the section content; content is generated (“define these words in the context of these events: …”); every event-creating modal previews its JSON
+- docs(vocabulary): the capture action is “annotate”, not “ask”
+- docs(vocabulary): the preference is a notifications drawer (modeline on desktop, ☰ status on phone), not a settings page about asks; notifications.json
+- docs(vocabulary): link the interactive prototype (artifact JFf3nz9UQjPLew6oBj96oB)
+- docs(vocabulary): fold the user's answers in — one event per term, ask = anchored annotation card (no asks buffer), preference = checkable list of known kinds, open questions → decisions + follow-ups (nostrdown multi-target ref)
+- docs(vocabulary): review_ask is a structured result kept as a local record, not a kind-1111 — the assistant never comments on others' merge requests; a reason to the requester is the owner's own kind-7 content or comment
+- docs(vocabulary): destination set for asks = owner's inbox (10002 read) ∪ provenance of the annotated event (note.relays) ∪ a-tag hints ∪ mine, each with a reason; refuse when inbox and provenance are both unknown
+- docs(vocabulary): asks are gated by preference — default kinds + user-appended (highlights, comments, zaps…), engine rule per kind, asks.json local state, count vs list
+- docs(vocabulary): asks travel NIP-65 inbox-side — 818 to the owner's READ relays, fetch_asks from my read relays; routing table + the missing inbox_relays_for helper
+- docs(vocabulary): the agent's side — list_asks / get_ask_diff / review_ask / prepare_merge, still a pull; merge and 818 stay the user's key
+- docs(vocabulary): merge requests — the asks inbox (kind-relevant, never pushed), the engine-side diff, merge/decline as one armed button
+- docs(vocabulary): babel :file paths relative to the org file (docs/docs/ doubled)
+- docs(vocabulary): relink with {{ref:<coordinate>|term}}, not [[term]] — one definition event, a-tag indexed, promotion optional
+- docs(vocabulary): mock-up of the vocabulary-request workflow — definitions as 30041s, relink, kind-818 merge requests
+- docs(promiscuity-kasten): conventions note the m mimetype tag
+- feat(insertions): bundle events always carry m (mimetype) — from format, or application/json for an index
+- docs(commands): kasten bundle delivery recipe + scripts/verify/deliver-kasten-bundle.py
+- test(insertions): load query now spans 30040 bundles
+- feat(insertions): bundles — a whole kasten as one kind-30040 insertion; links/tags on propose_insertion
+- fix(identity): keyring entries scoped per data directory
+- feat(reader): answers fold under their request; outward links from r tags on every event
+- docs(promiscuity-kasten): links as event tags — a for coordinates, r for web sources
+- docs(promiscuity-kasten): kasten answering the annotation request on 'The Natural Promiscuity of Understanding'
+- fix(annotations): harness presses the title row and hovers a §-anchored card; tip sits above the section
+- fix(annotations): § chip counts sections only, double-click unpin, small-card clipping, counts fallback
+- fix(annotations): side-by-side split, park the reader before it, tools-row toggle
+- docs(annotations): contract points at scripts/verify for the harness
+- docs(annotations): Track E — plan, zettel, verify recipe, CDP harness
+- feat(insertions): Track A — counts + since on /insertions/load
+- feat(annotations): Track C — the desktop annotations table
+- feat(annotations): Track B — reader side of the annotations table
+- feat(annotations): Track D — AnnotationsList, the mobile list view
+- feat(annotations): Track 0 — contracts for the annotations table
+- docs(requests): 30041 requests, `request` pointer on every answer
+- feat(web): request cards for signed 30041 requests, "answers" chip on notes
+- feat(requests): signed requests are kind-30041 annotations, answers point at them
+- docs(insertions): the live store stream
+- feat(store): live change stream — annotations show up as they are created
+- feat(sections): the m MIME tag — written on every section and note, read for content mode
+- feat(styles): writing styles as events, chosen per request, stamped on every note
+- feat(modal): every tag is a search chip — d leads the row, spaced values quoted
+- feat(insertions): replace one's own note in place; refs resolve inside cards
+- fix(reader): stop the annotation load loop; show annotations = local, fetch pulls them
+- fix(requests): answered notes are found without the assistant identity
+- docs(requests): decision zettel, /tendrl-requests skill, plan Phase 5 reshaped, recipe
+- feat(requests): web — annotate mode, the ask window, request cards
+- feat(requests): annotation requests — records the user's agent answers, never a harness
+- docs(mcp): feat-mcp zettel, plan Phase 4 ticked, commands recipe
+- feat(mcp): the engine speaks MCP — Streamable HTTP on /mcp, one catalog
+- docs(insertions): feat-insertions zettel, plan Phase 3 ticked, commands recipe
+- feat(insertions): web — load annotations, margin cards, composer, promote
+- feat(insertions): engine — anchors, publish/preview/load/fork, agent tools
+
 ## v0.21.0 — 2026-11-12
 
 - feat(reader): code fences as their own block — lines kept whole, scroll sideways
