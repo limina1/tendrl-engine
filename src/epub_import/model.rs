@@ -96,6 +96,10 @@ pub struct BookStructure {
     pub files: BTreeMap<String, String>,
     /// Spine documents outside the TOC (cover, nav, copyright…), not imported.
     pub dropped: Vec<String>,
+    /// Things the reader of the import report should know about the
+    /// structure (TOC fallbacks, missing fragments); merged into
+    /// [`ImportReport::warnings`] by [`super::import_epub`].
+    pub warnings: Vec<String>,
 }
 
 /// One composer section.

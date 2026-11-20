@@ -17,7 +17,6 @@
 	import { readingVars } from '$lib/theme/reading.svelte';
 	import type { ResolutionTracker } from '$lib/nostr/resolution-progress.svelte';
 	import { decideFor, ensureLoaded, spansFor, type LayerPick } from '$lib/layers/use.svelte';
-	import type { WithAnchors } from '$lib/reader/xref';
 
 	const app = getAppState();
 
@@ -657,7 +656,7 @@
 							{resolution}
 							{focusedHighlightId}
 							onopenlocal={openLocalSection}
-							anchors={(section as WithAnchors<LazySection>).anchors}
+							anchors={section.anchors}
 						/>
 					{/if}
 					<EventLinks links={section.links ?? []} />

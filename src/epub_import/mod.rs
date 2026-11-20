@@ -28,5 +28,10 @@ use crate::error::Result;
 /// Convert an EPUB's bytes into an AsciiDoc publication ready for the composer.
 pub fn import_epub(bytes: &[u8], opts: &ImportOptions) -> Result<ImportedPublication> {
     let book = structure::read_book(bytes, opts)?;
-    adoc::convert(&book)
+    let mut publication = adoc::convert(&book)?;
+    // Structure warnings come first: they explain the shape of the result.
+    let mut warnings = book.warnings.clone();
+    warnings.append(&mut publication.report.warnings);
+    publication.report.warnings = warnings;
+    Ok(publication)
 }

@@ -134,6 +134,7 @@ pub fn read_book(bytes: &[u8], opts: &ImportOptions) -> Result<BookStructure> {
             .as_deref()
             .is_some_and(|p| p.split_ascii_whitespace().any(|t| t == "nav"))
     });
+    let mut warnings: Vec<String> = Vec::new();
     if let Some(res) = nav_res {
         let nav_path = archive_path(&res.path.to_string_lossy());
         if let Some(raw) = zip.read(&nav_path) {
@@ -144,6 +145,11 @@ pub fn read_book(bytes: &[u8], opts: &ImportOptions) -> Result<BookStructure> {
         }
     }
     if toc.is_empty() {
+        if nav_res.is_some() {
+            warnings.push(
+                "The EPUB3 contents page lists nothing in the book; used the older NCX table of contents instead".into(),
+            );
+        }
         let ncx_res = doc
             .resources
             .values()
@@ -164,12 +170,24 @@ pub fn read_book(bytes: &[u8], opts: &ImportOptions) -> Result<BookStructure> {
         ));
     }
 
+    for e in &toc {
+        if let Some(f) = &e.fragment {
+            if files.get(&e.path).and_then(|x| fragment_offset(x, f)).is_none() {
+                warnings.push(format!(
+                    "Contents entry “{}” points to #{f} in {}, which doesn't exist; it starts at the top of that file",
+                    e.label, e.path
+                ));
+            }
+        }
+    }
+
     let (chapters, dropped) = cut(&toc, &spine, &spine_index, &files, opts.split);
     Ok(BookStructure {
         meta,
         chapters,
         files,
         dropped,
+        warnings,
     })
 }
 
@@ -1255,6 +1273,7 @@ mod tests {
             b.chapters[1].parts,
             vec![slice("OEBPS/text/b.xhtml", None, None)]
         );
+        assert!(b.warnings.iter().any(|w| w.contains("NCX")), "{:?}", b.warnings);
     }
 
     #[test]
@@ -1361,6 +1380,11 @@ mod tests {
             vec![slice("OEBPS/a.xhtml", None, None)]
         );
         assert_eq!(b.dropped, vec!["OEBPS/nav.xhtml".to_string()]);
+        assert!(
+            b.warnings.iter().any(|w| w.contains("doesn't exist")),
+            "{:?}",
+            b.warnings
+        );
     }
 
     #[test]

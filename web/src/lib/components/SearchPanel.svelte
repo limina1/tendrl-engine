@@ -772,7 +772,7 @@
 					{/if}
 				{/if}
 				<div class="import-upload">
-					<input type="file" accept=".pdf,.docx,.epub,.html,.htm,.txt,.md,.org,.adoc" bind:this={fileInput} onchange={() => {
+					<input type="file" accept=".pdf,.docx,.epub,application/epub+zip,.html,.htm,.txt,.md,.org,.adoc" bind:this={fileInput} onchange={() => {
 						const f = fileInput?.files?.[0];
 						if (f) pickUpload(f);
 						// Re-choosing the same file must fire change again.

@@ -264,6 +264,9 @@ export interface LazySection {
 	/** Outward web links (the event's http(s) `r` tags), rendered as a
 	 *  link row under the section. */
 	links?: string[];
+	/** Explicit AsciiDoc anchors in `content` (UTF-8 byte offsets), from the
+	 *  leaf stream event — how a `<<id>>` finds its section. */
+	anchors?: { id: string; start: number }[];
 	/** NIP-54 fork marker — only meaningful for nested 30040 entries
 	 *  (sections never carry it). Drives the `fork` pill on the
 	 *  outline's nested-publication rows. */

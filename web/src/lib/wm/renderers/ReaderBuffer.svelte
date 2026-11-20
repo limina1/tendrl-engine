@@ -32,7 +32,7 @@
 	import { resolveLayer, type LayerPick } from '$lib/layers/resolve';
 	import { mobileNav } from '../mobile-nav.svelte';
 	import { ResolutionTracker } from '$lib/nostr/resolution-progress.svelte';
-	import { findAnchor, revealAnchor, utf8ToUtf16, type AnchorEntry, type WithAnchors } from '$lib/reader/xref';
+	import { findAnchor, revealAnchor, utf8ToUtf16, type AnchorEntry } from '$lib/reader/xref';
 	import type {
 		LazySection,
 		NAddr,
@@ -1043,7 +1043,7 @@
 	// section's body is in the DOM. A plain listener, not a lifecycle hook.
 	let xrefSeq = 0;
 	function followXref(id: string): boolean {
-		const hit = findAnchor(pristineSections as WithAnchors<LazySection>[], id);
+		const hit = findAnchor(pristineSections, id);
 		if (!hit) return false;
 		const idx = hit.index;
 		const sec = pristineSections[idx];
@@ -1666,7 +1666,7 @@
 					effective_format: n.effectiveFormat ?? null,
 					format_source: n.formatSource ?? 'none',
 					anchors: n.anchors
-				} as WithAnchors<LazySection>);
+				});
 				if (ancestors.has(key)) return; // cycle — node shown, subtree cut
 				const next = new Set(ancestors).add(key);
 				for (const ck of n.childKeys) walk(ck, depth + 1, next);
