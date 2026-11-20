@@ -58,6 +58,110 @@ describe('table layout', () => {
 	});
 });
 
+describe('asciidoc spans and specs', () => {
+	const cells = (t: string) =>
+		tableLayout(t, adoc.spans(t)).map((tb) => ({
+			cols: tb.cols,
+			rows: tb.rows.map((r) =>
+				r.cells.map((c) => {
+					const o: Record<string, unknown> = { t: t.slice(c.start, c.end) };
+					if (c.colspan) o.cs = c.colspan;
+					if (c.rowspan) o.rs = c.rowspan;
+					if (c.style) o.st = c.style;
+					if (c.align) o.al = c.align;
+					if (c.valign) o.va = c.valign;
+					return o;
+				})
+			)
+		}));
+
+	it('parseCellSpec', async () => {
+		const { parseCellSpec } = await import('./table-layout');
+		expect(parseCellSpec('2+')).toEqual({ colspan: 2, rowspan: 1 });
+		expect(parseCellSpec('.3+')).toEqual({ colspan: 1, rowspan: 3 });
+		expect(parseCellSpec('2.3+a')).toEqual({ colspan: 2, rowspan: 3, style: 'a' });
+		expect(parseCellSpec('^.>s')).toEqual({ colspan: 1, rowspan: 1, align: 'center', valign: 'bottom', style: 's' });
+		expect(parseCellSpec('3*')).toEqual({ colspan: 3, rowspan: 1 });
+		for (const bad of ['', '+', '.+', 'x', 'ab', '2', '*', 'data']) expect(parseCellSpec(bad)).toBeNull();
+	});
+
+	it('colspan: the spec stays out of the previous cell; later rows do not shift', () => {
+		const t = '[cols="3*"]\n|===\n|a |b |c\n\n2+|wide |c2\n|x |y |z\n|===';
+		expect(cells(t)).toEqual([
+			{
+				cols: 3,
+				rows: [
+					[{ t: 'a' }, { t: 'b' }, { t: 'c' }],
+					[{ t: 'wide', cs: 2 }, { t: 'c2' }],
+					[{ t: 'x' }, { t: 'y' }, { t: 'z' }]
+				]
+			}
+		]);
+	});
+
+	it('colspan on the first row counts toward the width (no cols attribute)', () => {
+		const t = '|===\n2+|title |r\n|a |b |c\n|===';
+		const [tb] = cells(t);
+		expect(tb.cols).toBe(3);
+		expect(tb.rows).toEqual([
+			[{ t: 'title', cs: 2 }, { t: 'r' }],
+			[{ t: 'a' }, { t: 'b' }, { t: 'c' }]
+		]);
+	});
+
+	it('rowspan: the rows below hold fewer cells, grouping stays aligned', () => {
+		const t = '[cols="1,1,1"]\n|===\n.2+|tall |a |b\n|c |d\n|e |f |g\n|===';
+		expect(cells(t)).toEqual([
+			{
+				cols: 3,
+				rows: [
+					[{ t: 'tall', rs: 2 }, { t: 'a' }, { t: 'b' }],
+					[{ t: 'c' }, { t: 'd' }],
+					[{ t: 'e' }, { t: 'f' }, { t: 'g' }]
+				]
+			}
+		]);
+	});
+
+	it('both spans, styles and alignment; one cell per line', () => {
+		const t = '[cols="3*"]\n|===\n2.2+a|block\n|r1\n|r2\n^.^s|centre\n|p\n|q\n|===';
+		expect(cells(t)).toEqual([
+			{
+				cols: 3,
+				rows: [
+					[{ t: 'block', cs: 2, rs: 2, st: 'a' }, { t: 'r1' }],
+					[{ t: 'r2' }],
+					[{ t: 'centre', al: 'center', va: 'middle', st: 's' }, { t: 'p' }, { t: 'q' }]
+				]
+			}
+		]);
+	});
+
+	it('a| cell keeps its source text, styled by the base', () => {
+		const t = '|===\na|*bold* and footnote:[n]\n|===';
+		const [tb] = tableLayout(t, adoc.spans(t));
+		const c = tb.rows[0].cells[0];
+		expect(t.slice(c.start, c.end)).toBe('*bold* and footnote:[n]');
+		expect(c.style).toBe('a');
+		const s = adoc.spans(t);
+		expect(s.some((x) => x.cls === 'strong' && t.slice(x.start, x.end) === '*bold*')).toBe(true);
+		expect(s.some((x) => x.cls === 'fn')).toBe(true);
+	});
+
+	it('masked pipes stay inside their cell', () => {
+		const t = '|===\n|{{ref:a|b}} |[[t|alias]]\n|+x|y+ |`p|q`\n|===';
+		expect(cells(t)[0].rows).toEqual([
+			[{ t: '{{ref:a|b}}' }, { t: '[[t|alias]]' }],
+			[{ t: '+x|y+' }, { t: '`p|q`' }]
+		]);
+	});
+
+	it('emphasis never pairs across cells', () => {
+		const t = '|===\n|*a |b*\n|===';
+		expect(adoc.spans(t).filter((x) => x.cls === 'strong')).toEqual([]);
+	});
+});
+
 describe('layoutSegments', () => {
 	it('splits a highlight across cells and keeps every cell run offset-exact', async () => {
 		const { layoutSegments } = await import('./table-layout');
