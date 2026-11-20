@@ -3287,3 +3287,36 @@ curl -s -X PUT localhost:3131/api/v1/feed/kinds -H 'content-type: application/js
 chromium --headless=new --remote-debugging-port=9333 --user-data-dir=/tmp/fk-chrome about:blank &
 node scripts/verify/feed-kinds.mjs --port 3131 --out /tmp/feed-kinds-shots   # kind bar, toggles, wiki → reader tools sheet
 #+end_src
+
+* EPUB import (branch =feat/epub-import=)
+
+Decision: =docs/zettel/decision-epub-import-adoc-anchors.org=; plan + what
+was built: =docs/epub-import-plan.org=.
+
+#+begin_src bash
+cargo test --lib epub_import             # structure, converter, anchors (+ Asciidoctor round-trip when installed)
+EPUB_ADOC_DUMP=1 cargo test --lib epub_import::adoc -- --nocapture   # print the sample book's AsciiDoc
+pnpm -C web test                         # layers: fn/xref/anchor/sup/sub/role classes, table spans
+
+# isolated engine (never :3030); SPA embeds at compile time
+pnpm -C web build && touch src/static_assets.rs && cargo build
+./target/debug/tendrl-engine --data-dir /tmp/tendrl-epub --port 3131 &
+curl -s -X POST localhost:3131/api/v1/network/mode -H 'content-type: application/json' -d '{"mode":"local"}'
+# throwaway key (keyring entries are namespaced per data dir — the real identity is untouched)
+NSEC=$(nak key generate </dev/null); NC=$(nak key encrypt "$NSEC" testpass </dev/null)
+curl -s -X POST localhost:3131/api/v1/identity/login  -H 'content-type: application/json' -d "{\"ncryptsec\":\"$NC\"}"
+curl -s -X POST localhost:3131/api/v1/identity/unlock -H 'content-type: application/json' -d '{"password":"testpass"}'
+
+# the endpoint alone (any DRM-free EPUB; Standard Ebooks are good fixtures)
+curl -s -F file=@book.epub --form-string split=auto localhost:3131/api/v1/import/publication \
+  | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d["title"], len(d["sections"]), d["report"])'
+
+# UI: research rail → KB tab → choose an .epub → "Open as publication" → composer → Sign
+#     → feed row shows "local" → reader: footnote ¹ popover, <<xref>> jumps, Tools ▸ syntax ▸ rendered
+curl -s localhost:3131/api/v1/network/status | grep -o '"total_events_fetched":[0-9]*'   # stays 0 in Local
+#+end_src
+
+Android: the WebView's file chooser (wry =onShowFileChooser=) opens from the
+same KB upload; the =accept= list carries =application/epub+zip= so the
+picker matches EPUBs by type. Build + install per "Android build" above
+(=install -r=, never uninstall).

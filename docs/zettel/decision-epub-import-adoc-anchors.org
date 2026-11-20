@@ -59,6 +59,10 @@ not a new publishing path. Plan: [[file:../epub-import-plan.org][epub-import-pla
 - A footnote is one paragraph: =+= hard breaks inside =footnote:[…]=
   print literally. That is why multi-paragraph notes stay kept (7).
 - Never write =[[id]]=: nostrdown claims those bytes as a wikilink.
+- An id must not start with a digit: Asciidoctor ignores =anchor:= then
+  (found while building; the converter prefixes =_=).
+- In-chapter headings go out as =[discrete]= headings: a section-style
+  four-= heading under a =<h2>= makes Asciidoctor warn "section title out of sequence".
 - Escape =]= inside =footnote:[…]=, and neutralise AsciiDoc's prose
   replacements in book text (={name}=, =(C)=, =--=, =...=, stray =*= =_=
   =#= =+=, a leading =.=).

@@ -25,8 +25,10 @@ libraries, no sidecar.
 * Gaps / open edges
 - Imported document pages are flat 30041s; no automatic 30040 index assembly
   per document yet.
-- [ ] EPUB → AsciiDoc publication (TOC-split 30040/30041 tree, anchors
-  inside, hybrid notes, into the composer) — planned:
+- [X] EPUB → AsciiDoc publication (TOC-split 30040/30041 tree, anchors
+  inside, hybrid notes, into the composer) — built 2026-11-20 on
+  =feat/epub-import=; =POST /api/v1/import/publication=, KB tab → pick an
+  .epub → Open as publication:
   [[file:decision-epub-import-adoc-anchors.org][decision]],
   [[file:../epub-import-plan.org][plan]].
 - Extraction quality is bounded by the pure-Rust parsers (notably complex
