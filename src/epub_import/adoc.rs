@@ -660,6 +660,26 @@ pub fn convert(book: &BookStructure) -> Result<ImportedPublication> {
             }
             dropped += 1;
         }
+        // A heading group's subtitle paragraph (Standard Ebooks: `<hgroup>`
+        // with `<h2>VII</h2><p epub:type="title">…</p>`) repeats the title
+        // too — drop it, but only right after a dropped heading and only
+        // when short, so a real opening paragraph is never eaten.
+        if dropped > 0 {
+            if let Some(Block {
+                kind: BlockKind::Para { inlines, .. },
+                ..
+            }) = blocks.first()
+            {
+                let text = plain_text(inlines);
+                if text.split_whitespace().count() <= 12 && repeats_title(&text, &ch.title) {
+                    let p = blocks.remove(0);
+                    carry.extend(p.ids);
+                    if let BlockKind::Para { inlines, .. } = &p.kind {
+                        xhtml::collect_anchors(inlines, &mut carry);
+                    }
+                }
+            }
+        }
         carry.append(&mut pending);
         if let Some(first) = blocks.first_mut() {
             carry.append(&mut first.ids);
@@ -2628,5 +2648,29 @@ mod tests {
             out = out.replace(e, c);
         }
         out
+    }
+
+    #[test]
+    fn hgroup_subtitle_repeating_the_title_is_dropped() {
+        let body = r#"<section id="c7"><hgroup><h2>VII</h2><p epub:type="title">On Our Knowledge</p></hgroup><p>We saw in the preceding chapter.</p></section>"#;
+        let b = book(
+            vec![chapter("VII: On Our Knowledge", "vii", 2, &[("c.xhtml", None, None)])],
+            &[("c.xhtml", x(body))],
+        );
+        let out = convert(&b).unwrap();
+        let c = &out.sections[0].content;
+        assert!(!c.contains("On Our Knowledge"), "{c}");
+        assert!(c.contains("We saw in the preceding chapter."), "{c}");
+    }
+
+    #[test]
+    fn a_real_first_paragraph_is_kept_without_a_dropped_heading() {
+        let body = r#"<p>On Our Knowledge</p><p>More.</p>"#;
+        let b = book(
+            vec![chapter("On Our Knowledge", "k", 2, &[("c.xhtml", None, None)])],
+            &[("c.xhtml", x(body))],
+        );
+        let out = convert(&b).unwrap();
+        assert!(out.sections[0].content.starts_with("On Our Knowledge"), "{}", out.sections[0].content);
     }
 }
