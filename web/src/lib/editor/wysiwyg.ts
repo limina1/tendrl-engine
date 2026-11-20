@@ -64,6 +64,9 @@ class BulletWidget extends WidgetType {
 
 const LIST_MARK = /^\s*([-+*]|\d+[.)])$/;
 
+/** Block classes drawn as line decorations over every line they cover. */
+const BLOCK_LINE = new Set(['fence', 'quote', 'sidebar', 'example', 'verse']);
+
 function lineDeco(cls: string) {
 	return Decoration.line({ class: `cm-ly-line-${cls}` });
 }
@@ -101,7 +104,7 @@ function buildDecorations(
 				out.push(lineDeco(s.cls).range(ln.from));
 			}
 		}
-		if (s.cls === 'fence' || s.cls === 'quote') {
+		if (BLOCK_LINE.has(s.cls)) {
 			const a = doc.lineAt(s.start).number;
 			const b = doc.lineAt(Math.max(s.start, s.end - 1)).number;
 			for (let n = a; n <= b; n++) out.push(lineDeco(s.cls).range(doc.line(n).from));
@@ -384,6 +387,19 @@ export const wysiwygTheme = EditorView.baseTheme({
 		color: 'var(--fg-muted)',
 		fontStyle: 'italic'
 	},
+	'.cm-ly-line-sidebar': {
+		background: 'color-mix(in srgb, var(--accent) 6%, transparent)',
+		borderLeft: '3px solid color-mix(in srgb, var(--accent) 35%, transparent)',
+		paddingLeft: '10px'
+	},
+	'.cm-ly-line-example': {
+		background: 'color-mix(in srgb, var(--fg) 3%, transparent)',
+		borderLeft: '3px solid color-mix(in srgb, var(--fg-muted) 30%, transparent)',
+		paddingLeft: '10px'
+	},
+	// Each source line is already its own editor line, so a verse keeps its
+	// breaks; it only drops the quote's italic and sits indented.
+	'.cm-ly-line-verse': { fontStyle: 'normal', paddingLeft: '1.5em' },
 	'.ly-em': { fontStyle: 'italic' },
 	'.ly-strong': { fontWeight: '700' },
 	'.ly-strike': { textDecoration: 'line-through' },
@@ -397,6 +413,13 @@ export const wysiwygTheme = EditorView.baseTheme({
 	'.ly-lang': { color: 'var(--fg-muted)', fontSize: '0.85em' },
 	'.ly-link': { color: 'var(--accent)', textDecoration: 'underline', textUnderlineOffset: '0.15em' },
 	'.ly-url': { color: 'var(--fg-muted)' },
+	'.ly-fn, .ly-xref': { color: 'var(--accent)' },
+	'.ly-xref-text, .ly-xref-id': { textDecoration: 'underline', textUnderlineOffset: '0.15em' },
+	'.ly-fnbody': { fontSize: '0.88em', color: 'var(--fg-muted)' },
+	'.ly-fnname, .ly-anchor': { color: 'var(--fg-muted)', fontFamily: 'var(--font-mono)', fontSize: '0.85em' },
+	'.ly-sup': { verticalAlign: 'super', fontSize: '0.75em', lineHeight: '0' },
+	'.ly-sub': { verticalAlign: 'sub', fontSize: '0.75em', lineHeight: '0' },
+	'.ly-smallcaps': { fontVariant: 'small-caps', letterSpacing: '0.02em' },
 	'.ly-hl': { background: 'color-mix(in srgb, var(--accent) 22%, transparent)' },
 	'.ly-underline': { textDecoration: 'underline' },
 	'.ly-comment': { color: 'var(--fg-muted)', opacity: '0.7' },

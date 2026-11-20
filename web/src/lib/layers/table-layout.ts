@@ -9,13 +9,65 @@
 // drawn.
 //
 // Input, from the bases: `table` (the block; Org emits it per line, so
-// adjacent ones merge), `tr` / `th` (a row; `th` = header row) and `mark`
-// spans of exactly `|` (the cell separators). Pure; leaf module.
+// adjacent ones merge), `tr` / `th` (a row; `th` = header row), `mark`
+// spans of exactly `|` (the cell separators) and, from AsciiDoc, `cellspec`
+// spans (the `2+` / `.2+` / `a` / `^.>` spec right before a `|`): the spec
+// is read here for colspan / rowspan / style and kept out of the cells.
+// Pure; leaf module.
 
 import type { StyleSpan } from './registry';
 import type { ContentSegment } from '$lib/nostr/nostrdown';
 
-export type TableCell = { start: number; end: number };
+export type TableCell = {
+	start: number;
+	end: number;
+	/** Columns this cell spans (AsciiDoc `2+|`; also `3*|` duplication,
+	 *  drawn as one wide cell). Absent = 1. */
+	colspan?: number;
+	/** Rows this cell spans (AsciiDoc `.2+|`, `2.3+|`). Absent = 1. The rows
+	 *  below simply have fewer cells — they are not padded. */
+	rowspan?: number;
+	/** AsciiDoc cell style letter (`a` AsciiDoc, `e` emphasis, `h` header,
+	 *  `l` literal, `m` monospace, `s` strong, `d`/`v` default/verse). The
+	 *  cell's range is still its plain source text: an `a|` cell is styled
+	 *  only by the base's inline spans, not re-parsed as a document. */
+	style?: string;
+	/** `<` / `^` / `>` → left / center / right. */
+	align?: 'left' | 'center' | 'right';
+	/** `.<` / `.^` / `.>` → top / middle / bottom. */
+	valign?: 'top' | 'middle' | 'bottom';
+};
+
+/** A parsed AsciiDoc cell spec. */
+export type CellSpec = {
+	colspan: number;
+	rowspan: number;
+	style?: string;
+	align?: TableCell['align'];
+	valign?: TableCell['valign'];
+};
+
+const CELL_SPEC = /^(?:(\d+)\*|(\d+)?(?:\.(\d+))?\+)?([<^>])?(?:\.([<^>]))?([adehlmsv])?$/;
+const H_ALIGN = { '<': 'left', '^': 'center', '>': 'right' } as const;
+const V_ALIGN = { '<': 'top', '^': 'middle', '>': 'bottom' } as const;
+
+/** Parse an AsciiDoc cell spec (the text right before a `|`): `2+`, `.3+`,
+ *  `2.3+`, `3*`, `^.>`, `a`, `2+a`… Null when it is not one. */
+export function parseCellSpec(spec: string): CellSpec | null {
+	if (!spec) return null;
+	const m = CELL_SPEC.exec(spec);
+	if (!m) return null;
+	// A bare `+` / `.+` is not a span.
+	if (/\+/.test(spec) && m[2] === undefined && m[3] === undefined) return null;
+	const out: CellSpec = { colspan: 1, rowspan: 1 };
+	if (m[1]) out.colspan = Math.max(1, Number(m[1]));
+	if (m[2]) out.colspan = Math.max(1, Number(m[2]));
+	if (m[3]) out.rowspan = Math.max(1, Number(m[3]));
+	if (m[4]) out.align = H_ALIGN[m[4] as keyof typeof H_ALIGN];
+	if (m[5]) out.valign = V_ALIGN[m[5] as keyof typeof V_ALIGN];
+	if (m[6]) out.style = m[6];
+	return out;
+}
 export type TableRow = { start: number; end: number; header: boolean; cells: TableCell[] };
 export type TableBlock = {
 	/** Source range the grid replaces — includes the newline after the last
@@ -34,6 +86,30 @@ function trimRange(text: string, start: number, end: number): TableCell {
 	return { start, end };
 }
 
+/** Columns of the grid: the widest row once colspans and the columns held
+ *  by rowspans from above are counted. */
+function gridWidth(rows: TableRow[]): number {
+	let carry: number[] = []; // rows still held, per column
+	let width = 0;
+	for (const r of rows) {
+		const taken = carry.map((c) => c > 0);
+		carry = carry.map((c) => (c > 0 ? c - 1 : 0));
+		let col = 0;
+		for (const c of r.cells) {
+			while (taken[col]) col++;
+			const cs = c.colspan ?? 1;
+			const rs = c.rowspan ?? 1;
+			for (let j = col; j < col + cs; j++) {
+				taken[j] = true;
+				carry[j] = Math.max(carry[j] ?? 0, rs - 1);
+			}
+			col += cs;
+		}
+		width = Math.max(width, col, taken.length);
+	}
+	return width;
+}
+
 export function tableLayout(text: string, spans: StyleSpan[]): TableBlock[] {
 	const sorted = [...spans].sort((a, b) => a.start - b.start || b.end - a.end);
 	// Table blocks, adjacent / overlapping ones merged (Org: one per line).
@@ -49,6 +125,13 @@ export function tableLayout(text: string, spans: StyleSpan[]): TableBlock[] {
 		.filter((s) => s.cls === 'mark' && s.end - s.start === 1 && text[s.start] === '|')
 		.map((s) => s.start);
 	const heads = sorted.filter((s) => s.cls === 'th');
+	// Cell specs by the pipe they precede.
+	const specs = new Map<number, { start: number; spec: CellSpec }>();
+	for (const s of sorted) {
+		if (s.cls !== 'cellspec' || text[s.end] !== '|') continue;
+		const spec = parseCellSpec(text.slice(s.start, s.end));
+		if (spec) specs.set(s.end, { start: s.start, spec });
+	}
 
 	const out: TableBlock[] = [];
 	for (const b of blocks) {
@@ -63,11 +146,25 @@ export function tableLayout(text: string, spans: StyleSpan[]): TableBlock[] {
 			const cuts = pipes.filter((p) => p >= r.start && p < r.end);
 			const pieces: TableCell[] = [];
 			let at = r.start;
+			let open: CellSpec | undefined; // the spec of the cell being cut
+			const piece = (start: number, end: number) => {
+				const c: TableCell = { start, end };
+				if (open) {
+					if (open.colspan > 1) c.colspan = open.colspan;
+					if (open.rowspan > 1) c.rowspan = open.rowspan;
+					if (open.style) c.style = open.style;
+					if (open.align) c.align = open.align;
+					if (open.valign) c.valign = open.valign;
+				}
+				return c;
+			};
 			for (const p of cuts) {
-				pieces.push({ start: at, end: p });
+				const sp = specs.get(p);
+				pieces.push(piece(at, sp && sp.start >= at ? sp.start : p));
+				open = sp?.spec;
 				at = p + 1;
 			}
-			pieces.push({ start: at, end: r.end });
+			pieces.push(piece(at, r.end));
 			// A leading / trailing pipe leaves an empty piece outside the row.
 			if (cuts.length && text.slice(pieces[0].start, pieces[0].end).trim() === '') pieces.shift();
 			const tail = pieces[pieces.length - 1];
@@ -77,7 +174,7 @@ export function tableLayout(text: string, spans: StyleSpan[]): TableBlock[] {
 				start: r.start,
 				end: r.end,
 				header: heads.some((h) => h.start <= r.start && r.start < h.end),
-				cells: pieces.map((c) => trimRange(text, c.start, c.end))
+				cells: pieces.map((c) => ({ ...c, ...trimRange(text, c.start, c.end) }))
 			});
 		}
 		if (rows.length === 0) continue;
@@ -85,7 +182,7 @@ export function tableLayout(text: string, spans: StyleSpan[]): TableBlock[] {
 		out.push({
 			start: b.start,
 			end,
-			cols: Math.max(...rows.map((r) => r.cells.length)),
+			cols: gridWidth(rows),
 			rows
 		});
 	}
