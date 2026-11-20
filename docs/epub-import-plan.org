@@ -85,7 +85,7 @@ New module =src/epub_import.rs= (pure above the zip read; unit-tested).
   split choice beside the existing page list; the report as a toast plus
   a details list (blessed primitives — =feat-ui-patterns.org=).
 - [X] Signing = the existing Sign (local snapshot); nothing new.
-- [ ] Large books: check composer performance on a ~1 MB source; if it
+- [X] Large books (checked: /Pride and Prejudice/, 65 sections, 690k chars — opens and edits smoothly): check composer performance on a ~1 MB source; if it
   drags, that is a composer fix, not an import special case.
 
 * Phase 3 — the reader catches up (AsciiDoc rendering)
