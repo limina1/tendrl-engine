@@ -885,6 +885,10 @@ function _createAppState() {
 	let importPages: ImportPage[] = $state([]);
 	let importFilename = $state('');
 	let importLoading = $state(false);
+	/** The last EPUB opened as a publication: its title + the converter's
+	 *  report, for the import view's details list. */
+	let importPublicationResult: { filename: string; title: string; report: api.ImportReport } | null =
+		$state(null);
 
 	// --- Ignore list ---
 	let ignoredCount = $state(0);
@@ -4545,6 +4549,68 @@ function _createAppState() {
 		if (docMode !== 'compose') navigateToCompose();
 	}
 
+	/** Seed the composer with an imported publication: one AsciiDoc section
+	 *  per TOC entry at its level (2 = section, 3 = nested), the 30040 tags
+	 *  in the tags panel. Nothing is stored or signed — Sign is the usual
+	 *  local snapshot. */
+	function openImportInComposer(result: api.ImportedPublication) {
+		clearComposePool();
+		for (const sec of result.sections) {
+			addToPool(
+				{
+					title: sec.title,
+					content: sec.content,
+					tags: [],
+					original_content: sec.content,
+					origin: 'import' as const,
+					level: sec.level
+				},
+				{ compose: true }
+			);
+		}
+		// The title is the composer's own H1 (emitted as the `title` tag at
+		// publish) — keep it out of the tags panel.
+		const tags: TagEntry[] = result.tags
+			.filter(([name]) => name !== 'title')
+			.map(([name, value]) => ({ name, value }));
+		seedDraftMetadata(result.title, tags);
+		composeKind = 30040;
+		composeNotes = false;
+		composeFormat = result.format || 'text/asciidoc';
+		composeAtomicBody = '';
+		composeAtomicSeeded = false;
+		navigateToCompose();
+	}
+
+	/** One-line summary of an import report for the toast. */
+	function importReportSummary(result: api.ImportedPublication): string {
+		const r = result.report;
+		const parts = [`Imported ${result.sections.length} section${result.sections.length === 1 ? '' : 's'}`];
+		if (r.notes_inlined || r.notes_kept) parts.push(`${r.notes_inlined} notes inline, ${r.notes_kept} kept`);
+		const skipped = r.dropped_items.length + r.images_skipped;
+		if (skipped) parts.push(`${skipped} item${skipped === 1 ? '' : 's'} skipped`);
+		if (r.unresolved_links.length) parts.push(`${r.unresolved_links.length} unresolved links`);
+		return parts.join(' · ');
+	}
+
+	/** Upload an EPUB, convert it engine-side and open it in the composer. */
+	async function handleImportPublication(file: File, split: api.ImportSplit = 'auto'): Promise<boolean> {
+		importLoading = true;
+		try {
+			const result = await api.importPublication(file, split);
+			importPublicationResult = { filename: file.name, title: result.title, report: result.report };
+			openImportInComposer(result);
+			pushToast(importReportSummary(result), 'success', 5000);
+			void handleListDocuments();
+			return true;
+		} catch (e) {
+			pushToast(`Import failed: ${api.errorMessage(e)}`, 'error', 6000);
+			return false;
+		} finally {
+			importLoading = false;
+		}
+	}
+
 	function handleImportPagesToContext(pages: ImportPage[]) {
 		for (const page of pages) handleImportPageToContext(page);
 	}
@@ -5881,6 +5947,7 @@ function _createAppState() {
 		get documentFiles() { return documentFiles; },
 		get importPages() { return importPages; },
 		get importFilename() { return importFilename; },
+		get importPublicationResult() { return importPublicationResult; },
 		get importLoading() { return importLoading; },
 
 		// Ignore list
@@ -6051,6 +6118,8 @@ function _createAppState() {
 		handleListDocuments,
 		handleImportFile,
 		handleParseDocument,
+		handleImportPublication,
+		openImportInComposer,
 		handleImportPageToContext,
 		handleImportPageToCompose,
 		handleImportPagesToContext,
