@@ -2439,6 +2439,18 @@ export function prefetchEmbeddingModel() {
 	return fetchJson<EmbeddingStatusResponse>('/api/v1/embed/prefetch', { method: 'POST' });
 }
 
+/** Delete the vector index (memory + files). Resolves with the refreshed
+ *  status plus `freed_bytes`; 400 while an embed pass runs. */
+export function deleteEmbeddingIndex() {
+	return fetchJson<EmbeddingStatusResponse>('/api/v1/embed/delete-index', { method: 'POST' });
+}
+
+/** Unload the embedding model and delete its downloaded files. Resolves
+ *  with the refreshed status (`model_ready: false`) plus `freed_bytes`. */
+export function deleteEmbeddingModel() {
+	return fetchJson<EmbeddingStatusResponse>('/api/v1/embed/delete-model', { method: 'POST' });
+}
+
 /** Set which event kinds are eligible for embedding. Persists engine-side and
  *  returns the refreshed status. */
 export function setEmbedKinds(kinds: number[]) {

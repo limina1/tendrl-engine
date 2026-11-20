@@ -652,6 +652,12 @@ export interface EmbeddingStatusResponse {
 	available_kinds: number[];
 	/** Whether retrieval + publishing auto-embed the configured kinds. */
 	auto_embed: boolean;
+	/** On-disk size of the downloaded model (0 = not downloaded). */
+	model_bytes?: number;
+	/** On-disk size of the vector index files. */
+	index_bytes?: number;
+	/** Set only on a delete-index / delete-model response. */
+	freed_bytes?: number;
 }
 
 /** GET /health — engine liveness + the running build's version. */

@@ -8170,6 +8170,9 @@ pub async fn embed_status_handler(
         // WITHOUT first downloading the model (~90 MB). Gates the UI's
         // download notice.
         "model_ready": index.model_ready(),
+        // On-disk cost, so the delete actions can say what they free.
+        "model_bytes": index.model_bytes(),
+        "index_bytes": index.index_bytes(),
         "embed_kinds": embed_kinds,
         "available_kinds": available_kinds,
         "auto_embed": engine.auto_embed(),
@@ -8206,6 +8209,31 @@ pub async fn embed_prefetch_handler(
 ) -> Result<Json<Value>, EngineError> {
     engine.prefetch_embedding_model().await?;
     embed_status_handler(State(engine)).await
+}
+
+/// POST /api/v1/embed/delete-index — delete the vector index (memory + the
+/// `vectors.idx`/`vectors.map` files). Returns the refreshed status plus
+/// `freed_bytes`.
+pub async fn embed_delete_index_handler(
+    State(engine): State<AppState>,
+) -> Result<Json<Value>, EngineError> {
+    let freed = engine.delete_embedding_index().await?;
+    with_freed(embed_status_handler(State(engine)).await?, freed)
+}
+
+/// POST /api/v1/embed/delete-model — unload the ONNX model and delete its
+/// downloaded files. Returns the refreshed status (`model_ready: false`) plus
+/// `freed_bytes`.
+pub async fn embed_delete_model_handler(
+    State(engine): State<AppState>,
+) -> Result<Json<Value>, EngineError> {
+    let freed = engine.delete_embedding_model().await?;
+    with_freed(embed_status_handler(State(engine)).await?, freed)
+}
+
+fn with_freed(Json(mut status): Json<Value>, freed: u64) -> Result<Json<Value>, EngineError> {
+    status["freed_bytes"] = json!(freed);
+    Ok(Json(status))
 }
 
 /// Body for `POST /api/v1/embed/config`. Both fields are optional so the UI

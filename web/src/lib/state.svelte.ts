@@ -4315,6 +4315,31 @@ function _createAppState() {
 		}
 	}
 
+	// Destructive-but-local maintenance: drop the vector index / the
+	// downloaded model to reclaim disk. The engine refuses (400) while an
+	// embed pass runs; the toast carries that message.
+	let embeddingDeleting = $state<'index' | 'model' | null>(null);
+	async function handleDeleteEmbedding(what: 'index' | 'model') {
+		if (embeddingDeleting) return;
+		embeddingDeleting = what;
+		try {
+			const r =
+				what === 'index' ? await api.deleteEmbeddingIndex() : await api.deleteEmbeddingModel();
+			embeddingStatus = r;
+			const mb = ((r.freed_bytes ?? 0) / (1024 * 1024)).toFixed(1);
+			pushToast(
+				what === 'index'
+					? `Embedding index deleted (${mb} MB freed).`
+					: `Embedding model deleted (${mb} MB freed).`,
+				'success'
+			);
+		} catch (e) {
+			pushToast(api.errorMessage(e, `Delete ${what} failed`), 'error', 6000);
+		} finally {
+			embeddingDeleting = null;
+		}
+	}
+
 	async function handleReindexEmbeddings() {
 		embeddingSyncing = true;
 		const pollInterval = setInterval(async () => {
@@ -5924,6 +5949,7 @@ function _createAppState() {
 		get embeddingStatus() { return embeddingStatus; },
 		get embeddingSyncing() { return embeddingSyncing; },
 		get embeddingDownloading() { return embeddingDownloading; },
+		get embeddingDeleting() { return embeddingDeleting; },
 		get fetchingSections() { return fetchingSections; },
 
 		// Network
@@ -6104,6 +6130,7 @@ function _createAppState() {
 		handleDownloadEmbeddingModel,
 		handleFetchSections,
 		handleReindexEmbeddings,
+		handleDeleteEmbedding,
 		handleSetEmbedKinds,
 		handleSetAutoEmbed,
 		refreshEmbeddingStatus,
